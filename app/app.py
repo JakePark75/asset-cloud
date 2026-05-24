@@ -1,7 +1,8 @@
 from shiny import App, ui, render
 from pathlib import Path
+from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 
 BASE_DIR = Path(__file__).parent.parent
 
@@ -16,13 +17,18 @@ async def serve_md(request):
         "Pragma": "no-cache"
     })
 
-app_ui = ui.page_fluid(
+shiny_app_ui = ui.page_fluid(
     ui.h2("Asset Management"),
 )
 
 def server(input, output, session):
     pass
 
-app = App(app_ui, server, middleware=[
-    Route("/api/context/{filename}", serve_md)
-])
+shiny_app = App(shiny_app_ui, server)
+
+routes = [
+    Route("/api/context/{filename}", serve_md),
+    Mount("/", app=shiny_app),
+]
+
+app = Starlette(routes=routes)
