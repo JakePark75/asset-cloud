@@ -182,13 +182,28 @@
 
 ### 전제 사항
 
-- **현재가(시세)는 DB에 저장하지 않음.** 마지막 시세는 JSON 파일에 저장하여 앱 재시작 시 복원.
-- **시세 이력 저장 안 함.** 현재가(또는 마지막 시세)만 사용.
+- **현재가(시세)는 tickers 테이블에 저장.** 별도 JSON 파일 없음.
+- **시세 이력 저장 안 함.** 현재가(마지막 시세)만 유지.
 - **총자산은 원화 단일값.** 포지션 평가 시 환율 반영 완료된 값으로 계산.
 - **입출금은 하루 합산 1건**으로 daily_summary에 포함. 별도 이력 테이블 없음.
-- **현금도 positions에 행으로 관리.** leverage = 0 으로 현금 구분. Exposure 계산에서 자동 제외.
-- **NDX100 환산값은 저장하지 않음.** 절대값만 저장하고, 알파 계산 시 기준 시점 행의 절대값으로 나눠서 계산. 정규화 계수(최초 자산 ÷ 최초 NDX100)는 상수로 별도 관리.
+- **현금은 positions에 행으로 관리.** tickers 참조 없이 ticker 컬럼에 "KRW"/"USD" 고정값 사용.
+- **환율(USDKRW=X, JPYKRW=X 등)은 tickers에 market="IDX"로 저장.** 스케줄러가 Yahoo Finance로 동일하게 업데이트.
 - **계좌 삭제 시 해당 계좌의 positions 행은 FK + CASCADE로 자동 삭제.**
+
+---
+
+### tickers
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| ticker | TEXT PK | 종목 티커 |
+| name | TEXT | 종목명 |
+| market | TEXT | 구분 (KR, NAS, AMS, ARC, IDX) |
+| leverage | INT | 레버리지 배수 (1, 2, 3) |
+| current_price | NUMERIC | 현재가 (환율 포함) |
+| change_pct | NUMERIC | 등락률 |
+| updated_at | TIMESTAMP | 마지막 업데이트 시각 (스케줄러 기준) |
+| data_time | TIMESTAMP | 실제 데이터 시각 (IDX/Yahoo Finance만 해당) |
 
 ---
 
@@ -208,9 +223,7 @@
 |------|------|------|
 | id | SERIAL PK | |
 | account_id | INT FK → accounts.id | CASCADE DELETE |
-| ticker | TEXT | 종목 티커 (사용자 입력) |
-| name | TEXT | 종목명 (사용자 입력) |
-| leverage | INT | 레버리지 배수 (0=현금, 1, 2, 3) |
+| ticker | TEXT | 종목 티커 또는 "KRW"/"USD" (현금) |
 | quantity | NUMERIC | 수량 (현금인 경우 금액) |
 
 ---
@@ -241,9 +254,53 @@
 | ✅ 완료 | 개발스택 결정 |
 | ✅ 완료 | 개발환경 구성 (회사 윈도우) |
 | ✅ 완료 | 개발환경 구성 (집 맥미니) |
+| ✅ 완료 | AI 컨텍스트 md 파일 서빙 API 구축 (app.py 내 Starlette 라우팅, systemd 서비스 등록, Nginx 프록시 연결) |
 | ✅ 완료 | PostgreSQL 설치 (VM) |
 | ✅ 완료 | 화면 구성 확정 |
 | ✅ 완료 | DB 스키마 설계 확정 |
-| ⬜ 대기 | DB 실제 생성 (DDL 실행) |
-| ⬜ 대기 | 시세 수집 스케줄러 개발 |
-| ⬜ 대기 | Shiny 대시보드 개발 |
+| ✅ 완료 | DB 실제 생성 (DDL 실행) |
+| ✅ 완료 | 시세 수집 스케줄러 개발 |
+| ⬜ 대기 | Shiny 앱 기본 구조 세팅 (라우팅, DB 연결, 공통 레이아웃) |
+| ⬜ 대기 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·삭제) |
+| ⬜ 대기 | 포트폴리오 화면 (전체 종목 통합 뷰) |
+| ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
+| ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
+| ⬜ 대기 | 기존 일일자산누적 데이터 DB 일괄 이전 (2025-06-19~) |
+| ⬜ 대기 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
+| ⬜ 대기 | 설정 화면 |
+| ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |
+
+## 12. DB 구성
+
+### 기본 정보
+- DB명: assetdb
+- DB 유저: jake
+- 인증 방식: md5 (비밀번호 인증)
+
+### 테이블 구성
+- tickers, accounts, positions, daily_summary — 생성 완료
+
+### 인증 방식 변경 이유
+- PostgreSQL 기본값(peer)은 OS 유저명과 DB 유저명이 일치해야 접속 가능
+- VM OS 유저는 ubuntu, DB 유저는 jake로 불일치 → md5로 변경
+- 이후 Shiny 앱 등 모든 DB 접속은 유저명 + 비밀번호 방식 사용
+
+## 13. 시세 수집 스케줄러
+
+### 파일 구성
+- `scheduler/price_updater.py` — 메인 스크립트
+- `scheduler/config.json` — 설정값 (kis_app_key, kis_app_secret, db_password, interval)
+- `scheduler/price_updater.service` — systemd 서비스 파일
+
+### 동작 방식
+- tickers 테이블 전체 종목 조회 후 market별 API 호출
+- 종목별 독립 스레드로 병렬 실행
+- KR: KIS API (장마감 시 전일종가 fallback)
+- NAS/AMS/ARC: KIS API 미국주식
+- IDX: Yahoo Finance (환율/지수/암호화폐 포함)
+- 업데이트 주기: config.json의 interval(분), 실행 중 변경 즉시 반영
+
+### systemd 서비스
+- 서비스명: price_updater
+- VM 재부팅 시 자동 시작 (enabled)
+- 크래시 시 10초 후 자동 재시작 (Restart=on-failure)
