@@ -1,0 +1,174 @@
+/* 전체 배경 */
+body {
+    background-color: #0a0a0a;
+    color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+}
+
+/* 네비게이션 바 */
+.navbar {
+    background-color: #0a0a0a !important;
+    border-bottom: 1px solid #222;
+}
+
+.navbar-brand, .nav-link {
+    color: #ffffff !important;
+}
+
+/* 카드 */
+.asset-card {
+    background-color: #1a1a1a;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+}
+
+.asset-card:active {
+    background-color: #252525;
+}
+
+/* 금액 */
+.amount-large {
+    font-size: 28px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.amount-sub {
+    font-size: 14px;
+    color: #888888;
+}
+
+/* 손익 색상 */
+.positive {
+    color: #00c073;
+}
+
+.negative {
+    color: #ff4d4d;
+}
+
+/* 종목 행 */
+.ticker-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 0;
+    border-bottom: 1px solid #1e1e1e;
+}
+
+.ticker-name {
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.ticker-qty {
+    font-size: 13px;
+    color: #888888;
+    margin-top: 3px;
+}
+
+.ticker-amount {
+    font-size: 15px;
+    font-weight: 600;
+    text-align: right;
+}
+
+.ticker-change {
+    font-size: 13px;
+    text-align: right;
+    margin-top: 3px;
+}
+
+/* 버튼 */
+.btn-add {
+    background-color: #1a1a1a;
+    color: #ffffff;
+    border: 1px solid #333;
+    border-radius: 8px;
+    width: 100%;
+    padding: 12px;
+    margin-top: 12px;
+}
+
+.btn-danger-sm {
+    background-color: transparent;
+    color: #ff4d4d;
+    border: none;
+    font-size: 13px;
+}
+
+/* 햄버거 버튼 */
+.navbar-toggler {
+    border-color: #ffffff !important;
+}
+
+.navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255, 255, 255, 1%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") !important;
+}
+
+/* 탭 컨텐츠 show/hide */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* 하단 탭바 */
+.bottom-tabbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-width: 480px;
+    margin: 0 auto;
+    display: flex;
+    background-color: #111111;
+    border-top: 1px solid #222;
+    z-index: 1000;
+    height: 60px;
+}
+
+.tab-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #666666;
+    font-size: 10px;
+    cursor: pointer;
+    padding: 8px 0;
+}
+
+.tab-btn.active {
+    color: #00c073;
+}
+
+.tab-btn span {
+    margin-top: 2px;
+}
+
+/* 모달 */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-box {
+    background: #1a1a1a;
+    border-radius: 16px;
+    padding: 24px;
+    width: 85%;
+    max-width: 360px;
+}

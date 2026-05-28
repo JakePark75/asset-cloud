@@ -20,10 +20,47 @@
 | 항목 | 내용 |
 |------|------|
 | VM | Oracle Cloud 도쿄 리전 (161.33.151.220) |
+| OS | Ubuntu |
 | 도메인 | myassets.mooo.com |
 | DB | PostgreSQL (VM에 직접 설치) |
 | 프레임워크 | Shiny for Python |
 | 리포지토리 | https://github.com/JakePark75/asset-cloud |
+
+### 서버 구조
+- **nginx**: 활성화 (systemd), 443/80 리스닝, SSL은 Certbot으로 관리
+  - `/` → `http://127.0.0.1:8080` 프록시 (WebSocket 포함)
+  - `/api/` → `http://127.0.0.1:8080/api/` 프록시
+  - `/AIContext/` → `/var/www/html` 정적 파일 서빙
+  - `proxy_read_timeout 3600`, `proxy_send_timeout 3600` 설정 (WebSocket 끊김 방지)
+- **Shiny 앱**: systemd 서비스로 실행 (`/etc/systemd/system/myassets.service`)
+  - 실행 커맨드: `python3 -m shiny run app/app.py --host 0.0.0.0 --port 8080`
+  - 서비스 파일 원본: `scheduler/myassets.service` (깃허브 관리)
+- **price_updater**: systemd 서비스로 실행 (`/etc/systemd/system/price_updater.service`)
+  - 서비스 파일 원본: `scheduler/price_updater.service` (깃허브 관리)
+
+### 프로젝트 디렉토리 구조
+```
+/home/ubuntu/asset-cloud/
+├── AIContext/           # AI 컨텍스트 MD 파일 (nginx 정적 서빙)
+├── README.md
+├── app/
+│   ├── app.py           # 진입점 (Shiny App + Starlette 라우팅, 하단 탭바)
+│   ├── db.py            # DB 연결 공통
+│   ├── context_api.py   # AI 컨텍스트 MD 서빙 API
+│   ├── static/
+│   │   └── style.css    # 공통 스타일 (다크테마)
+│   └── modules/
+│       ├── dashboard.py
+│       ├── portfolio.py
+│       ├── accounts.py
+│       ├── history.py
+│       └── settings.py
+└── scheduler/
+    ├── price_updater.py      # 시세 수집 스케줄러
+    ├── config.json           # 설정값 (kis_app_key, kis_app_secret, db_password, interval)
+    ├── price_updater.service # systemd 서비스 파일 원본
+    └── myassets.service      # systemd 서비스 파일 원본
+```
 
 ---
 
@@ -74,9 +111,9 @@
 |------|------|
 | 대시보드 | 총자산, 총자산증감, 금일수익, Exposure, 현금/투자비중, x1/x2/x3 비중 바, 월평균 IRR, 월평균 α, 최근 30일 α, 은퇴시점 |
 | 포트폴리오 | 전체 종목 통합 뷰 (계좌 구분 없음) — 수량, 평가액, 노출도 등 |
-| 계좌 목록/상세 | 계좌 추가/삭제, 계좌별 종목/현금 추가/삭제, 종목별 평가액/비중 등 |
+| 계좌 목록/상세 | 계좌 추가/삭제, 계좌별 종목/현금 추가/수정/삭제 |
 | 실적 히스토리 | 상단: 추이 그래프, 하단: 일간 누적 데이터 최신순 테이블 |
-| 설정 | 앱/화면 설정 |
+| 설정 | 앱/화면 설정, 스케줄러 제어 |
 
 ---
 
@@ -102,6 +139,7 @@
 | current_price | NUMERIC | 현재가 (환율 포함) |
 | change_pct | NUMERIC | 등락률 |
 | updated_at | TIMESTAMP | 마지막 업데이트 시각 (스케줄러 기준) |
+| is_manual | BOOLEAN | 수동 추가 항목 여부 (환율/지수 등, 계좌 연동 삭제 대상 제외) |
 | data_time | TIMESTAMP | 실제 데이터 시각 (IDX/Yahoo Finance만 해당) |
 
 ### accounts
@@ -152,7 +190,7 @@
 ### 파일 구성
 - `scheduler/price_updater.py` — 메인 스크립트
 - `scheduler/config.json` — 설정값 (kis_app_key, kis_app_secret, db_password, interval)
-- `scheduler/price_updater.service` — systemd 서비스 파일
+- `scheduler/price_updater.service` — systemd 서비스 파일 원본
 
 ### 동작 방식
 - tickers 테이블 전체 종목 조회 후 market별 API 호출
@@ -162,6 +200,24 @@
 - IDX: Yahoo Finance (환율/지수/암호화폐 포함, data_time 저장)
 - 업데이트 주기: config.json의 interval(분), 실행 중 변경 즉시 반영
 - systemd 서비스: VM 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
+
+---
+
+## 8-1. Shiny 앱 구조
+
+### app.py 구조
+- Shiny App + Starlette로 감싸서 실행
+- 하단 탭바 JS(`switchTab`)로 탭 전환 (CSS show/hide 방식)
+- 모달 열림/닫힘 시 MutationObserver로 body 스크롤 고정 (아이폰 사파리 viewport 틀어짐 방지)
+- 각 모듈 ui/server를 네임스페이스로 등록
+
+### 구현 현황
+- 하단 탭바 네비게이션 (5개 탭)
+- 계좌 목록 화면: 카드형, 계좌 추가/삭제 (삭제 시 JS confirm)
+- 계좌 상세 화면: 종목/현금 목록, 종목 추가/수정/삭제, 현금 추가/수정/삭제 (삭제 시 JS confirm)
+- 평가액 계산 시 USD 종목 환율(USDKRW=X) 변환 적용
+- 종목 추가 시 tickers 미존재 종목은 자동 등록 (market/leverage 반영, is_manual=false)
+- 종목 클릭 시 수정 모달 (종목명/시장/레버리지/수량), 현금 클릭 시 수정 모달 (통화/금액) 분기
 
 ---
 
@@ -177,8 +233,12 @@
 | ✅ 완료 | 화면 구성 확정 |
 | ✅ 완료 | DB 스키마 설계 및 생성 |
 | ✅ 완료 | 시세 수집 스케줄러 개발 |
-| ⬜ 대기 | Shiny 앱 기본 구조 세팅 (라우팅, DB 연결, 공통 레이아웃) |
-| ⬜ 대기 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·삭제) |
+| ✅ 완료 | Shiny 앱 기본 구조 세팅 (라우팅, DB 연결, 공통 레이아웃) |
+| ✅ 완료 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·수정·삭제) |
+| ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
+| ⬜ 대기 | nginx Basic Auth 접근 제한 |
+| ⬜ 대기 | myassets.service 깃허브 등록 (scheduler/myassets.service) |
+| ⬜ 대기 | 설정 화면 (스케줄러 interval 조절, 중지/재시작) |
 | ⬜ 대기 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
