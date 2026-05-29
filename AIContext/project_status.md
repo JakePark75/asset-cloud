@@ -26,6 +26,7 @@
 | DB | PostgreSQL (VM에 직접 설치) |
 | 프레임워크 | Shiny for Python 1.6.2 |
 | 리포지토리 | https://github.com/JakePark75/asset-cloud |
+| CSS | app/static/style.css | 다크테마 공통 스타일, 인라인 style 지양하고 클래스로 관리 |
 
 ### 주요 패키지 버전
 | 패키지 | 버전 | 용도 |
@@ -261,6 +262,7 @@
 | ✅ 완료 | 시세 수집 스케줄러 개발 |
 | ✅ 완료 | Shiny 앱 기본 구조 세팅 (라우팅, DB 연결, 공통 레이아웃) |
 | ✅ 완료 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·수정·삭제) |
+| ✅ 완료 | 계좌 화면 UI 개선 (일간손익 환율반영, 삼각형 표시, 총자산 요약 섹션, 타이틀바 개선, 삭제버튼 하단 분리) |
 | ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
 | ✅ 완료 | 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY) |
 | ⬜ 대기 | nginx Basic Auth 접근 제한 |

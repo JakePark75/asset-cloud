@@ -20,6 +20,8 @@
 - 계좌 목록 + 총자산/현금/당일손익 집계
 - accounts LEFT JOIN positions LEFT JOIN tickers
 - 반환: `[(id, name, alias, total_asset, cash, daily_pnl), ...]`
+- cash: KRW + USD×환율 원화 합산
+- daily_pnl: 종목별 change_pct 기반, 미국주식 환율 반영
 
 #### `load_positions(acc_id)`
 - 계좌명/별명, 포지션 목록, USDKRW 환율 조회
@@ -35,11 +37,14 @@
 - `price_signal.get()` 호출로 시세 갱신 시 자동 재실행
 - `selected_account()`가 None이면 계좌 목록, 값 있으면 계좌 상세
 - **계좌 목록**: `load_accounts()` → `.asset-card` div 반복, onclick으로 `selected_id` input 세팅
+  - 카드 목록 상단: 전체 총자산/일간손익 요약 (total-summary), Python에서 accounts rows 합산
+  - 일간손익 표시: ▲/▼ + 금액 + 수익률(%), 투자금(총자산-현금) 대비
 - **계좌 상세**: `load_positions()` → `.ticker-row` div 반복, 현금/종목 분기 렌더
-  - 상단: 뒤로가기(`btn_back`), 계좌삭제(`btn_delete_account`), 계좌명
+  - 상단 타이틀바: ‹ 아이콘(좌측, `btn_back`) + 계좌명(중앙), `detail-titlebar` 클래스
+  - 타이틀바 아래: 해당 계좌 총자산/일간손익 요약 (`total-summary`), positions 루프 돌며 Python에서 합산
   - 중단: positions 루프 → `.ticker-row` (ticker-name / ticker-qty / ticker-amount / ticker-change), onclick으로 `edit_pos_id` input 세팅
-  - 하단: 종목추가(`btn_add_position`), 현금추가(`btn_add_cash`) 버튼
-
+  - 하단: 종목추가(`btn_add_position`), 현금추가(`btn_add_cash`), 계좌삭제(`btn_delete_account`, `btn-account-delete-bottom` 클래스) 버튼
+  
 #### `modal_add_account`
 - `show_modal()` True일 때 렌더
 - input: `new_account_name`, `new_account_alias`
@@ -62,6 +67,7 @@
 - input: `edit_position_name`, `edit_position_market`, `edit_position_leverage`, `edit_position_qty`
 - 저장: `btn_confirm_edit_position`, 삭제: `confirm_delete_position` (JS confirm 후 세팅)
 - 닫기: `modal_edit_position_close`
+- 삭제 버튼: 하단 분리, btn-modal-delete-bottom 클래스
 
 #### `modal_edit_cash`
 - `show_modal_edit_cash()` True일 때 렌더
@@ -69,6 +75,7 @@
 - input: `edit_cash_type`, `edit_cash_amount`
 - 저장: `btn_confirm_edit_cash`, 삭제: `confirm_delete_cash` (JS confirm 후 세팅)
 - 닫기: `modal_edit_cash_close`
+- 삭제 버튼: 하단 분리, btn-modal-delete-bottom 클래스
 
 ### 이벤트 핸들러
 
@@ -98,5 +105,5 @@
 - 계좌/종목/현금 삭제 시 JS `confirm()`으로 확인 후 Shiny input 세팅하는 방식 사용
 - tickers.ticker는 PK라 티커 변경 불가 — 수정 모달에서 읽기전용 표시만
 - `start_signal_listener(db_password)` 를 server 함수 진입부에서 호출 (`price_signal.py` 연동)
-
+- DB NUMERIC 컬럼(current_price, change_pct, quantity 등)은 psycopg2가 Decimal로 반환 — float() 변환 후 사용
 ---

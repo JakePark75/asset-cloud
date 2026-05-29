@@ -42,11 +42,16 @@ def accounts_server(input, output, session):
                     END
                 ), 0) AS total_asset,
                 COALESCE(SUM(
-                    CASE WHEN p.ticker IN ('KRW','USD') THEN p.quantity ELSE 0 END
+                    CASE
+                        WHEN p.ticker = 'KRW' THEN p.quantity
+                        WHEN p.ticker = 'USD' THEN p.quantity * COALESCE((SELECT current_price FROM tickers WHERE ticker = 'USDKRW=X'), 1)
+                        ELSE 0
+                    END
                 ), 0) AS cash,
                 COALESCE(SUM(
                     CASE WHEN p.ticker NOT IN ('KRW','USD')
                     THEN p.quantity * COALESCE(t.current_price,0) * COALESCE(t.change_pct,0) / 100
+                        * CASE WHEN t.market IN ('NAS', 'AMS', 'ARC') THEN COALESCE((SELECT current_price FROM tickers WHERE ticker = 'USDKRW=X'), 1) ELSE 1 END
                     ELSE 0 END
                 ), 0) AS daily_pnl
             FROM accounts a
@@ -87,27 +92,39 @@ def accounts_server(input, output, session):
         acc_id = selected_account()
 
         if acc_id is None:
-            # 계좌 목록 화면
             accounts = load_accounts()
+            total_sum = sum(acc[3] for acc in accounts)
+            cash_sum = sum(acc[4] for acc in accounts)
+            pnl_sum = sum(acc[5] for acc in accounts)
+            invest_sum = total_sum - cash_sum
+            pnl_pct_sum = (pnl_sum / invest_sum * 100) if invest_sum > 0 else 0
+            pnl_class_sum = "positive" if pnl_sum >= 0 else "negative"
+            triangle_sum = "▲" if pnl_sum >= 0 else "▼"
+            pnl_text_sum = f"{triangle_sum}{int(pnl_sum):,}원 ({pnl_pct_sum:.2f}%)"            
             if not accounts:
                 cards = ui.p("등록된 계좌가 없습니다.", style="color:#888; padding: 16px 0;")
             else:
                 card_list = []
                 for acc in accounts:
                     a_id, name, alias, total, cash, pnl = acc
+                    invest = total - cash
+                    pnl_pct = (pnl / invest * 100) if invest > 0 else 0
                     pnl_class = "positive" if pnl >= 0 else "negative"
-                    pnl_sign = "+" if pnl >= 0 else ""
+                    triangle = "▲" if pnl >= 0 else "▼"
+                    pnl_text = f"{triangle}{int(pnl):,}원 ({pnl_pct:.2f}%)"
                     card_list.append(
                         ui.div(
                             ui.div(
                                 ui.strong(name),
-                                ui.span(f" ({alias})" if alias else "", style="color:#888; font-size:13px;"),
+                                ui.span(f" ({alias})" if alias else "", class_="account-alias"),
                             ),
                             ui.div(
                                 ui.div(f"{int(total):,}원", class_="amount-large"),
                                 ui.div(
-                                    ui.span(f"당일손익 {pnl_sign}{int(pnl):,}원", class_=pnl_class),
-                                    ui.span(f"  현금 {int(cash):,}원", style="color:#888; margin-left:8px; font-size:13px;"),
+                                    ui.span("일간손익 ", class_="card-pnl-label"),
+                                    ui.span(pnl_text, class_=pnl_class),
+                                    ui.span(f"현금 {int(cash):,}원", class_="card-cash-label"),
+                                    class_="card-pnl-row",
                                 ),
                             ),
                             class_="asset-card",
@@ -118,36 +135,50 @@ def accounts_server(input, output, session):
 
             return ui.div(
                 ui.div(
-                    ui.h4("계좌 목록", style="padding: 16px 0 8px 0;"),
+                    ui.div("총자산", class_="account-alias"),
+                    ui.div(f"{int(total_sum):,}원", class_="total-summary-amount"),
+                    ui.div(ui.span(pnl_text_sum, class_=f"total-summary-pnl-text {pnl_class_sum}"), class_="total-summary-pnl"),
+                    class_="total-summary",
+                ),
+                ui.div(
+                    ui.h4("계좌 목록", class_="section-heading"),
                     cards,
                     ui.input_action_button("btn_add_account", "+ 계좌 추가", class_="btn-add"),
-                    style="padding: 0 16px;"
+                    class_="page-inner",
                 )
             )
 
         else:
-            # 계좌 상세 화면
             acc, positions, usd_rate = load_positions(acc_id)
+            total_sum = 0
+            pnl_sum = 0
             rows = []
             for pos in positions:
                 pos_id, ticker, qty, tname, price, chg_pct, t_market = pos
                 is_cash = ticker in ('KRW', 'USD')
                 if is_cash:
                     display_name = "현금(KRW)" if ticker == "KRW" else "현금(USD)"
-                    amount_str = f"{int(qty):,}원"
+                    if ticker == "USD":
+                        amount_str = f"{int(float(qty) * usd_rate):,}원"
+                        total_sum += float(qty) * usd_rate
+                    else:
+                        amount_str = f"{int(qty):,}원"
+                        total_sum += float(qty)
                     qty_str = ""
                     chg_str = ""
                     chg_class = ""
                 else:
                     rate = usd_rate if t_market in ('NAS', 'AMS', 'ARC') else 1
                     amount = float(qty) * float(price or 0) * rate
-                    chg = chg_pct or 0
+                    chg = float(chg_pct or 0)
                     chg_sign = "+" if chg >= 0 else ""
                     chg_class = "positive" if chg >= 0 else "negative"
                     display_name = tname or ticker
                     amount_str = f"{int(amount):,}원"
                     qty_str = f"{qty:g}주"
                     chg_str = f"{chg_sign}{chg:.2f}%"
+                    total_sum += amount
+                    pnl_sum += amount * chg / 100
 
                 rows.append(
                     ui.div(
@@ -164,19 +195,31 @@ def accounts_server(input, output, session):
                     )
                 )
 
+                pnl_class_sum = "positive" if pnl_sum >= 0 else "negative"
+                triangle_sum = "▲" if pnl_sum >= 0 else "▼"
+                invest_sum = total_sum  # 계좌 상세는 현금 포함 전체 대비
+                pnl_pct_sum = (pnl_sum / invest_sum * 100) if invest_sum > 0 else 0
+                pnl_text_sum = f"{triangle_sum}{int(pnl_sum):,}원 ({pnl_pct_sum:.2f}%)"
+
             return ui.div(
                 ui.div(
-                    ui.input_action_button("btn_back", "← 목록", class_="btn-danger-sm"),
-                    ui.input_action_button("btn_delete_account", "삭제", class_="btn-danger-sm", style="float:right; color:#ff4d4d;",
-                    onclick=f"if(confirm('계좌를 삭제하시겠습니까?')) Shiny.setInputValue('{session.ns('confirm_delete_account')}', Math.random(), {{priority: 'event'}});"),
-                    ui.strong(f"{acc[0]}" + (f" ({acc[1]})" if acc[1] else ""), style="margin-left:8px;"),
-                    style="padding: 12px 16px 0 16px;"
+                    ui.input_action_button("btn_back", "‹", class_="detail-titlebar-back"),
+                    ui.span(f"{acc[0]}" + (f" ({acc[1]})" if acc[1] else ""), class_="detail-titlebar-title"),
+                    class_="detail-titlebar",
                 ),
-                ui.div(*rows, style="padding: 0 16px;") if rows else ui.p("종목이 없습니다.", style="color:#888; padding: 16px;"),
+                ui.div(
+                    ui.div("총자산", class_="account-alias"),
+                    ui.div(f"{int(total_sum):,}원", class_="total-summary-amount"),
+                    ui.div(ui.span(pnl_text_sum, class_=f"total-summary-pnl-text {pnl_class_sum}"), class_="total-summary-pnl"),
+                    class_="total-summary",
+                ),                
+                ui.div(*rows, class_="page-inner") if rows else ui.p("종목이 없습니다.", style="color:#888; padding: 16px;"),
                 ui.div(
                     ui.input_action_button("btn_add_position", "+ 종목 추가", class_="btn-add"),
-                    ui.input_action_button("btn_add_cash", "+ 현금 추가", class_="btn-add", style="margin-top:8px;"),
-                    style="padding: 0 16px;"
+                    ui.input_action_button("btn_add_cash", "+ 현금 추가", class_="btn-add"),
+                    ui.input_action_button("btn_delete_account", "계좌 삭제", class_="btn-account-delete-bottom",
+                        onclick=f"if(confirm('계좌를 삭제하시겠습니까?')) Shiny.setInputValue('{session.ns('confirm_delete_account')}', Math.random(), {{priority: 'event'}});"),
+                    class_="page-inner",
                 ),
             )
 
@@ -187,14 +230,14 @@ def accounts_server(input, output, session):
         return ui.div(
             ui.div(
                 ui.div(
-                    ui.h4("계좌 추가", style="margin:0;"),
-                    ui.span("✕", style="cursor:pointer; font-size:20px;",
+                    ui.h4("계좌 추가", class_="modal-title"),
+                    ui.span("✕", class_="modal-close-icon",
                             onclick=f"Shiny.setInputValue('{session.ns('modal_close')}', Math.random(), {{priority: 'event'}});"),
-                    style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;"
+                    class_="modal-header-row",
                 ),
                 ui.input_text("new_account_name", "계좌명", placeholder="예) 키움증권"),
                 ui.input_text("new_account_alias", "별명 (선택)", placeholder="예) 키움"),
-                ui.input_action_button("btn_confirm_add", "추가", class_="btn-add", style="margin-top:8px;"),
+                ui.input_action_button("btn_confirm_add", "추가", class_="btn-add"),
                 class_="modal-box",
                 onclick="event.stopPropagation();",
             ),
@@ -209,17 +252,17 @@ def accounts_server(input, output, session):
         return ui.div(
             ui.div(
                 ui.div(
-                    ui.h4("종목 추가", style="margin:0;"),
-                    ui.span("✕", style="cursor:pointer; font-size:20px;",
+                    ui.h4("종목 추가", class_="modal-title"),
+                    ui.span("✕", class_="modal-close-icon",
                             onclick=f"Shiny.setInputValue('{session.ns('modal_position_close')}', Math.random(), {{priority: 'event'}});"),
-                    style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;"
+                    class_="modal-header-row",
                 ),
                 ui.input_text("new_position_name", "종목명", placeholder="예) 애플"),
                 ui.input_text("new_position_ticker", "티커", placeholder="예) AAPL"),
                 ui.input_select("new_position_market", "시장", {"KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)", "ARC": "ARC (NYSE Arca)", "IDX": "IDX (지수/환율/암호화폐)"}),
                 ui.input_select("new_position_leverage", "레버리지", {"1": "x1", "2": "x2", "3": "x3"}),
                 ui.input_numeric("new_position_qty", "수량", value=None, min=0),
-                ui.input_action_button("btn_confirm_add_position", "추가", class_="btn-add", style="margin-top:8px;"),
+                ui.input_action_button("btn_confirm_add_position", "추가", class_="btn-add"),
                 class_="modal-box",
                 onclick="event.stopPropagation();",
             ),
@@ -234,14 +277,14 @@ def accounts_server(input, output, session):
         return ui.div(
             ui.div(
                 ui.div(
-                    ui.h4("현금 추가", style="margin:0;"),
-                    ui.span("✕", style="cursor:pointer; font-size:20px;",
+                    ui.h4("현금 추가", class_="modal-title"),
+                    ui.span("✕", class_="modal-close-icon",
                             onclick=f"Shiny.setInputValue('{session.ns('modal_cash_close')}', Math.random(), {{priority: 'event'}});"),
-                    style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;"
+                    class_="modal-header-row",
                 ),
                 ui.input_select("new_cash_type", "통화", {"KRW": "원화(KRW)", "USD": "달러(USD)"}),
                 ui.input_numeric("new_cash_amount", "금액", value=None, min=0),
-                ui.input_action_button("btn_confirm_add_cash", "추가", class_="btn-add", style="margin-top:8px;"),
+                ui.input_action_button("btn_confirm_add_cash", "추가", class_="btn-add"),
                 class_="modal-box",
                 onclick="event.stopPropagation();",
             ),
@@ -268,17 +311,16 @@ def accounts_server(input, output, session):
         return ui.div(
             ui.div(
                 ui.div(
-                    ui.h4("현금 수정", style="margin:0;"),
-                    ui.span("✕", style="cursor:pointer; font-size:20px;",
+                    ui.h4("현금 수정", class_="modal-title"),
+                    ui.span("✕", class_="modal-close-icon",
                             onclick=f"Shiny.setInputValue('{session.ns('modal_edit_cash_close')}', Math.random(), {{priority: 'event'}});"),
-                    style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;"
+                    class_="modal-header-row",
                 ),
                 ui.input_select("edit_cash_type", "통화", {"KRW": "원화(KRW)", "USD": "달러(USD)"}, selected=ticker),
                 ui.input_numeric("edit_cash_amount", "금액", value=int(qty) if qty else 0, min=0),
-                ui.input_action_button("btn_confirm_edit_cash", "저장", class_="btn-add", style="margin-top:8px;"),
-                ui.input_action_button("btn_delete_cash", "삭제", class_="btn-danger-sm", style="margin-top:8px; color:#ff4d4d;",
-                    onclick=f"if(confirm('삭제하시겠습니까?')) Shiny.setInputValue('{session.ns('confirm_delete_cash')}', Math.random(), {{priority: 'event'}});"),
-                class_="modal-box",
+                ui.input_action_button("btn_confirm_edit_cash", "저장", class_="btn-add"),
+                ui.input_action_button("btn_delete_cash", "현금 삭제", class_="btn-modal-delete-bottom",
+                    onclick=f"if(confirm('삭제하시겠습니까?')) Shiny.setInputValue('{session.ns('confirm_delete_cash')}', Math.random(), {{priority: 'event'}});"),                class_="modal-box",
                 onclick="event.stopPropagation();",
             ),
             class_="modal-overlay",
@@ -308,20 +350,19 @@ def accounts_server(input, output, session):
         return ui.div(
             ui.div(
                 ui.div(
-                    ui.h4("종목 수정", style="margin:0;"),
-                    ui.span("✕", style="cursor:pointer; font-size:20px;",
+                    ui.h4("종목 수정", class_="modal-title"),
+                    ui.span("✕", class_="modal-close-icon",
                             onclick=f"Shiny.setInputValue('{session.ns('modal_edit_position_close')}', Math.random(), {{priority: 'event'}});"),
-                    style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;"
+                    class_="modal-header-row",
                 ),
-                ui.p(ticker, style="color:#888; font-size:13px; margin-bottom:12px;"),
+                ui.p(ticker, class_="ticker-readonly-label"),
                 ui.input_text("edit_position_name", "종목명", value=tname or ""),
                 ui.input_select("edit_position_market", "시장", {"KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)", "ARC": "ARC (NYSE Arca)", "IDX": "IDX (지수/환율/암호화폐)"}, selected=market or "NAS"),
                 ui.input_select("edit_position_leverage", "레버리지", {"1": "x1", "2": "x2", "3": "x3"}, selected=str(leverage or 1)),
                 ui.input_numeric("edit_position_qty", "수량", value=int(qty) if qty else 0, min=0),
-                ui.input_action_button("btn_confirm_edit_position", "저장", class_="btn-add", style="margin-top:8px;"),
-                ui.input_action_button("btn_delete_position", "삭제", class_="btn-danger-sm", style="margin-top:8px; color:#ff4d4d;",
-                onclick=f"if(confirm('삭제하시겠습니까?')) Shiny.setInputValue('{session.ns('confirm_delete_position')}', Math.random(), {{priority: 'event'}});"),
-                class_="modal-box",
+                ui.input_action_button("btn_confirm_edit_position", "저장", class_="btn-add"),
+                ui.input_action_button("btn_delete_position", "종목 삭제", class_="btn-modal-delete-bottom",
+                    onclick=f"if(confirm('삭제하시겠습니까?')) Shiny.setInputValue('{session.ns('confirm_delete_position')}', Math.random(), {{priority: 'event'}});"),                class_="modal-box",
                 onclick="event.stopPropagation();",
             ),
             class_="modal-overlay",
