@@ -225,14 +225,6 @@ def run_update_cycle():
 
     log.info("업데이트 완료")
 
-def run_update_cycle():
-    # ... 기존 코드 ...
-    for t in threads:
-        t.join()
-
-    log.info("업데이트 완료")
-
-    # NOTIFY 추가
     try:
         conn = get_db_conn()
         conn.autocommit = True

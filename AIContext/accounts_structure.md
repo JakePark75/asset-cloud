@@ -1,6 +1,6 @@
 # accounts.py — 구조 요약
 
-## Reactive State
+### Reactive State
 
 | 변수 | 타입 | 설명 |
 |------|------|------|
@@ -14,16 +14,14 @@
 | `show_modal_edit_cash` | `reactive.value(False)` | 현금 수정 모달 표시 여부 |
 | `edit_cash_id` | `reactive.value(None)` | 수정 중인 position id (현금) |
 
----
+### DB 조회 함수
 
-## DB 조회 함수
-
-### `load_accounts()`
+#### `load_accounts()`
 - 계좌 목록 + 총자산/현금/당일손익 집계
 - accounts LEFT JOIN positions LEFT JOIN tickers
 - 반환: `[(id, name, alias, total_asset, cash, daily_pnl), ...]`
 
-### `load_positions(acc_id)`
+#### `load_positions(acc_id)`
 - 계좌명/별명, 포지션 목록, USDKRW 환율 조회
 - positions LEFT JOIN tickers, KRW/USD 현금은 상단 정렬
 - 반환: `(acc, positions, usd_rate)`
@@ -31,11 +29,10 @@
   - `positions`: `[(id, ticker, quantity, name, current_price, change_pct, market), ...]`
   - `usd_rate`: float
 
----
+### UI 렌더러 (output_ui)
 
-## UI 렌더러 (output_ui)
-
-### `main_view`
+#### `main_view`
+- `price_signal.get()` 호출로 시세 갱신 시 자동 재실행
 - `selected_account()`가 None이면 계좌 목록, 값 있으면 계좌 상세
 - **계좌 목록**: `load_accounts()` → `.asset-card` div 반복, onclick으로 `selected_id` input 세팅
 - **계좌 상세**: `load_positions()` → `.ticker-row` div 반복, 현금/종목 분기 렌더
@@ -43,22 +40,22 @@
   - 중단: positions 루프 → `.ticker-row` (ticker-name / ticker-qty / ticker-amount / ticker-change), onclick으로 `edit_pos_id` input 세팅
   - 하단: 종목추가(`btn_add_position`), 현금추가(`btn_add_cash`) 버튼
 
-### `modal_add_account`
+#### `modal_add_account`
 - `show_modal()` True일 때 렌더
 - input: `new_account_name`, `new_account_alias`
 - 닫기: `modal_close`
 
-### `modal_add_position`
+#### `modal_add_position`
 - `show_modal_position()` True일 때 렌더
 - input: `new_position_name`, `new_position_ticker`, `new_position_market`, `new_position_leverage`, `new_position_qty`
 - 닫기: `modal_position_close`
 
-### `modal_add_cash`
+#### `modal_add_cash`
 - `show_modal_cash()` True일 때 렌더
 - input: `new_cash_type`, `new_cash_amount`
 - 닫기: `modal_cash_close`
 
-### `modal_edit_position`
+#### `modal_edit_position`
 - `show_modal_edit_position()` True일 때 렌더
 - DB에서 해당 position 조회 후 기존값으로 초기화
 - 티커는 읽기전용 표시
@@ -66,16 +63,14 @@
 - 저장: `btn_confirm_edit_position`, 삭제: `confirm_delete_position` (JS confirm 후 세팅)
 - 닫기: `modal_edit_position_close`
 
-### `modal_edit_cash`
+#### `modal_edit_cash`
 - `show_modal_edit_cash()` True일 때 렌더
 - DB에서 해당 position 조회 후 기존값으로 초기화
 - input: `edit_cash_type`, `edit_cash_amount`
 - 저장: `btn_confirm_edit_cash`, 삭제: `confirm_delete_cash` (JS confirm 후 세팅)
 - 닫기: `modal_edit_cash_close`
 
----
-
-## 이벤트 핸들러
+### 이벤트 핸들러
 
 | 핸들러 함수 | 트리거 | 동작 |
 |---|---|---|
@@ -99,8 +94,9 @@
 | `edit_cash` | `btn_confirm_edit_cash` | positions UPDATE (ticker/quantity), refresh |
 | `delete_cash` | `confirm_delete_cash` | positions DELETE, refresh |
 
----
-
-## 비고
-- 계좌/종목/현금 삭제 시 JS `confirm()` 으로 확인 후 Shiny input 세팅하는 방식 사용 (`return false` 방식 불가)
+### 비고
+- 계좌/종목/현금 삭제 시 JS `confirm()`으로 확인 후 Shiny input 세팅하는 방식 사용
 - tickers.ticker는 PK라 티커 변경 불가 — 수정 모달에서 읽기전용 표시만
+- `start_signal_listener(db_password)` 를 server 함수 진입부에서 호출 (`price_signal.py` 연동)
+
+---

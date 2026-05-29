@@ -1,6 +1,6 @@
 from shiny import ui, render, module, reactive
 from db import get_connection
-from signal import price_signal, start_signal_listener
+from price_signal import price_signal, start_signal_listener
 from db import get_config
 
 @module.ui

@@ -21,10 +21,22 @@
 |------|------|
 | VM | Oracle Cloud 도쿄 리전 (161.33.151.220) |
 | OS | Ubuntu |
+| Python | 3.10.12 |
 | 도메인 | myassets.mooo.com |
 | DB | PostgreSQL (VM에 직접 설치) |
-| 프레임워크 | Shiny for Python |
+| 프레임워크 | Shiny for Python 1.6.2 |
 | 리포지토리 | https://github.com/JakePark75/asset-cloud |
+
+### 주요 패키지 버전
+| 패키지 | 버전 | 용도 |
+|--------|------|------|
+| shiny | 1.6.2 | 웹 프레임워크 |
+| psycopg2 | 2.9.12 | PostgreSQL 동기 연결 (DB 조회/수정) |
+| asyncpg | 0.31.0 | PostgreSQL 비동기 연결 (LISTEN/NOTIFY) |
+
+### Shiny 1.6.2 주의사항
+- `App()`의 `lifespan` 파라미터 미지원
+- 백그라운드 태스크 시작은 `asyncio.get_event_loop().create_task()`를 server 함수 진입부에서 호출하는 방식 사용
 
 ### 서버 구조
 - **nginx**: 활성화 (systemd), 443/80 리스닝, SSL은 Certbot으로 관리
@@ -47,6 +59,7 @@
 │   ├── app.py           # 진입점 (Shiny App + Starlette 라우팅, 하단 탭바)
 │   ├── db.py            # DB 연결 공통
 │   ├── context_api.py   # AI 컨텍스트 MD 서빙 API
+│   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
 │   ├── static/
 │   │   └── style.css    # 공통 스타일 (다크테마)
 │   └── modules/
@@ -199,17 +212,25 @@
 - NAS/AMS/ARC: KIS API 미국주식
 - IDX: Yahoo Finance (환율/지수/암호화폐 포함, data_time 저장)
 - 업데이트 주기: config.json의 interval(분), 실행 중 변경 즉시 반영
+- 업데이트 완료 후 PostgreSQL `NOTIFY price_updated` 전송
 - systemd 서비스: VM 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
 
 ---
 
-## 8-1. Shiny 앱 구조
+## 9. Shiny 앱 구조
 
 ### app.py 구조
 - Shiny App + Starlette로 감싸서 실행
 - 하단 탭바 JS(`switchTab`)로 탭 전환 (CSS show/hide 방식)
 - 모달 열림/닫힘 시 MutationObserver로 body 스크롤 고정 (아이폰 사파리 viewport 틀어짐 방지)
 - 각 모듈 ui/server를 네임스페이스로 등록
+
+### 실시간 시세 갱신 구조
+- `price_signal.py`: asyncpg로 PostgreSQL `LISTEN price_updated` 대기
+- NOTIFY 수신 시 `async with reactive.lock()` → `price_signal.set()` → `await reactive.flush()` 호출
+- 각 화면 모듈에서 `price_signal.get()`을 렌더러 안에서 호출해 의존성 등록
+- 시세 업데이트 시 의존 렌더러 자동 재실행 → DB 재조회 → 화면 갱신
+- 백그라운드 태스크는 첫 세션 접속 시 1회만 시작 (`_task_started` 플래그)
 
 ### 구현 현황
 - 하단 탭바 네비게이션 (5개 탭)
@@ -218,13 +239,15 @@
 - 평가액 계산 시 USD 종목 환율(USDKRW=X) 변환 적용
 - 종목 추가 시 tickers 미존재 종목은 자동 등록 (market/leverage 반영, is_manual=false)
 - 종목 클릭 시 수정 모달 (종목명/시장/레버리지/수량), 현금 클릭 시 수정 모달 (통화/금액) 분기
+- 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY 기반)
 - 모바일 사파리 WebSocket 끊김 대응:
-- iOS Safari는 백그라운드 전환 시 약 5초 후 WebSocket을 능동적으로 끊음 (iOS 레벨 동작, 서버 설정으로 변경 불가)
-- shiny:disconnected 이벤트 감지 시 location.reload() 로 자동 재연결
-- 재연결 후 localStorage로 마지막 탭 복원
+  - iOS Safari는 백그라운드 전환 시 약 5초 후 WebSocket을 능동적으로 끊음 (iOS 레벨 동작, 서버 설정으로 변경 불가)
+  - shiny:disconnected 이벤트 감지 시 location.reload()로 자동 재연결
+  - 재연결 후 localStorage로 마지막 탭 복원
+
 ---
 
-## 9. 앞으로 할 일
+## 11. 앞으로 할 일
 
 | 상태 | 항목 |
 |------|------|
@@ -239,12 +262,12 @@
 | ✅ 완료 | Shiny 앱 기본 구조 세팅 (라우팅, DB 연결, 공통 레이아웃) |
 | ✅ 완료 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·수정·삭제) |
 | ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
+| ✅ 완료 | 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY) |
 | ⬜ 대기 | nginx Basic Auth 접근 제한 |
-| ⬜ 대기 | 설정 화면 (스케줄러 interval 조절, 중지/재시작) |
 | ⬜ 대기 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
 | ⬜ 대기 | 기존 일일자산누적 데이터 DB 일괄 이전 (2025-06-19~) |
 | ⬜ 대기 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
-| ⬜ 대기 | 설정 화면 |
+| ⬜ 대기 | 설정 화면 (스케줄러 interval 조절, 중지/재시작) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |
