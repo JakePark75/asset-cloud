@@ -225,6 +225,23 @@ def run_update_cycle():
 
     log.info("업데이트 완료")
 
+def run_update_cycle():
+    # ... 기존 코드 ...
+    for t in threads:
+        t.join()
+
+    log.info("업데이트 완료")
+
+    # NOTIFY 추가
+    try:
+        conn = get_db_conn()
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("NOTIFY price_updated")
+        conn.close()
+        log.info("NOTIFY price_updated 전송")
+    except Exception as e:
+        log.error(f"NOTIFY 실패: {e}")
 
 # ---------------------------------------------------------------------------
 # 메인 루프

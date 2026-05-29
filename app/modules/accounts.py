@@ -1,5 +1,7 @@
 from shiny import ui, render, module, reactive
 from db import get_connection
+from signal import price_signal, start_signal_listener
+from db import get_config
 
 @module.ui
 def accounts_ui():
@@ -14,6 +16,7 @@ def accounts_ui():
 
 @module.server
 def accounts_server(input, output, session):
+    start_signal_listener(get_config()["db_password"])
     selected_account = reactive.value(None)
     show_modal = reactive.value(False)
     refresh = reactive.value(0)
@@ -79,6 +82,7 @@ def accounts_server(input, output, session):
 
     @render.ui
     def main_view():
+        price_signal.get()
         refresh()
         acc_id = selected_account()
 
