@@ -218,7 +218,10 @@
 - 평가액 계산 시 USD 종목 환율(USDKRW=X) 변환 적용
 - 종목 추가 시 tickers 미존재 종목은 자동 등록 (market/leverage 반영, is_manual=false)
 - 종목 클릭 시 수정 모달 (종목명/시장/레버리지/수량), 현금 클릭 시 수정 모달 (통화/금액) 분기
-
+- 모바일 사파리 WebSocket 끊김 대응:
+- iOS Safari는 백그라운드 전환 시 약 5초 후 WebSocket을 능동적으로 끊음 (iOS 레벨 동작, 서버 설정으로 변경 불가)
+- shiny:disconnected 이벤트 감지 시 location.reload() 로 자동 재연결
+- 재연결 후 localStorage로 마지막 탭 복원
 ---
 
 ## 9. 앞으로 할 일
@@ -237,7 +240,6 @@
 | ✅ 완료 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·수정·삭제) |
 | ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
 | ⬜ 대기 | nginx Basic Auth 접근 제한 |
-| ⬜ 대기 | myassets.service 깃허브 등록 (scheduler/myassets.service) |
 | ⬜ 대기 | 설정 화면 (스케줄러 interval 조절, 중지/재시작) |
 | ⬜ 대기 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |

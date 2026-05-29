@@ -30,13 +30,37 @@ app_ui = ui.page_fluid(
         class_="bottom-tabbar"
     ),
     ui.tags.script("""
+        // 탭 전환 + localStorage 저장
         function switchTab(name, el) {
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
             el.classList.add('active');
+            localStorage.setItem('activeTab', name);
         }
+
+        // 페이지 로드 시 탭 복원
+        (function() {
+            var saved = localStorage.getItem('activeTab');
+            if (!saved) return;
+            var tabNames = ['dashboard', 'portfolio', 'accounts', 'history', 'settings'];
+            var idx = tabNames.indexOf(saved);
+            if (idx === -1) return;
+            var content = document.getElementById('tab-' + saved);
+            var btns = document.querySelectorAll('.tab-btn');
+            if (!content || btns.length <= idx) return;
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            btns.forEach(b => b.classList.remove('active'));
+            content.classList.add('active');
+            btns[idx].classList.add('active');
+        })();
+
+        // Shiny 끊김 감지 시 reload
+        $(document).on('shiny:disconnected', function() {
+            location.reload();
+        });
     """),
+
 )
 
 def server(input, output, session):
