@@ -265,7 +265,8 @@
 | ✅ 완료 | 계좌 화면 UI 개선 (일간손익 환율반영, 삼각형 표시, 총자산 요약 섹션, 타이틀바 개선, 삭제버튼 하단 분리) |
 | ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
 | ✅ 완료 | 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY) |
-| ⬜ 대기 | nginx Basic Auth 접근 제한 |
+| ✅ 완료 | nginx Basic Auth 접근 제한 | → Shiny 앱 내 로그인으로 방향 변경 |
+| ⬜ 대기 | Shiny 앱 로그인 화면 구현 |
 | ⬜ 대기 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
