@@ -1,5 +1,5 @@
 from shiny import ui, render, module, reactive
-from db import get_connection
+from db import get_connection, get_usd_krw
 from price_signal import price_signal, start_signal_listener
 from db import get_config
 
@@ -93,6 +93,7 @@ def accounts_server(input, output, session):
 
         if acc_id is None:
             accounts = load_accounts()
+            usd_rate, usd_chg = get_usd_krw()
             total_sum = sum(acc[3] for acc in accounts)
             cash_sum = sum(acc[4] for acc in accounts)
             pnl_sum = sum(acc[5] for acc in accounts)
@@ -133,11 +134,30 @@ def accounts_server(input, output, session):
                     )
                 cards = ui.div(*card_list)
 
+            if usd_rate is not None and usd_chg is not None:
+                usd_sign = "+" if usd_chg >= 0 else "-"
+                usd_class = "positive" if usd_chg >= 0 else "negative"
+                usd_text_label = "USD/KRW "
+                usd_text_num = f"{usd_rate:,.2f} ({usd_sign}{abs(usd_chg):.2f}%)"
+            else:
+                usd_text_label = ""
+                usd_text_num = ""
+                usd_class = ""
             return ui.div(
+                # 환율 표시 텍스트 생성
                 ui.div(
                     ui.div("총자산", class_="account-alias"),
                     ui.div(f"{int(total_sum):,}원", class_="total-summary-amount"),
-                    ui.div(ui.span(pnl_text_sum, class_=f"total-summary-pnl-text {pnl_class_sum}"), class_="total-summary-pnl"),
+                    ui.div(
+                        ui.span(pnl_text_sum, class_=f"total-summary-pnl-text {pnl_class_sum}"),
+                        ui.span(
+                            ui.span(usd_text_label, style="color:#888888;"),
+                            ui.span(usd_text_num, class_=usd_class),
+                            style="margin-left:auto; font-size:11px;"
+                        ) if usd_text_label else None,
+                        class_="total-summary-pnl",
+                        style="justify-content:space-between;"
+                    ),
                     class_="total-summary",
                 ),
                 ui.div(

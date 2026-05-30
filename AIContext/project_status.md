@@ -197,6 +197,10 @@
 - VM OS 유저: ubuntu (DB 유저와 불일치 → md5 인증 사용)
 - 테이블: tickers, accounts, positions, daily_summary — 생성 완료
 
+### 공통 조회 함수 (db.py)
+| 함수 | 반환 | 설명 |
+|------|------|------|
+| `get_usd_krw()` | `(float, float)` or `(None, None)` | USDKRW=X의 current_price, change_pct 반환. 환율 표시가 필요한 모든 화면에서 사용 |
 ---
 
 ## 8. 시세 수집 스케줄러
@@ -266,7 +270,8 @@
 | ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
 | ✅ 완료 | 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY) |
 | ✅ 완료 | nginx Basic Auth 접근 제한 | → Shiny 앱 내 로그인으로 방향 변경 |
-| ⬜ 대기 | Shiny 앱 로그인 화면 구현 |
+| ✅ 완료 | Shiny 앱 로그인 화면 구현
+| ✅ 완료 | 계좌 화면 환율 표시 (USD/KRW, 등락률, 색상)
 | ⬜ 대기 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |

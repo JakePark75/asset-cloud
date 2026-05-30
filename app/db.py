@@ -17,3 +17,18 @@ def get_connection():
         user="jake",
         password=config["db_password"]
     )
+
+def get_usd_krw():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT current_price, change_pct 
+        FROM tickers 
+        WHERE ticker = 'USDKRW=X'
+    """)
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if row:
+        return float(row[0]), float(row[1])
+    return None, None

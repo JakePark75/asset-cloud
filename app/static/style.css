@@ -304,3 +304,8 @@ body {
     padding: 12px;
     margin-top: 24px;
 }
+
+/* 로그인 폼 */
+#screen-login .shiny-input-container {
+    width: 100%;
+}

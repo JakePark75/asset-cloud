@@ -11,6 +11,7 @@ from modules.settings import settings_ui, settings_server
 from auth import verify_login, create_token, verify_token
 
 app_ui = ui.page_fluid(
+    ui.tags.meta(name="viewport", content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "style.css")),
 
     # 로그인 화면
@@ -25,6 +26,7 @@ app_ui = ui.page_fluid(
             style="max-width:320px; margin:0 auto; padding-top:120px;"
         ),
         id="screen-login",
+        style="display:none;",
     ),
 
     # 메인 화면
@@ -110,6 +112,9 @@ app_ui = ui.page_fluid(
         // 페이지 로드 시 쿠키 확인 → Shiny로 전달
         $(document).on('shiny:sessioninitialized', function() {
             var token = getCookie('auth_token');
+            if (!token) {
+            showLogin();  // 쿠키 없으면 로그인 화면 표시
+     }
             Shiny.setInputValue('cookie_token', token || '', {priority: 'event'});
         });
 

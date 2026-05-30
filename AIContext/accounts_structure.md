@@ -31,6 +31,11 @@
   - `positions`: `[(id, ticker, quantity, name, current_price, change_pct, market), ...]`
   - `usd_rate`: float
 
+#### `get_usd_krw()` (db.py)
+- USDKRW=X 티커의 current_price, change_pct 조회
+- 반환: `(usd_rate: float, usd_chg: float)` 또는 `(None, None)`
+- 다른 화면에서도 재사용 가능
+
 ### UI 렌더러 (output_ui)
 
 #### `main_view`
@@ -44,6 +49,10 @@
   - 타이틀바 아래: 해당 계좌 총자산/일간손익 요약 (`total-summary`), positions 루프 돌며 Python에서 합산
   - 중단: positions 루프 → `.ticker-row` (ticker-name / ticker-qty / ticker-amount / ticker-change), onclick으로 `edit_pos_id` input 세팅
   - 하단: 종목추가(`btn_add_position`), 현금추가(`btn_add_cash`), 계좌삭제(`btn_delete_account`, `btn-account-delete-bottom` 클래스) 버튼
+- 계좌 목록 상단 총자산 요약(total-summary)에 USD/KRW 환율 및 등락률 표시
+  - get_usd_krw() 로 환율/등락률 조회
+  - 일간손익과 같은 줄 우측 정렬, 11px
+  - "USD/KRW" 레이블은 #888888, 숫자/등락률은 positive/negative 색상
   
 #### `modal_add_account`
 - `show_modal()` True일 때 렌더
