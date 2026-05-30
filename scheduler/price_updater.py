@@ -134,7 +134,7 @@ def get_us_price(ticker, excd):
     return price, safe_float(out.get("rate"))
 
 
-def get_index_price(ticker):
+def get_yahoo_price(ticker):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
     res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False).json()
     meta = res["chart"]["result"][0]["meta"]
@@ -174,8 +174,8 @@ def update_worker(row):
             price, change_pct = get_kr_price(ticker)
         elif market in ("NAS", "NYS", "AMS", "ARC"):
             price, change_pct = get_us_price(ticker, market)
-        elif market == "IDX":
-            price, change_pct, data_time = get_index_price(ticker)
+        elif market in ("FX", "INDEX", "CRYPTO"):
+                    price, change_pct, data_time = get_yahoo_price(ticker)
         else:
             log.warning(f"[{ticker}] 알 수 없는 market: {market}")
             return
@@ -186,8 +186,8 @@ def update_worker(row):
 
         conn = get_db_conn()
         try:
-            update_ticker_in_db(conn, ticker, price, change_pct, data_time if market == "IDX" else None)
-            log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
+
+            update_ticker_in_db(conn, ticker, price, change_pct, data_time if market in ("FX", "INDEX", "CRYPTO") else None)            log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
         finally:
             conn.close()
 

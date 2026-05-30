@@ -71,11 +71,15 @@ def accounts_server(input, output, session):
         cur.execute("SELECT name, alias FROM accounts WHERE id = %s", (acc_id,))
         acc = cur.fetchone()
         cur.execute("""
-            SELECT p.id, p.ticker, p.quantity, t.name, t.current_price, t.change_pct, t.market
+            SELECT p.id, p.ticker, p.quantity, t.name, t.current_price, t.change_pct, t.market, t.leverage
             FROM positions p
             LEFT JOIN tickers t ON t.ticker = p.ticker
             WHERE p.account_id = %s
-            ORDER BY CASE WHEN p.ticker IN ('KRW','USD') THEN 1 ELSE 0 END, p.id
+            ORDER BY
+                CASE WHEN p.ticker IN ('KRW','USD') THEN 1 ELSE 0 END,
+                CASE WHEN t.market = 'KR' THEN 0 WHEN t.market IN ('NAS', 'AMS', 'ARC') THEN 1 WHEN t.market = 'CRYPTO' THEN 2 ELSE 3 END,
+                t.leverage DESC NULLS LAST,
+                p.ticker
         """, (acc_id,))
         positions = cur.fetchall()
         cur.execute("SELECT current_price FROM tickers WHERE ticker = 'USDKRW=X'")
@@ -174,7 +178,7 @@ def accounts_server(input, output, session):
             pnl_sum = 0
             rows = []
             for pos in positions:
-                pos_id, ticker, qty, tname, price, chg_pct, t_market = pos
+                pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage = pos
                 is_cash = ticker in ('KRW', 'USD')
                 if is_cash:
                     display_name = "현금(KRW)" if ticker == "KRW" else "현금(USD)"
@@ -203,7 +207,11 @@ def accounts_server(input, output, session):
                 rows.append(
                     ui.div(
                         ui.div(
-                            ui.div(display_name, class_="ticker-name"),
+                            ui.div(
+                                ui.span(f"x{leverage}", class_=f"lev-badge lev-x{leverage}") if leverage and leverage > 1 else None,
+                                ui.span(display_name, class_="ticker-name"),
+                                class_="lev-name-wrap",
+                            ),
                             ui.div(qty_str, class_="ticker-qty"),
                         ),
                         ui.div(
@@ -279,7 +287,7 @@ def accounts_server(input, output, session):
                 ),
                 ui.input_text("new_position_name", "종목명", placeholder="예) 애플"),
                 ui.input_text("new_position_ticker", "티커", placeholder="예) AAPL"),
-                ui.input_select("new_position_market", "시장", {"KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)", "ARC": "ARC (NYSE Arca)", "IDX": "IDX (지수/환율/암호화폐)"}),
+                ui.input_select("new_position_market", "시장", {"KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)", "ARC": "ARC (NYSE Arca)", "FX": "FX (환율)", "INDEX": "INDEX (지수)", "CRYPTO": "CRYPTO (암호화폐)"}),
                 ui.input_select("new_position_leverage", "레버리지", {"1": "x1", "2": "x2", "3": "x3"}),
                 ui.input_numeric("new_position_qty", "수량", value=None, min=0),
                 ui.input_action_button("btn_confirm_add_position", "추가", class_="btn-add"),
@@ -377,7 +385,7 @@ def accounts_server(input, output, session):
                 ),
                 ui.p(ticker, class_="ticker-readonly-label"),
                 ui.input_text("edit_position_name", "종목명", value=tname or ""),
-                ui.input_select("edit_position_market", "시장", {"KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)", "ARC": "ARC (NYSE Arca)", "IDX": "IDX (지수/환율/암호화폐)"}, selected=market or "NAS"),
+                ui.input_select("edit_position_market", "시장", {"KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)", "ARC": "ARC (NYSE Arca)", "FX": "FX (환율)", "INDEX": "INDEX (지수)", "CRYPTO": "CRYPTO (암호화폐)"}, selected=market or "NAS"),
                 ui.input_select("edit_position_leverage", "레버리지", {"1": "x1", "2": "x2", "3": "x3"}, selected=str(leverage or 1)),
                 ui.input_numeric("edit_position_qty", "수량", value=int(qty) if qty else 0, min=0),
                 ui.input_action_button("btn_confirm_edit_position", "저장", class_="btn-add"),

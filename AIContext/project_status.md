@@ -112,7 +112,7 @@
 ### Exposure
 - 보유 종목별 (평가액 × 레버리지 배수) 합산 / 총자산
 - 레버리지 배수: x1=1, x2=2, x3=3
-- 현금(KRW/USD)과 IDX 종목은 positions에 없으므로 자동 제외
+- FX/INDEX 종목은 positions에 없으므로 자동 제외
 
 ### TWR (시간가중수익률)
 - 입출금 영향을 제거한 순수 운용 수익률
@@ -139,7 +139,7 @@
 - **총자산은 원화 단일값.** 포지션 평가 시 환율 반영 완료된 값으로 계산.
 - **입출금은 하루 합산 1건**으로 daily_summary에 포함. 별도 이력 테이블 없음.
 - **현금은 positions에 행으로 관리.** ticker 컬럼에 "KRW"/"USD" 고정값 사용.
-- **환율(USDKRW=X, JPYKRW=X 등)은 tickers에 market="IDX"로 저장.**
+- **환율(USDKRW=X, JPYKRW=X 등)은 tickers에 market="FX"로 저장.**
 - **계좌 삭제 시 해당 계좌의 positions 행은 FK + CASCADE로 자동 삭제.**
 
 ### tickers
@@ -148,13 +148,13 @@
 |------|------|------|
 | ticker | TEXT PK | 종목 티커 |
 | name | TEXT | 종목명 |
-| market | TEXT | 구분 (KR, NAS, AMS, ARC, IDX) |
+| market | TEXT | 구분 (KR, NAS, AMS, ARC, FX, INDEX, CRYPTO) |
 | leverage | INT | 레버리지 배수 (1, 2, 3) |
 | current_price | NUMERIC | 현재가 (환율 포함) |
 | change_pct | NUMERIC | 등락률 |
 | updated_at | TIMESTAMP | 마지막 업데이트 시각 (스케줄러 기준) |
 | is_manual | BOOLEAN | 수동 추가 항목 여부 (환율/지수 등, 계좌 연동 삭제 대상 제외) |
-| data_time | TIMESTAMP | 실제 데이터 시각 (IDX/Yahoo Finance만 해당) |
+| data_time | TIMESTAMP | 실제 데이터 시각 (Yahoo Finance만 해당) |
 
 ### accounts
 
@@ -215,7 +215,7 @@
 - 종목별 독립 스레드로 병렬 실행
 - KR: KIS API (장마감 시 전일종가 fallback)
 - NAS/AMS/ARC: KIS API 미국주식
-- IDX: Yahoo Finance (환율/지수/암호화폐 포함, data_time 저장)
+- FX/INDEX/CRYPTO: Yahoo Finance (환율/지수/암호화폐 포함, data_time 저장)
 - 업데이트 주기: config.json의 interval(분), 실행 중 변경 즉시 반영
 - 업데이트 완료 후 PostgreSQL `NOTIFY price_updated` 전송
 - systemd 서비스: VM 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
@@ -285,11 +285,8 @@
 | ✅ 완료 | 계좌 화면 환율 표시 (USD/KRW, 등락률, 색상)
 | ✅ 완료 | 설정 화면 구현 (시세조회 간격, 수동 티커 관리, 로그아웃) | → 티커 정렬, 레버리지 뱃지, 수동/자동 구분 표시 포함 |
 | ✅ 완료 | 설정 화면 — 스케줄러 interval 조절 |
-| ⬜ 대기 | 설정 화면 — 스케줄러 중지/재시작 |
 | ⬜ 대기 | 설정 화면 — 티커 정렬 방식 추가 (레버리지순, 평가액순 등) |
-| ⬜ 대기 | 레버리지 뱃지 전체 화면 적용 (계좌 상세 등) |
 | ⬜ 대기 | 설정 화면 — 티커 목록에 현재가 등 기본정보 표시 |
-| ⬜ 대기 | market 구분 개선 — IDX를 야후 시세조회 분기용과 인덱스 개념으로 분리 |
 | ⬜ 대기 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |

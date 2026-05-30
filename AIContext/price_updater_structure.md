@@ -40,7 +40,7 @@ run_update_cycle()
 update_worker(row)
   ├─ market == "KR"                → get_kr_price()
   ├─ market in NAS/NYS/AMS/ARC    → get_us_price()
-  ├─ market == "IDX"              → get_index_price()
+  ├─ market in FX/INDEX/CRYPTO    → get_yahoo_price()
   ├─ price == 0 이면 DB 업데이트 건너뜀
   └─ update_ticker_in_db()
 ```
@@ -83,7 +83,7 @@ update_worker(row)
 ### update_ticker_in_db(conn, ticker, price, change_pct, data_time=None)
 - tickers 테이블 UPDATE
 - 업데이트 컬럼: current_price, change_pct, updated_at(현재시각), data_time
-- data_time은 IDX만 값 있음, 나머지는 NULL
+- data_time은 FX/INDEX/CRYPTO만 값 있음, 나머지는 NULL
 
 ---
 

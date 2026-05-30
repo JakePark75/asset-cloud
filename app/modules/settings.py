@@ -72,7 +72,15 @@ def settings_server(input, output, session):
         refresh()
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT ticker, name, market, leverage, is_manual FROM tickers ORDER BY is_manual DESC, CASE WHEN market = 'IDX' THEN 1 ELSE 0 END, sort_order NULLS LAST, ticker")
+        cur.execute("""
+            SELECT ticker, name, market, leverage, is_manual FROM tickers
+            ORDER BY
+                is_manual DESC,
+                CASE WHEN market IN ('FX', 'INDEX', 'CRYPTO') THEN 1 ELSE 0 END,
+                CASE WHEN market = 'KR' THEN 0 WHEN market IN ('NAS', 'AMS', 'ARC') THEN 1 WHEN market = 'CRYPTO' THEN 2 ELSE 3 END,
+                leverage DESC NULLS LAST,
+                ticker
+        """)
         rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -145,7 +153,7 @@ def settings_server(input, output, session):
                 ),
                 ui.input_text("new_ticker", "티커", placeholder="예) USDKRW=X"),
                 ui.input_text("new_ticker_name", "종목명", placeholder="예) 달러/원 환율"),
-                ui.input_select("new_ticker_market", "시장", choices=["KR", "NAS", "AMS", "ARC", "IDX"]),
+                ui.input_select("new_ticker_market", "시장", choices=["KR", "NAS", "AMS", "ARC", "FX", "INDEX", "CRYPTO"]),
                 ui.input_numeric("new_ticker_leverage", "레버리지", value=1, min=1, max=3),
                 ui.input_action_button("btn_confirm_add_ticker", "추가", class_="btn-add"),
                 class_="modal-box",

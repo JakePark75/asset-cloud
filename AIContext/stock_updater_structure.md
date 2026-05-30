@@ -147,7 +147,7 @@ export_range_to_png(ws, rng_address, output_path)
 
 ```
 get_historical_price_yahoo(ticker, date_str)
-    # Yahoo Finance에서 특정일 종가 조회 (IDX, 미국주식용)
+    # Yahoo Finance에서 특정일 종가 조회 (FX/INDEX/CRYPTO, 미국주식용)
     # date_str 형식: "YYYY-MM-DD"
     # 주말/공휴일 대비 +4일 범위로 조회 후 가장 가까운 날짜 반환
 
@@ -183,7 +183,7 @@ update_loop()
     # 백그라운드 스레드로 실행되는 메인 업데이트 루프
     # historical_mode_evt가 set이면 대기
     # 동작: open_excel_and_get_sheet → find_columns → 종목 순회 → 시세 업데이트
-    # 구분(div)별 API 분기: KR/FX/NAS/NYS/AMS/ARC/IDX
+    # 구분(div)별 API 분기: KR/NAS/AMS/ARC/FX/INDEX/CRYPTO
     # 완료 후 send_status_report() 호출
     # config.interval(분) 대기 후 반복
     # ws 오류 시 Excel 재연결
