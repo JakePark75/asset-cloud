@@ -130,6 +130,7 @@ body {
     color: #ff4d4d;
     border: none;
     font-size: 13px;
+    padding: 0;
 }
 
 .btn-account-delete {
@@ -337,3 +338,29 @@ body {
     color: #000;
     font-weight: 600;
 }
+.ticker-row-btn {
+    width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.lev-name-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.lev-badge {
+    position: absolute;
+    top: -6px;
+    left: -12px;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 4px;
+    line-height: 1.4;
+    letter-spacing: 0.03em;
+    color: #fff;
+}
+
+.lev-x2 { background: #e6a817; }
+.lev-x3 { background: #ff4d4d; }

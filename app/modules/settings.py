@@ -13,14 +13,14 @@ def settings_ui():
             ),
             # 티커 관리
             ui.div(
+                ui.p("티커 관리", style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin:0;"),
                 ui.div(
-                    ui.p("티커 관리", style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin:0;"),
                     ui.input_action_button("btn_add_ticker", "+ 추가", class_="btn-danger-sm", style="color:#00c073;"),
-                    style="display:flex; justify-content:space-between; align-items:center; padding: 20px 0 12px 0;"
+                    class_="ticker-row-btn"
                 ),
-                ui.output_ui("ticker_list"),
-                style="border-bottom: 1px solid #1e1e1e; padding-bottom: 8px;"
+                style="display:flex; justify-content:space-between; align-items:center; padding: 20px 0 12px 0;"
             ),
+            ui.output_ui("ticker_list"),
             # 로그아웃
             ui.div(
                 ui.tags.button(
@@ -72,26 +72,33 @@ def settings_server(input, output, session):
         refresh()
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT ticker, name, market, leverage FROM tickers WHERE is_manual = true ORDER BY ticker")
+        cur.execute("SELECT ticker, name, market, leverage, is_manual FROM tickers ORDER BY is_manual DESC, CASE WHEN market = 'IDX' THEN 1 ELSE 0 END, sort_order NULLS LAST, ticker")
         rows = cur.fetchall()
         cur.close()
         conn.close()
 
         if not rows:
-            return ui.p("등록된 수동 티커가 없습니다.", style="color:#888; padding: 8px 0;")
+            return ui.p("등록된 티커가 없습니다.", style="color:#888; padding: 8px 0;")
 
         items = []
-        for ticker, name, market, leverage in rows:
+        for ticker, name, market, leverage, is_manual in rows:
             items.append(
                 ui.div(
                     ui.div(
-                        ui.div(f"{name} ({ticker})", class_="ticker-name"),
-                        ui.div(f"{market} / x{leverage}", class_="ticker-qty"),
+                        ui.div(
+                            ui.span(f"x{leverage}", class_=f"lev-badge lev-x{leverage}") if leverage > 1 else None,
+                            ui.span(f"{name}", class_="ticker-name"),
+                            class_="lev-name-wrap",
+                        ),
+                        ui.div(f"{ticker} / {market}", class_="ticker-qty"),
                     ),
-                    ui.tags.button(
-                        "삭제",
-                        class_="btn-danger-sm",
-                        onclick=f"if(confirm('{ticker} 티커를 삭제할까요?')) Shiny.setInputValue('{session.ns('confirm_delete_ticker')}', '{ticker}', {{priority: 'event'}});"
+                    ui.div(
+                        ui.tags.button(
+                            "삭제",
+                            class_="btn-danger-sm",
+                            onclick=f"if(confirm('{ticker} 티커를 삭제할까요?')) Shiny.setInputValue('{session.ns('confirm_delete_ticker')}', '{ticker}', {{priority: 'event'}});"
+                        ) if is_manual else None,
+                        class_="ticker-row-btn"
                     ),
                     class_="ticker-row",
                 )
@@ -163,8 +170,8 @@ def settings_server(input, output, session):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO tickers (ticker, name, market, leverage, is_manual)
-            VALUES (%s, %s, %s, %s, true)
+            INSERT INTO tickers (ticker, name, market, leverage, is_manual, sort_order)
+            VALUES (%s, %s, %s, %s, true, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM tickers WHERE is_manual = true))
             ON CONFLICT (ticker) DO UPDATE SET
                 name = EXCLUDED.name,
                 market = EXCLUDED.market,
