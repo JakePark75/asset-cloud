@@ -309,3 +309,31 @@ body {
 #screen-login .shiny-input-container {
     width: 100%;
 }
+
+#settings-interval {
+    width: 80px;
+    background-color: #1a1a1a;
+    border: 1px solid #333;
+    color: #ffffff;
+    border-radius: 8px;
+}
+
+/* 설정 - 시세조회 간격 버튼 */
+.interval-btn {
+    background-color: #1a1a1a;
+    border: 1px solid #333;
+    color: #888;
+    border-radius: 8px;
+    padding: 8px 0;
+    font-size: 13px;
+    cursor: pointer;
+    flex: 1;
+    white-space: nowrap;
+}
+
+.interval-btn.active {
+    background-color: #00c073;
+    border-color: #00c073;
+    color: #000;
+    font-weight: 600;
+}

@@ -32,3 +32,7 @@ def get_usd_krw():
     if row:
         return float(row[0]), float(row[1])
     return None, None
+
+def save_config(data):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
