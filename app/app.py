@@ -54,13 +54,20 @@ app_ui = ui.page_fluid(
     ui.tags.script("""
         // 탭 전환 + localStorage 저장
         function switchTab(name, el) {
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => {
+                t.style.display = 'none';
+            });
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById('tab-' + name).classList.add('active');
+            var target = document.getElementById('tab-' + name);
+            target.style.display = 'block';
+            // IntersectionObserver 수동 트리거
+            target.querySelectorAll('.shiny-bound-output').forEach(function(output) {
+                const cb = $(output).data('shiny-intersection-observer-callback');
+                if(cb) cb();
+            });
             el.classList.add('active');
             localStorage.setItem('activeTab', name);
         }
-
         // 페이지 로드 시 탭 복원
         function restoreTab() {
             var saved = localStorage.getItem('activeTab');
@@ -71,12 +78,18 @@ app_ui = ui.page_fluid(
             var content = document.getElementById('tab-' + saved);
             var btns = document.querySelectorAll('.tab-btn');
             if (!content || btns.length <= idx) return;
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => {
+                t.style.display = 'none';
+            });
             btns.forEach(b => b.classList.remove('active'));
-            content.classList.add('active');
+            content.style.display = 'block';
+            content.querySelectorAll('.shiny-bound-output').forEach(function(output) {
+                const cb = $(output).data('shiny-intersection-observer-callback');
+                if(cb) cb();
+            });
             btns[idx].classList.add('active');
         }
-
+                   
         function showMain() {
             document.getElementById('screen-login').style.display = 'none';
             document.getElementById('screen-main').style.display = 'block';
