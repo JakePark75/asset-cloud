@@ -364,3 +364,24 @@ body {
 
 .lev-x2 { background: #e6a817; }
 .lev-x3 { background: #ff4d4d; }
+
+/* 티커 상태 표시 스타일 추가 */
+.ticker-status {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 6px;
+    font-weight: normal;
+    display: inline-flex;
+    align-items: center;
+}
+
+.status-active {
+    color: #00c073; /* 활성 상태: 녹색 */
+    background: rgba(0, 192, 115, 0.1);
+}
+
+.status-idle {
+    color: #888; /* 비활성 상태: 회색 */
+    background: rgba(136, 136, 136, 0.1);
+}

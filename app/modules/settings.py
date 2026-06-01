@@ -1,5 +1,8 @@
 from shiny import ui, render, module, reactive
 from db import get_connection, get_config, save_config
+from scheduler.price_updater import is_market_open
+from datetime import datetime, time
+import pytz
 
 @module.ui
 def settings_ui():
@@ -66,10 +69,13 @@ def settings_server(input, output, session):
         config["interval"] = val
         save_config(config)
 
-    # 수동 티커 목록
+    # 수동 티커 목록 (배지 로직 추가)
     @render.ui
     def ticker_list():
         refresh()
+        # 60초마다 화면 자동 갱신 (시장 상태 반영용)
+        reactive.invalidate_later(60)
+        
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
@@ -90,12 +96,20 @@ def settings_server(input, output, session):
 
         items = []
         for ticker, name, market, leverage, is_manual in rows:
+            # 업데이트 대상 여부 판단 로직
+            is_active = is_market_open(market)
+            status_dot = "●" if is_active else "○"
+            status_class = "status-active" if is_active else "status-idle"
+            status_text = "업데이트 중" if is_active else "대기(휴장)"
+
             items.append(
                 ui.div(
                     ui.div(
                         ui.div(
                             ui.span(f"x{leverage}", class_=f"lev-badge lev-x{leverage}") if leverage > 1 else None,
                             ui.span(f"{name}", class_="ticker-name"),
+                            # 상태 배지 추가
+                            ui.span(f"{status_dot} {status_text}", class_=f"ticker-status {status_class}"),
                             class_="lev-name-wrap",
                         ),
                         ui.div(f"{ticker} / {market}", class_="ticker-qty"),
@@ -128,7 +142,7 @@ def settings_server(input, output, session):
         conn.close()
         refresh.set(refresh() + 1)
 
-    # 티커 추가 모달
+    # 티커 추가 모달 관련 로직 (기존 그대로 유지)
     @reactive.effect
     @reactive.event(input.btn_add_ticker)
     def _():
@@ -163,7 +177,6 @@ def settings_server(input, output, session):
             onclick=f"Shiny.setInputValue('{session.ns('modal_ticker_close')}', Math.random(), {{priority: 'event'}});",
         )
 
-    # 티커 추가 확인
     @reactive.effect
     @reactive.event(input.btn_confirm_add_ticker)
     def _():

@@ -3,11 +3,12 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, time as dt_time # time 모듈과 이름 충돌 방지
 from logging.handlers import RotatingFileHandler
 
 import psycopg2
 import requests
+import pytz  # 추가 필요
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -66,6 +67,31 @@ def get_db_conn():
         password=config["db_password"],
     )
 
+# ---------------------------------------------------------------------------
+# 공통 함수: 시장 개장 여부 판단 (30분 버퍼 포함)
+# ---------------------------------------------------------------------------
+def is_market_open(market):
+    if market in ("FX", "CRYPTO"):
+        return True
+
+    if market == "KR":
+        tz = pytz.timezone('Asia/Seoul')
+        open_t, close_t = dt_time(9, 0), dt_time(15, 30)
+    elif market in ("NAS", "NYS", "AMS", "ARC"):
+        tz = pytz.timezone('America/New_York')
+        open_t, close_t = dt_time(9, 30), dt_time(16, 0)
+    else:
+        return True
+
+    now_local = datetime.now(tz)
+    if now_local.weekday() >= 5:  # 주말 휴장
+        return False
+
+    now_min = now_local.hour * 60 + now_local.minute
+    start_min = open_t.hour * 60 + open_t.minute - 30
+    end_min = close_t.hour * 60 + close_t.minute + 30
+    
+    return start_min <= now_min <= end_min
 
 # ---------------------------------------------------------------------------
 # KIS API 토큰
@@ -197,7 +223,7 @@ def update_worker(row):
 
 
 # ---------------------------------------------------------------------------
-# 전체 종목 조회 후 스레드 실행
+# 전체 종목 조회 후 스레드 실행 (필터링 로직 삽입)
 # ---------------------------------------------------------------------------
 def run_update_cycle():
     try:
@@ -214,9 +240,17 @@ def run_update_cycle():
         log.warning("tickers 테이블에 종목 없음")
         return
 
-    log.info(f"업데이트 시작 — 총 {len(rows)}개 종목")
+    # --- 필터링 로직 추가 ---
+    targets = [r for r in rows if is_market_open(r["market"])]
+    
+    if not targets:
+        log.info("현재 업데이트 대상 종목이 없습니다. (모든 시장 휴장 중)")
+        return
+
+    log.info(f"업데이트 시작 — 활성 {len(targets)}개 / 전체 {len(rows)}개")
+    
     threads = []
-    for row in rows:
+    for row in targets: # 필터링된 targets에 대해서만 스레드 생성
         t = threading.Thread(target=update_worker, args=(row,), daemon=True)
         threads.append(t)
         t.start()
