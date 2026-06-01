@@ -73,6 +73,10 @@
 │       ├── accounts_components.py   # 카드/행 렌더링 컴포넌트
 │       ├── accounts_modals.py       # 모달 UI
 │       ├── history.py
+│       ├── history_DAL.py
+│       ├── history_charts.py
+│       ├── history_table.py
+│       ├── history_utils.py
 │       └── settings.py
 └── scheduler/
     ├── price_updater.py      # 시세 수집 스케줄러
@@ -207,7 +211,7 @@
 |------|------|------|
 | `get_usd_krw()` | `(float, float)` or `(None, None)` | USDKRW=X의 current_price, change_pct 반환. 환율 표시가 필요한 모든 화면에서 사용 |
 | `save_config(data)` | `None` | 설정값을 config.json에 저장 |
-
+| `get_db()` | |컨텍스트 매니저, DB 커넥션 안전 반환. 모든 DAL에서 get_connection() 대신 사용
 ---
 
 ## 8. 시세 수집 스케줄러
@@ -260,8 +264,6 @@
 - 티커 추가 시 ON CONFLICT로 기존 티커 덮어쓰기 가능
 
 #### 향후 추가 예정 기능
-- 수동 티커 수정 기능 (현재 추가/삭제만 가능)
-- 기타 앱 설정 항목 (미정)
 
 ### 구현 현황
 - 하단 탭바 네비게이션 (5개 탭)
@@ -275,7 +277,7 @@
   - iOS Safari는 백그라운드 전환 시 약 5초 후 WebSocket을 능동적으로 끊음 (iOS 레벨 동작, 서버 설정으로 변경 불가)
   - shiny:disconnected 이벤트 감지 시 location.reload()로 자동 재연결
   - 재연결 후 localStorage로 마지막 탭 복원
-
+- plotly 차트는 shinywidgets 대신 fig.to_html(full_html=False, include_plotlyjs=False) + @render.ui 방식 사용. plotly.js는 app.py head에서 CDN으로 전역 로드.
 ---
 
 ## 11. 앞으로 할 일
@@ -306,6 +308,6 @@
 | ✅ 완료 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ✅ 완료 | 기존 일일자산누적 데이터 DB 일괄 이전 (2025-06-19~) |
-| ⬜ 대기 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
+| ✅ 완료 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

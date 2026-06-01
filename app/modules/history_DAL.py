@@ -1,12 +1,7 @@
 from app.db import get_db
-import time
-import logging
 
 
 def load_history(period: str):
-    import time
-    import logging
-    
     if period == "1m":
         where = "WHERE date >= CURRENT_DATE - INTERVAL '1 month'"
     elif period == "3m":
@@ -14,7 +9,6 @@ def load_history(period: str):
     else:
         where = ""
 
-    t0 = time.time()
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(f"""
@@ -26,7 +20,6 @@ def load_history(period: str):
         """)
         rows = cur.fetchall()
         cur.close()
-    logging.warning(f"[history] load_history({period}): {time.time()-t0:.3f}s, {len(rows)}rows")
     return rows
 
 def calc_twr_pct(rows):

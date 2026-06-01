@@ -453,7 +453,7 @@ body {
 .history-table thead th {
     color: #666;
     font-weight: 500;
-    padding: 8px 6px;
+    padding: 6px 3px;
     border-bottom: 1px solid #222;
     text-align: right;
     position: sticky;
@@ -467,7 +467,7 @@ body {
 }
 
 .history-table tbody td {
-    padding: 10px 6px;
+    padding: 6px 3px;
     border-bottom: 1px solid #161616;
     color: #cccccc;
     vertical-align: middle;

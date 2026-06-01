@@ -1,14 +1,11 @@
 from shiny import ui
 import json
 from .history_utils import fmt_krw, fmt_10m
-import time
-import logging
 
 def render_history_table(rows):
     """
     daily_summary rows (ASC) → Shiny UI 테이블 반환 (최신순 표시).
     """
-    t0 = time.time()
     if not rows:
         return ui.p("데이터가 없습니다.", style="color:#888; padding:16px;")
 
@@ -82,7 +79,7 @@ def render_history_table(rows):
             cf_cell = ui.tags.span("-", style="color:#555;")
 
         trs.append(ui.tags.tr(
-            ui.tags.td(str(date)),
+            ui.tags.td(date.strftime("%y%m%d")),
             ui.tags.td(fmt_10m(total_f), style="text-align:right;"),
             ui.tags.td(diff_cell,          style="text-align:right;"),
             ui.tags.td(cf_cell,            style="text-align:right;"),
@@ -100,5 +97,4 @@ def render_history_table(rows):
             class_="history-table",
         )
     )
-    logging.warning(f"[history] render_history_table: {time.time()-t0:.3f}s")
     return result

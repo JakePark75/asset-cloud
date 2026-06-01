@@ -1,6 +1,4 @@
 from shiny import ui, reactive, module, render
-from shinywidgets import output_widget, render_widget
-
 from app.price_signal import price_signal
 from .history_DAL import load_history
 from .history_charts import make_chart_asset, make_chart_twr
@@ -32,14 +30,14 @@ def history_ui():
         # 그래프 1: 총자산 추이
         ui.div(
             ui.p("총자산 추이", class_="chart-title"),
-            output_widget("chart_asset"),
+            ui.output_ui("chart_asset"),
             class_="chart-section",
         ),
 
         # 그래프 2: TWR vs NDX100
         ui.div(
             ui.p("운용 수익률 vs NDX100", class_="chart-title"),
-            output_widget("chart_twr"),
+            ui.output_ui("chart_twr"),
             class_="chart-section",
         ),
 
@@ -75,13 +73,15 @@ def history_server(input, output, session):
         period = input.period() or "3m"
         return load_history(period)
 
-    @render_widget
+    @render.ui
     def chart_asset():
-        return make_chart_asset(history_data())
-
-    @render_widget
+        fig = make_chart_asset(history_data())
+        return ui.HTML(fig.to_html(full_html=False, include_plotlyjs=False, config={"displayModeBar": False}))
+    
+    @render.ui
     def chart_twr():
-        return make_chart_twr(history_data())
+        fig = make_chart_twr(history_data())
+        return ui.HTML(fig.to_html(full_html=False, include_plotlyjs=False, config={"displayModeBar": False}))
 
     @render.ui
     def history_table():
