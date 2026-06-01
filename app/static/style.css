@@ -385,3 +385,99 @@ body {
     color: #888; /* 비활성 상태: 회색 */
     background: rgba(136, 136, 136, 0.1);
 }
+
+/* ── 실적 히스토리 화면 ──────────────────────── */
+
+/* 기간 필터 버튼 그룹 */
+.period-btn-group {
+    display: flex;
+    gap: 8px;
+    padding: 16px 0 8px 0;
+}
+
+.period-btn {
+    flex: 1;
+    background-color: #1a1a1a;
+    border: 1px solid #333;
+    color: #888;
+    border-radius: 8px;
+    padding: 8px 0;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.period-btn.active {
+    background-color: #00c073;
+    border-color: #00c073;
+    color: #000;
+    font-weight: 600;
+}
+
+/* 차트 섹션 */
+.chart-section {
+    margin-bottom: 8px;
+}
+
+.chart-title {
+    font-size: 13px;
+    color: #888;
+    margin: 12px 0 4px 0;
+}
+
+/* period input 숨기기 */
+#history-period {
+    display: none !important;
+}
+#history-period + label {
+    display: none !important;
+}
+.shiny-input-container:has(#history-period) {
+    display: none !important;
+}
+
+/* 히스토리 테이블 래퍼 */
+.history-table-wrap {
+    margin-top: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* 히스토리 테이블 */
+.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.history-table thead th {
+    color: #666;
+    font-weight: 500;
+    padding: 8px 6px;
+    border-bottom: 1px solid #222;
+    text-align: right;
+    position: sticky;
+    top: 0;
+    background-color: #0a0a0a;
+    z-index: 1;
+}
+
+.history-table thead th:first-child {
+    text-align: left;
+}
+
+.history-table tbody td {
+    padding: 10px 6px;
+    border-bottom: 1px solid #161616;
+    color: #cccccc;
+    vertical-align: middle;
+}
+
+.history-table tbody td:first-child {
+    color: #888;
+    text-align: left;
+}
+
+.history-table tbody tr:active {
+    background-color: #1a1a1a;
+}
