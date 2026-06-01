@@ -1,4 +1,5 @@
 from shiny import ui, render, reactive, module
+from scheduler.price_updater import is_market_open
 import psycopg2
 import json
 from app.db import get_usd_krw
@@ -43,9 +44,8 @@ def format_qty(ticker, qty, market):
 @module.ui
 def portfolio_ui():
     return ui.div(
-        # 최상위 컨테이너 (패딩 없음)
-        ui.output_ui("portfolio_content"), 
-        class_="page-container" 
+        ui.output_ui("portfolio_content"),
+        class_="page-container"
     )
 
 @module.server
@@ -56,7 +56,6 @@ def portfolio_server(input, output, session):
         price_signal.get()
         rows, usd_rate, usd_chg = load_portfolio()
 
-        # 상단 요약 계산 (동일)
         total_asset = 0
         total_pnl = 0
         total_invested = 0
@@ -95,7 +94,6 @@ def portfolio_server(input, output, session):
         usd_text_label = f"USD/KRW {usd_rate:,.2f} " if usd_rate else None
         usd_text_num = f"{usd_chg_sign}{abs(usd_chg or 0):.2f}%" if usd_rate else None
 
-        # [수정] 서머리 영역: page-inner 밖으로 빼서 좌우 끝까지 꽉 차게 함
         summary = ui.div(
             ui.div("포트폴리오", class_="account-alias"),
             ui.div(f"{int(total_asset):,}원", class_="total-summary-amount"),
@@ -119,6 +117,13 @@ def portfolio_server(input, output, session):
             display_name = name or ticker
             qty_str = format_qty(ticker, qty, market)
 
+            is_cash = ticker in ("KRW", "USD")
+            if not is_cash and market:
+                is_active = is_market_open(market)
+                status_dot = "●" if is_active else "○"
+                status_class = "status-active" if is_active else "status-idle"
+                status_text = "업데이트 중" if is_active else "대기(휴장)"
+
             if ticker == "KRW":
                 amount_str = f"{qty_f:,.0f}원"; chg_str = ""; chg_class = ""
             else:
@@ -136,6 +141,7 @@ def portfolio_server(input, output, session):
                         ui.div(
                             ui.span(f"x{leverage}", class_=f"lev-badge lev-x{leverage}") if leverage > 1 else None,
                             ui.span(display_name, class_="ticker-name"),
+                            ui.span(f"{status_dot} {status_text}", class_=f"ticker-status {status_class}") if not is_cash and market else None,
                             class_="lev-name-wrap",
                         ),
                         ui.div(qty_str, class_="ticker-qty"),
@@ -148,11 +154,10 @@ def portfolio_server(input, output, session):
                 )
             )
 
-        # [수정] 최종 리턴 구조: 서머리는 생으로, 리스트만 page-inner로 감쌈
         return ui.div(
-            summary,  # 좌우 패딩 없음 (끝까지 참)
+            summary,
             ui.div(
                 ui.div(*ticker_rows, class_="ticker-list"),
-                class_="page-inner" # 리스트 영역만 좌우 패딩 적용
+                class_="page-inner"
             )
         )
