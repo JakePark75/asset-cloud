@@ -187,7 +187,8 @@ def update_worker(row):
         conn = get_db_conn()
         try:
 
-            update_ticker_in_db(conn, ticker, price, change_pct, data_time if market in ("FX", "INDEX", "CRYPTO") else None)            log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
+            update_ticker_in_db(conn, ticker, price, change_pct, data_time if market in ("FX", "INDEX", "CRYPTO") else None)
+            log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
         finally:
             conn.close()
 
