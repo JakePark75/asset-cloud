@@ -38,6 +38,7 @@
 ### Shiny 1.6.2 주의사항
 - `App()`의 `lifespan` 파라미터 미지원
 - 백그라운드 태스크 시작은 `asyncio.get_event_loop().create_task()`를 server 함수 진입부에서 호출하는 방식 사용
+- DB 타입 주의: psycopg2로 조회한 NUMERIC 컬럼은 decimal.Decimal 타입으로 반환됨. Python float과 연산 시 타입 오류 발생 → 필요 시 float() 명시 변환 필요.
 
 ### 서버 구조
 - **nginx**: 활성화 (systemd), 443/80 리스닝, SSL은 Certbot으로 관리
@@ -58,6 +59,7 @@
 ├── README.md
 ├── app/
 │   ├── app.py           # 진입점 (Shiny App + Starlette 라우팅, 하단 탭바)
+│   ├── auth.py          # 로그인 인증 (verify_login, create_token, verify_token)
 │   ├── db.py            # DB 연결 공통
 │   ├── context_api.py   # AI 컨텍스트 MD 서빙 API
 │   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
@@ -66,7 +68,10 @@
 │   └── modules/
 │       ├── dashboard.py
 │       ├── portfolio.py
-│       ├── accounts.py
+│       ├── accounts.py              # UI/server 진입점
+│       ├── accounts_DAL.py          # DB 조회 로직
+│       ├── accounts_components.py   # 카드/행 렌더링 컴포넌트
+│       ├── accounts_modals.py       # 모달 UI
 │       ├── history.py
 │       └── settings.py
 └── scheduler/
@@ -75,7 +80,6 @@
     ├── price_updater.service # systemd 서비스 파일 원본
     └── myassets.service      # systemd 서비스 파일 원본
 ```
-
 ---
 
 ## 3. 전환 범위 (1차)
@@ -201,6 +205,8 @@
 | 함수 | 반환 | 설명 |
 |------|------|------|
 | `get_usd_krw()` | `(float, float)` or `(None, None)` | USDKRW=X의 current_price, change_pct 반환. 환율 표시가 필요한 모든 화면에서 사용 |
+| `save_config(data)` | `None` | 설정값을 config.json에 저장 |
+
 ---
 
 ## 8. 시세 수집 스케줄러
@@ -211,6 +217,10 @@
 - `scheduler/price_updater.service` — systemd 서비스 파일 원본
 
 ### 동작 방식
+- 시장별 개장 시간 기반 필터링 (is_market_open) 도입
+- 전 종목 무조건 조회 방식에서 탈피하여 정규장 시간 외 불필요한 API 호출 차단
+- FX / CRYPTO: 24시간 조회
+- 국내/미국 주식: 현지 정규장 시간 전후 30분 버퍼(±30min) 적용
 - tickers 테이블 전체 종목 조회 후 market별 API 호출
 - 종목별 독립 스레드로 병렬 실행
 - KR: KIS API (장마감 시 전일종가 fallback)
@@ -240,6 +250,10 @@
 ### 설정 화면 구현 특이점 및 향후 작업
 
 #### 구현 특이점
+- 시세 수집 상태 실시간 모니터링
+- 티커 목록 내 is_market_open 로직을 연동하여 현재 업데이트 대상 여부 표시
+  - 업데이트 중 / ○ 대기(휴장) 배지 및 reactive.invalidate_later(60)를 통한 1분 단위 자동 갱신
+시세조회 간격 버튼: JS로 active 클래스 전환 + settings-btn_save_interval input 세팅 (네임스페이스 하드코딩)
 - 시세조회 간격 버튼: JS로 active 클래스 전환 + `settings-btn_save_interval` input 세팅 (네임스페이스 하드코딩)
 - 로그아웃: Shiny server 거치지 않고 JS에서 직접 쿠키 삭제 후 reload
 - 티커 추가 시 ON CONFLICT로 기존 티커 덮어쓰기 가능
@@ -275,6 +289,8 @@
 | ✅ 완료 | 화면 구성 확정 |
 | ✅ 완료 | DB 스키마 설계 및 생성 |
 | ✅ 완료 | 시세 수집 스케줄러 개발 |
+| ✅ 완료 | 시세 수집 효율화 (is_market_open 필터링 및 버퍼 적용) |
+| ✅ 완료 | 설정 화면 — 티커 목록 내 실시간 수집 상태 배지 표시 |
 | ✅ 완료 | Shiny 앱 기본 구조 세팅 (라우팅, DB 연결, 공통 레이아웃) |
 | ✅ 완료 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·수정·삭제) |
 | ✅ 완료 | 계좌 화면 UI 개선 (일간손익 환율반영, 삼각형 표시, 총자산 요약 섹션, 타이틀바 개선, 삭제버튼 하단 분리) |

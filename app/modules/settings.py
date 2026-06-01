@@ -1,5 +1,5 @@
 from shiny import ui, render, module, reactive
-from db import get_connection, get_config, save_config
+from app.db import get_connection, get_config, save_config
 from scheduler.price_updater import is_market_open
 from datetime import datetime, time
 import pytz

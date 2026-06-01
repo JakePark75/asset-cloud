@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=ubuntu
 WorkingDirectory=/home/ubuntu/asset-cloud
-ExecStart=/usr/bin/python3 -m shiny run app/app.py --host 0.0.0.0 --port 8080
+ExecStart=/usr/bin/python3 -m shiny run app.app --host 0.0.0.0 --port 8080
 Restart=always
 
 [Install]
