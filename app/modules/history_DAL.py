@@ -63,11 +63,11 @@ def save_cash_flow(date_str: str, cash_flow: int, note: str):
             cf_f = float(cf or 0)
 
             if i == 0:
-                denom = prev_total + cf_f
+                denom = prev_total
             else:
-                denom = float(rows[i-1][1] or 0) + cf_f
+                denom = float(rows[i-1][1] or 0)
 
-            twr = prev_twr * (total_f / denom) if denom != 0 else prev_twr
+            twr = prev_twr * ((total_f - cf_f) / denom) if denom != 0 else prev_twr
             prev_twr = twr
 
             cur.execute("""
