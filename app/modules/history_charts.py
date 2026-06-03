@@ -1,6 +1,7 @@
 import plotly.graph_objects as go
 from .history_DAL import calc_twr_pct, calc_ndx_pct
 from .history_utils import fmt_krw, fmt_10m
+
 # ── 공통 레이아웃 ──────────────────────────────────────────────────────────────
 
 _BASE_LAYOUT = dict(
@@ -23,11 +24,13 @@ _BASE_LAYOUT = dict(
         spikecolor="#444444",
         spikemode="across",
         spikesnap="cursor",
+        fixedrange=True,   # JS로 range 직접 제어
     ),
     yaxis=dict(
         gridcolor="#222222",
         linecolor="#333333",
         tickfont=dict(size=10),
+        fixedrange=True,
     ),
     hovermode="x unified",
     hoverlabel=dict(
@@ -36,6 +39,7 @@ _BASE_LAYOUT = dict(
         font=dict(color="#ffffff", size=12),
         namelength=-1,
     ),
+    dragmode=False,   # Plotly 기본 drag 비활성 → JS가 터치 직접 처리
     height=220,
 )
 
@@ -54,11 +58,6 @@ def _empty_fig():
 # ── 그래프 1: 총자산 추이 ──────────────────────────────────────────────────────
 
 def make_chart_asset(rows):
-    """
-    총자산 추이 + 입출금 마커 Plotly Figure 반환.
-    입금: 선 위 ▲ (초록)
-    출금: 선 아래 ▼ (빨강)
-    """
     if not rows:
         return _empty_fig()
 
@@ -69,7 +68,6 @@ def make_chart_asset(rows):
 
     fig = go.Figure()
 
-    # 총자산 선
     fig.add_trace(go.Scatter(
         x=dates,
         y=assets,
@@ -80,7 +78,6 @@ def make_chart_asset(rows):
         customdata=[fmt_krw(a) + "원" for a in assets],
     ))
 
-    # 입금 마커 (선 위 1.2% 오프셋)
     dep_idx = [i for i, cf in enumerate(cflows) if cf > 0]
     if dep_idx:
         fig.add_trace(go.Scatter(
@@ -101,7 +98,6 @@ def make_chart_asset(rows):
             ],
         ))
 
-    # 출금 마커 (선 아래 1.2% 오프셋)
     wd_idx = [i for i, cf in enumerate(cflows) if cf < 0]
     if wd_idx:
         fig.add_trace(go.Scatter(
@@ -121,28 +117,42 @@ def make_chart_asset(rows):
                 for i in wd_idx
             ],
         ))
-        y_min, y_max = min(assets), max(assets)
-        tick_vals = [y_min + (y_max - y_min) * i / 4 for i in range(5)]
-        tick_text = [fmt_10m(v) for v in tick_vals]
-        layout = {
-            **_BASE_LAYOUT,
-            "xaxis": _XAXIS_MONTH,
-            "yaxis": {
-                **_BASE_LAYOUT["yaxis"],
-                "tickmode": "array",
-                "tickvals": tick_vals,
-                "ticktext": tick_text,
-            },
-        }
-        fig.update_layout(**layout)
-        return fig
+
+    y_min, y_max = min(assets), max(assets)
+    tick_vals = [y_min + (y_max - y_min) * i / 4 for i in range(5)]
+    tick_text = [fmt_10m(v) for v in tick_vals]
+
+    # 초기 범위: 최근 3개월
+    date_strs = [str(r[0]) for r in rows]
+    init_range = _init_range(date_strs, "3m")
+
+    layout = {
+        **_BASE_LAYOUT,
+        "xaxis": {
+            **_XAXIS_MONTH,
+            "range": init_range,
+        },
+        "yaxis": {
+            **_BASE_LAYOUT["yaxis"],
+            "tickmode": "array",
+            "tickvals": tick_vals,
+            "ticktext": tick_text,
+        },
+    }
+    fig.update_layout(**layout)
+
+    html = fig.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        div_id="chart-asset",
+        config={"displayModeBar": False},
+    )
+    html += _touch_script("chart-asset")
+    return html
 
 # ── 그래프 2: TWR vs NDX100 ────────────────────────────────────────────────────
 
 def make_chart_twr(rows):
-    """
-    twr_asset 기준 보정수익률(%) vs NDX100 정규화 수익률(%) 비교 Figure 반환.
-    """
     if not rows:
         return _empty_fig()
 
@@ -170,13 +180,299 @@ def make_chart_twr(rows):
         hovertemplate="%{y:.2f}%<extra>NDX100</extra>",
     ))
 
-    # 0% 기준선
     fig.add_hline(y=0, line_color="#333333", line_width=1)
 
+    date_strs = [str(r[0]) for r in rows]
+    init_range = _init_range(date_strs, "3m")
+
     layout = {
-            **_BASE_LAYOUT,
-            "xaxis": _XAXIS_MONTH,
-            "yaxis": {**_BASE_LAYOUT["yaxis"], "ticksuffix": "%", "zeroline": False},
-        }
+        **_BASE_LAYOUT,
+        "xaxis": {
+            **_XAXIS_MONTH,
+            "range": init_range,
+        },
+        "yaxis": {
+            **_BASE_LAYOUT["yaxis"],
+            "ticksuffix": "%",
+            "zeroline": False,
+        },
+    }
     fig.update_layout(**layout)
-    return fig
+
+    html = fig.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        div_id="chart-twr",
+        config={"displayModeBar": False},
+    )
+    html += _touch_script("chart-twr")
+    return html
+
+# ── 유틸 ──────────────────────────────────────────────────────────────────────
+
+def _touch_script(chart_id: str) -> str:
+    """차트 HTML 뒤에 삽입할 터치 이벤트 스크립트."""
+    return f"""
+<script>
+(function() {{
+  var chartId = '{chart_id}';
+
+  function attachTouch(gd) {{
+    if (gd._touchAttached) return;
+    gd._touchAttached = true;
+
+    gd.style.touchAction = 'pan-y';
+    gd.on('plotly_beforehover', function() {{ return false; }});
+    // gd는 position:relative여야 팝업이 gd 기준으로 배치됨
+    if (getComputedStyle(gd).position === 'static') {{
+      gd.style.position = 'relative';
+    }}
+
+    var touchStartX     = null;
+    var touchStartY     = null;
+    var touchStartRange = null;
+    var isPanning       = false;
+    var isHovering      = false;
+    var longTimer       = null;
+    var LONG_MS         = 500;
+    var PAN_THRESHOLD   = 8;
+    var LONG_THRESHOLD  = 6;
+
+    var toMs  = function(s) {{ return new Date(s).getTime(); }};
+    var toStr = function(ms) {{ return new Date(ms).toISOString().slice(0,10); }};
+
+    function getCurrentRange() {{
+      return gd.layout.xaxis.range.map(toMs);
+    }}
+
+    function getDataRange() {{
+      var xs = gd.data[0].x;
+      return [toMs(xs[0]), toMs(xs[xs.length - 1])];
+    }}
+
+    // ── 커스텀 팝업 ──────────────────────────────────────────────────────────
+
+    var popup = document.createElement('div');
+    popup.style.cssText = [
+      'position:absolute',
+      'background:#1a1a1a',
+      'border:1px solid #444',
+      'border-radius:6px',
+      'padding:7px 10px',
+      'font-size:12px',
+      'color:#fff',
+      'pointer-events:none',
+      'white-space:nowrap',
+      'display:none',
+      'z-index:999',
+      'line-height:1.7',
+    ].join(';');
+    gd.appendChild(popup);
+
+    // 수직 보조선
+    var vline = document.createElement('div');
+    vline.style.cssText = [
+      'position:absolute',
+      'top:0',
+      'width:1px',
+      'height:100%',
+      'background:#666',
+      'pointer-events:none',
+      'display:none',
+      'z-index:998',
+    ].join(';');
+    gd.appendChild(vline);
+
+    // clientX → 가장 가까운 데이터 인덱스 반환
+    function clientXToIndex(clientX) {{
+      var rect  = gd.getBoundingClientRect();
+      var range = getCurrentRange();
+      var r0    = range[0];
+      var r1    = range[1];
+      var chartW = rect.width;
+      // 차트 영역 비율로 ms 계산 (margin 무시 — 오차 허용)
+      var ratio  = (clientX - rect.left) / chartW;
+      var targetMs = r0 + ratio * (r1 - r0);
+
+      // gd.data[0].x 에서 가장 가까운 날짜 인덱스 탐색
+      var xs  = gd.data[0].x;
+      var best = 0;
+      var bestDiff = Math.abs(toMs(xs[0]) - targetMs);
+      for (var i = 1; i < xs.length; i++) {{
+        var diff = Math.abs(toMs(xs[i]) - targetMs);
+        if (diff < bestDiff) {{ bestDiff = diff; best = i; }}
+        else break; // xs는 정렬돼 있으므로 diff가 커지기 시작하면 종료
+      }}
+      return best;
+    }}
+
+    function showPopup(clientX) {{
+      var idx = clientXToIndex(clientX);
+      var xs  = gd.data[0].x;
+      var dateStr = String(xs[idx]);  // "YYYY-MM-DD"
+
+      // 날짜 포맷: YYYY년 MM월 DD일
+      var parts = dateStr.split('-');
+      var label = parts[0] + '년 ' + parseInt(parts[1]) + '월 ' + parseInt(parts[2]) + '일';
+
+      // 각 트레이스 값 수집 (markers 트레이스는 x 배열이 다르므로 별도 처리)
+      var lines = ['<b>' + label + '</b>'];
+      for (var t = 0; t < gd.data.length; t++) {{
+        var trace = gd.data[t];
+        if (!trace.y || trace.mode === 'markers') continue;
+        // trace.x와 data[0].x가 같은 경우만 idx 그대로 사용
+        var yVal = trace.y[idx];
+        if (yVal === undefined || yVal === null) continue;
+        var name  = trace.name || ('trace' + t);
+        var color = (trace.line && trace.line.color) || '#aaa';
+        // y값 포맷: 퍼센트 트레이스면 소수점 2자리, 아니면 정수 천단위
+        var valStr;
+        if (trace.hovertemplate && trace.hovertemplate.indexOf('%') !== -1
+            && trace.hovertemplate.indexOf(':.2f') !== -1) {{
+          valStr = yVal.toFixed(2) + '%';
+        }} else {{
+          valStr = Math.round(yVal).toLocaleString() + '원';
+        }}
+        lines.push(
+          '<span style="color:' + color + '">■</span> ' + name + ': ' + valStr
+        );
+      }}
+      popup.innerHTML = lines.join('<br>');
+      popup.style.display = 'block';
+
+      // 팝업 위치: 터치 x 기준, gd 좌측 상단 기준 좌표로 변환
+      var gdRect = gd.getBoundingClientRect();
+      var localX = clientX - gdRect.left;
+      var popX   = localX + 12;
+      var popY   = 8;
+      popup.style.left = popX + 'px';
+      popup.style.top  = popY + 'px';
+      // 렌더 후 오른쪽 잘림 보정
+      var popW = popup.offsetWidth;
+      if (popX + popW > gdRect.width - 4) {{
+        popup.style.left = (localX - popW - 12) + 'px';
+      }}
+
+      // 수직 보조선 위치
+      vline.style.left    = localX + 'px';
+      vline.style.display = 'block';
+    }}
+
+    function hidePopup() {{
+      popup.style.display = 'none';
+      vline.style.display = 'none';
+    }}
+
+    // ── 터치 이벤트 ──────────────────────────────────────────────────────────
+
+    gd.addEventListener('touchstart', function(e) {{
+      if (e.touches.length !== 1) return;
+      var t = e.touches[0];
+      touchStartX     = t.clientX;
+      touchStartY     = t.clientY;
+      touchStartRange = getCurrentRange();
+      isPanning       = false;
+      isHovering      = false;
+
+      longTimer = setTimeout(function() {{
+        if (!isPanning) {{
+          isHovering = true;
+          showPopup(touchStartX);
+        }}
+      }}, LONG_MS);
+    }}, {{ passive: true }});
+
+    gd.addEventListener('touchmove', function(e) {{
+      if (e.touches.length !== 1 || touchStartX === null) return;
+      var t  = e.touches[0];
+      var dx = t.clientX - touchStartX;
+      var dy = t.clientY - touchStartY;
+
+      if (longTimer && Math.abs(dx) > LONG_THRESHOLD) {{
+        clearTimeout(longTimer);
+        longTimer = null;
+      }}
+
+      if (isHovering) {{
+        e.preventDefault();
+        showPopup(t.clientX);
+        return;
+      }}
+
+      if (!isPanning && Math.abs(dx) < PAN_THRESHOLD) return;
+      isPanning = true;
+      e.preventDefault();
+
+      var r0         = touchStartRange[0];
+      var r1         = touchStartRange[1];
+      var rangeMs    = r1 - r0;
+      var chartWidth = gd.getBoundingClientRect().width;
+      var msPerPx    = rangeMs / chartWidth;
+      var shiftMs    = -dx * msPerPx;
+
+      var dr    = getDataRange();
+      var newR0 = r0 + shiftMs;
+      var newR1 = r1 + shiftMs;
+      if (newR0 < dr[0]) {{ newR0 = dr[0]; newR1 = dr[0] + rangeMs; }}
+      if (newR1 > dr[1]) {{ newR1 = dr[1]; newR0 = dr[1] - rangeMs; }}
+
+      Plotly.relayout(gd, {{
+        'xaxis.range': [toStr(newR0), toStr(newR1)],
+      }});
+    }}, {{ passive: false }});
+
+    gd.addEventListener('touchend', function(e) {{
+      if (longTimer) {{ clearTimeout(longTimer); longTimer = null; }}
+      hidePopup();
+      touchStartX = null;
+      isPanning   = false;
+      isHovering  = false;
+    }}, {{ passive: true }});
+  }}
+
+  // 차트 렌더링 완료 대기 후 부착
+  function tryAttach() {{
+    var gd = document.getElementById(chartId);
+    if (gd && gd._fullLayout) {{
+      attachTouch(gd);
+      return;
+    }}
+    var parent = document.querySelector('.page-inner') || document.body;
+    var observer = new MutationObserver(function() {{
+      var gd = document.getElementById(chartId);
+      if (gd && gd._fullLayout) {{
+        observer.disconnect();
+        attachTouch(gd);
+      }}
+    }});
+    observer.observe(parent, {{ childList: true, subtree: true }});
+  }}
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', tryAttach);
+  }} else {{
+    tryAttach();
+  }}
+}})();
+</script>
+"""
+
+
+def _init_range(date_strs: list[str], period: str):
+    """전체 데이터 기준으로 초기 x축 범위 계산."""
+    if not date_strs:
+        return None
+    last = date_strs[-1]
+    first = date_strs[0]
+    if period == "1m":
+        from datetime import date, timedelta
+        end = date.fromisoformat(last)
+        start = max(date.fromisoformat(first), end - timedelta(days=30))
+        return [str(start), str(end)]
+    elif period == "3m":
+        from datetime import date, timedelta
+        end = date.fromisoformat(last)
+        start = max(date.fromisoformat(first), end - timedelta(days=90))
+        return [str(start), str(end)]
+    else:
+        return [first, last]

@@ -1,21 +1,13 @@
 from app.db import get_db
 
 
-def load_history(period: str):
-    if period == "1m":
-        where = "WHERE date >= CURRENT_DATE - INTERVAL '1 month'"
-    elif period == "3m":
-        where = "WHERE date >= CURRENT_DATE - INTERVAL '3 months'"
-    else:
-        where = ""
-
+def load_history():
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(f"""
+        cur.execute("""
             SELECT date, total_asset, twr_asset, ndx100, cash_flow, cash_flow_note,
                    exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio
             FROM daily_summary
-            {where}
             ORDER BY date ASC
         """)
         rows = cur.fetchall()
@@ -23,10 +15,6 @@ def load_history(period: str):
     return rows
 
 def calc_twr_pct(rows):
-    """
-    twr_asset 기준 정규화 수익률(%) 리스트 반환.
-    첫 행의 twr_asset을 기준(0%)으로 삼음.
-    """
     if not rows:
         return []
     base = float(rows[0][2] or 0)
@@ -36,10 +24,6 @@ def calc_twr_pct(rows):
 
 
 def calc_ndx_pct(rows):
-    """
-    ndx100 기준 정규화 수익률(%) 리스트 반환.
-    첫 행의 ndx100을 기준(0%)으로 삼음.
-    """
     if not rows:
         return []
     base = float(rows[0][3] or 0)
@@ -51,14 +35,12 @@ def save_cash_flow(date_str: str, cash_flow: int, note: str):
     with get_db() as conn:
         cur = conn.cursor()
 
-        # cash_flow, cash_flow_note 저장
         cur.execute("""
             UPDATE daily_summary
                SET cash_flow = %s, cash_flow_note = %s
              WHERE date = %s
         """, (cash_flow, note, date_str))
 
-        # 해당 날짜 포함 이후 모든 행 twr_asset 재계산
         cur.execute("""
             SELECT date, total_asset, cash_flow
             FROM daily_summary
@@ -67,7 +49,6 @@ def save_cash_flow(date_str: str, cash_flow: int, note: str):
         """, (date_str,))
         rows = cur.fetchall()
 
-        # 기준 날짜 이전 마지막 total_asset, twr_asset 조회
         cur.execute("""
             SELECT total_asset, twr_asset FROM daily_summary
             WHERE date < %s

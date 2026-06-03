@@ -553,3 +553,7 @@ body {
     color: #fff !important;
     border-radius: 6px !important;
 }
+
+.chart-touch-wrap {
+    touch-action: pan-y;
+}

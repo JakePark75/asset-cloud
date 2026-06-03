@@ -11,21 +11,15 @@ from .history_table import render_history_table
 @module.ui
 def history_ui():
     return ui.div(
-        # 기간 필터 버튼
+        # 기간 버튼 (JS에서 직접 relayout, 서버 호출 없음)
         ui.div(
             ui.tags.button("1개월", class_="period-btn",
-                           onclick="setPeriod('1m', this)"),
+                           onclick="setChartPeriod('1m', this)"),
             ui.tags.button("3개월", class_="period-btn active",
-                           onclick="setPeriod('3m', this)"),
+                           onclick="setChartPeriod('3m', this)"),
             ui.tags.button("전체",  class_="period-btn",
-                           onclick="setPeriod('all', this)"),
+                           onclick="setChartPeriod('all', this)"),
             class_="period-btn-group",
-        ),
-
-        # hidden input: JS → Shiny 기간 값 전달
-        ui.div(
-            ui.input_text("period", "", value="3m"),
-            style="display:none;",
         ),
 
         # 그래프 1: 총자산 추이
@@ -48,15 +42,51 @@ def history_ui():
             class_="history-table-wrap",
         ),
 
-        # JS: 기간 버튼 클릭 → Shiny input 전달
+        # ── JS ──────────────────────────────────────────────────────────────
         ui.tags.script("""
-            function setPeriod(val, el) {
-                document.querySelectorAll('.period-btn').forEach(function(b) {
-                    b.classList.remove('active');
-                });
-                el.classList.add('active');
-                Shiny.setInputValue('history-period', val, {priority: 'event'});
-            }
+        (function() {
+
+          // ── 기간 버튼 ────────────────────────────────────────────────────
+          window.setChartPeriod = function(period, el) {
+            document.querySelectorAll('.period-btn').forEach(function(b) {
+              b.classList.remove('active');
+            });
+            el.classList.add('active');
+
+            var charts = ['chart-asset', 'chart-twr'];
+            charts.forEach(function(id) {
+              var gd = document.getElementById(id);
+              if (!gd || !gd.data) return;
+
+              var xs = gd.data[0].x;
+              if (!xs || xs.length === 0) return;
+              var first = xs[0];
+              var last  = xs[xs.length - 1];
+
+              var endDate   = new Date(last);
+              var startDate;
+              if (period === '1m') {
+                startDate = new Date(endDate);
+                startDate.setMonth(startDate.getMonth() - 1);
+                if (startDate < new Date(first)) startDate = new Date(first);
+              } else if (period === '3m') {
+                startDate = new Date(endDate);
+                startDate.setMonth(startDate.getMonth() - 3);
+                if (startDate < new Date(first)) startDate = new Date(first);
+              } else {
+                startDate = new Date(first);
+              }
+
+              Plotly.relayout(gd, {
+                'xaxis.range': [
+                  startDate.toISOString().slice(0,10),
+                  endDate.toISOString().slice(0,10),
+                ]
+              });
+            });
+          };
+
+        })();
         """),
 
         class_="page-inner",
@@ -71,23 +101,20 @@ def history_server(input, output, session):
     @reactive.calc
     def history_data():
         price_signal.get()
-        period = input.period() or "3m"
-        return load_history(period)
+        return load_history()
 
     @render.ui
     def chart_asset():
-        fig = make_chart_asset(history_data())
-        return ui.HTML(fig.to_html(full_html=False, include_plotlyjs=False, config={"displayModeBar": False}))
-    
+        return ui.HTML(make_chart_asset(history_data()))
+
     @render.ui
     def chart_twr():
-        fig = make_chart_twr(history_data())
-        return ui.HTML(fig.to_html(full_html=False, include_plotlyjs=False, config={"displayModeBar": False}))
+        return ui.HTML(make_chart_twr(history_data()))
 
     @render.ui
     def history_table():
         return render_history_table(history_data())
-    
+
     @reactive.effect
     @reactive.event(input.selected_date)
     def _open_edit_modal():
@@ -121,7 +148,6 @@ def history_server(input, output, session):
             easy_close=True,
             footer=None,
         )
-
         ui.modal_show(m)
 
     @reactive.effect
@@ -132,4 +158,4 @@ def history_server(input, output, session):
         note = input.edit_note() or ""
         save_cash_flow(date_str, cf, note)
         ui.modal_remove()
-        ui.notification_show("저장됐습니다.", type="message", duration=2)    
+        ui.notification_show("저장됐습니다.", type="message", duration=2)
