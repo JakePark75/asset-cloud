@@ -1,4 +1,6 @@
 from shiny import ui, render, reactive, module
+import subprocess
+import sys
 from scheduler.price_updater import is_market_open
 import psycopg2
 import json
@@ -44,12 +46,29 @@ def format_qty(ticker, qty, market):
 @module.ui
 def portfolio_ui():
     return ui.div(
+        ui.tags.script("""
+            $(document).on('click', '.force-update-btn', function(e) {
+                e.preventDefault();
+                if (!confirm('전체 종목 시세를 강제 조회합니다.\\n장외시간 종목도 포함됩니다. 진행할까요?')) {
+                    e.stopImmediatePropagation();
+                    return false;
+                }
+            });
+        """),
         ui.output_ui("portfolio_content"),
         class_="page-container"
     )
 
 @module.server
 def portfolio_server(input, output, session):
+
+    @reactive.effect
+    @reactive.event(input.force_update)
+    def _do_force_update():
+        subprocess.Popen(
+            [sys.executable, "scheduler/price_updater.py", "--force"],
+            cwd="/home/ubuntu/asset-cloud"
+        )
 
     @render.ui
     def portfolio_content():
@@ -95,7 +114,11 @@ def portfolio_server(input, output, session):
         usd_text_num = f"{usd_chg_sign}{abs(usd_chg or 0):.2f}%" if usd_rate else None
 
         summary = ui.div(
-            ui.div("포트폴리오", class_="account-alias"),
+            ui.div(
+                ui.span("포트폴리오", class_="account-alias"),
+                ui.input_action_button("force_update", "↺", class_="force-update-btn"),
+                style="display:flex; justify-content:space-between; align-items:center;"
+            ),
             ui.div(f"{int(total_asset):,}원", class_="total-summary-amount"),
             ui.div(
                 ui.span(pnl_text, class_=f"total-summary-pnl-text {pnl_class}"),

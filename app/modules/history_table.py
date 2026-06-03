@@ -71,13 +71,13 @@ def render_history_table(rows):
                     title=cf_note,
                     class_=cf_cls,
                     style="cursor:pointer; border-bottom:1px dotted;",
-                    onclick="alert({})".format(json.dumps(cf_note)),
                 )
             else:
                 cf_cell = ui.tags.span(cf_str, class_=cf_cls)
         else:
             cf_cell = ui.tags.span("-", style="color:#555;")
 
+        date_str = date.strftime("%Y-%m-%d")
         trs.append(ui.tags.tr(
             ui.tags.td(date.strftime("%y%m%d")),
             ui.tags.td(fmt_10m(total_f), style="text-align:right;"),
@@ -88,8 +88,10 @@ def render_history_table(rows):
             ui.tags.td(f"{x1_f*100:.1f}%",  style="text-align:right;"),
             ui.tags.td(f"{x2_f*100:.1f}%",  style="text-align:right;"),
             ui.tags.td(f"{x3_f*100:.1f}%",  style="text-align:right;"),
+            onclick=f"Shiny.setInputValue('history-selected_date', '{date_str}', {{priority: 'event'}})",
+            style="cursor:pointer;",
         ))
-
+        
     result = ui.div(
         ui.tags.table(
             ui.tags.thead(header),

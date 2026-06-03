@@ -225,7 +225,7 @@ def update_worker(row):
 # ---------------------------------------------------------------------------
 # 전체 종목 조회 후 스레드 실행 (필터링 로직 삽입)
 # ---------------------------------------------------------------------------
-def run_update_cycle():
+def run_update_cycle(force=False):
     try:
         conn = get_db_conn()
         with conn.cursor() as cur:
@@ -241,7 +241,7 @@ def run_update_cycle():
         return
 
     # --- 필터링 로직 추가 ---
-    targets = [r for r in rows if is_market_open(r["market"])]
+    targets = rows if force else [r for r in rows if is_market_open(r["market"])]
     
     if not targets:
         log.info("현재 업데이트 대상 종목이 없습니다. (모든 시장 휴장 중)")
@@ -289,4 +289,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    if args.force:
+        load_config()
+        log.info("강제 업데이트 실행 (--force)")
+        run_update_cycle(force=True)
+    else:
+        main()
