@@ -1,6 +1,6 @@
 from shiny import ui, render, module, reactive
 from app.db import get_connection, get_config, save_config
-from scheduler.price_updater import is_market_open
+from scheduler.price_updater import get_market_status
 from datetime import datetime, time
 import pytz
 
@@ -96,11 +96,15 @@ def settings_server(input, output, session):
 
         items = []
         for ticker, name, market, leverage, is_manual in rows:
-            # 업데이트 대상 여부 판단 로직
-            is_active = is_market_open(market)
-            status_dot = "●" if is_active else "○"
-            status_class = "status-active" if is_active else "status-idle"
-            status_text = "업데이트 중" if is_active else "대기(휴장)"
+            status = get_market_status(market)
+            if status == "open":
+                status_dot, status_text, status_class = "●", "장중", "status-open"
+            elif status == "pre":
+                status_dot, status_text, status_class = "●", "프리", "status-pre"
+            elif status == "after":
+                status_dot, status_text, status_class = "●", "애프터", "status-after"
+            else:
+                status_dot, status_text, status_class = "○", "휴장", "status-closed"
 
             items.append(
                 ui.div(

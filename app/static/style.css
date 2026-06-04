@@ -366,7 +366,7 @@ body {
 .lev-x2 { background: #e6a817; }
 .lev-x3 { background: #ff4d4d; }
 
-/* 티커 상태 표시 스타일 추가 */
+/* 티커 상태 배지 */
 .ticker-status {
     font-size: 10px;
     padding: 1px 5px;
@@ -377,13 +377,23 @@ body {
     align-items: center;
 }
 
-.status-active {
-    color: #00c073; /* 활성 상태: 녹색 */
-    background: rgba(0, 192, 115, 0.1);
+.status-open {
+    color: #00c073;
+    background: rgba(0, 192, 115, 0.12);
 }
 
-.status-idle {
-    color: #888; /* 비활성 상태: 회색 */
+.status-pre {
+    color: #a78bfa;
+    background: rgba(167, 139, 250, 0.12);
+}
+
+.status-after {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+}
+
+.status-closed {
+    color: #888;
     background: rgba(136, 136, 136, 0.1);
 }
 

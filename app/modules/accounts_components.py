@@ -1,6 +1,6 @@
 from shiny import ui
 from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
-from scheduler.price_updater import is_market_open
+from scheduler.price_updater import get_market_status
 
 
 def render_asset_card(acc, ns):
@@ -44,13 +44,17 @@ def render_ticker_row(pos, usd_rate):
     chg_f = float(chg_pct or 0)
 
     # 상태 배지 (현금 제외)
-    status_elem = None
+    status_dot = status_text = status_class = None
     if not is_cash and t_market:
-        is_active = is_market_open(t_market)
-        status_dot = "●" if is_active else "○"
-        status_class = "status-active" if is_active else "status-idle"
-        status_text = "업데이트 중" if is_active else "대기(휴장)"
-        status_elem = ui.span(f"{status_dot} {status_text}", class_=f"ticker-status {status_class}")
+        status = get_market_status(t_market)
+        if status == "open":
+            status_dot, status_text, status_class = "●", "장중", "status-open"
+        elif status == "pre":
+            status_dot, status_text, status_class = "●", "프리", "status-pre"
+        elif status == "after":
+            status_dot, status_text, status_class = "●", "애프터", "status-after"
+        else:
+            status_dot, status_text, status_class = "○", "휴장", "status-closed"
 
     if ticker == 'KRW':
         display_name = "현금(KRW)"
@@ -79,7 +83,8 @@ def render_ticker_row(pos, usd_rate):
             ui.div(
                 ui.span(f"x{leverage}", class_=f"lev-badge lev-x{leverage}") if leverage > 1 else None,
                 ui.span(display_name, class_="ticker-name"),
-                status_elem,
+                # 상태 배지 추가
+                ui.span(f"{status_dot} {status_text}", class_=f"ticker-status {status_class}"),
                 class_="lev-name-wrap",
             ),
             ui.div(qty_str, class_="ticker-qty"),
