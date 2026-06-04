@@ -7,6 +7,7 @@ from app.modules.accounts_modals import modal_add_account_ui, modal_add_position
 
 # app 폴더에 직접 위치한 파일들은 app. 으로 시작
 from app.db import get_connection, get_usd_krw, get_config
+from app.modules.components import render_summary_header
 from app.price_signal import price_signal, start_signal_listener
 
 @module.ui
@@ -55,31 +56,15 @@ def accounts_server(input, output, session):
             invest_sum = total_sum - cash_sum
             
             pnl_pct_sum = (pnl_sum / invest_sum * 100) if invest_sum > 0 else 0
-            pnl_class_sum = "positive" if pnl_sum >= 0 else "negative"
-            pnl_text_sum = f"{'▲' if pnl_sum >= 0 else '▼'}{int(pnl_sum):,}원 ({pnl_pct_sum:.2f}%)"
-
-            # 환율 텍스트 준비
-            usd_html = None
-            if usd_rate_val:
-                usd_class = "positive" if (usd_chg or 0) >= 0 else "negative"
-                usd_html = ui.span(
-                    ui.span("USD/KRW ", style="color:#888888;"),
-                    ui.span(f"{usd_rate_val:,.2f} ({'+' if usd_chg >= 0 else ''}{usd_chg:.2f}%)", class_=usd_class),
-                    style="margin-left:auto; font-size:11px;"
-                )
 
             return ui.div(
-                # 상단 총자산 서머리 (Full Width)
-                ui.div(
-                    ui.div("총자산", class_="account-alias"),
-                    ui.div(f"{int(total_sum):,}원", class_="total-summary-amount"),
-                    ui.div(
-                        ui.span(pnl_text_sum, class_=f"total-summary-pnl-text {pnl_class_sum}"),
-                        usd_html,
-                        class_="total-summary-pnl",
-                        style="justify-content:space-between;"
-                    ),
-                    class_="total-summary",
+                render_summary_header(
+                    label="총자산",
+                    total_asset=total_sum,
+                    pnl=pnl_sum,
+                    pnl_pct=pnl_pct_sum,
+                    usd_rate=usd_rate_val,
+                    usd_chg=usd_chg,
                 ),
                 # 계좌 리스트 (Inner Padding)
                 ui.div(
@@ -107,26 +92,34 @@ def accounts_server(input, output, session):
                 if ticker not in ('KRW', 'USD'):
                     pnl_sum += amt * float(pos[5] or 0) / 100
 
-            pnl_class_sum = "positive" if pnl_sum >= 0 else "negative"
             pnl_pct_sum = (pnl_sum / total_sum * 100) if total_sum > 0 else 0
-            pnl_text_sum = f"{'▲' if pnl_sum >= 0 else '▼'}{int(pnl_sum):,}원 ({pnl_pct_sum:.2f}%)"
+            acc_usd_rate, acc_usd_chg = get_usd_krw()
 
             return ui.div(
-                # 상단 타이틀바 및 계좌 서머리
+                # 상단 타이틀바
                 ui.div(
                     ui.input_action_button("btn_back", "‹", class_="detail-titlebar-back"),
                     ui.span(f"{acc[0]}" + (f" ({acc[1]})" if acc[1] else ""), class_="detail-titlebar-title"),
                     class_="detail-titlebar",
                 ),
-                ui.div(
-                    ui.div("총자산", class_="account-alias"),
-                    ui.div(f"{int(total_sum):,}원", class_="total-summary-amount"),
-                    ui.div(ui.span(pnl_text_sum, class_=f"total-summary-pnl-text {pnl_class_sum}"), class_="total-summary-pnl"),
-                    class_="total-summary",
+                render_summary_header(
+                    label="계좌자산",
+                    total_asset=total_sum,
+                    pnl=pnl_sum,
+                    pnl_pct=pnl_pct_sum,
+                    usd_rate=acc_usd_rate,
+                    usd_chg=acc_usd_chg,
                 ),
                 # 종목 리스트 및 관리 버튼
                 ui.div(
-                    ui.div(*[render_ticker_row(pos, usd_rate, ns) for pos in positions]) if positions else ui.p("종목이 없습니다.", style="color:#888; padding:16px;"),
+                    ui.div(*[
+                        ui.div(
+                            render_ticker_row(pos, usd_rate),
+                            onclick=f"Shiny.setInputValue('{ns('edit_pos_id')}', {pos[0]}, {{priority: 'event'}});",
+                            style="cursor:pointer;",
+                        )
+                        for pos in positions
+                    ]) if positions else ui.p("종목이 없습니다.", style="color:#888; padding:16px;"),
                     ui.div(
                         ui.input_action_button("btn_add_position", "+ 종목 추가", class_="btn-add"),
                         ui.input_action_button("btn_add_cash", "+ 현금 추가", class_="btn-add"),
