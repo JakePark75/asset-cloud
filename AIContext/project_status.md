@@ -66,6 +66,7 @@
 │   ├── static/
 │   │   └── style.css    # 공통 스타일 (다크테마)
 │   └── modules/
+│       ├── components.py            # 포맷 유틸 (fmt_krw 등) + render_summary_header
 │       ├── dashboard.py
 │       ├── portfolio.py
 │       ├── accounts.py              # UI/server 진입점
@@ -80,7 +81,7 @@
 │       └── settings.py
 └── scheduler/
     ├── price_updater.py      # 시세 수집 스케줄러
-    ├── config.json           # 설정값 (kis_app_key, kis_app_secret, db_password, interval)
+    ├── config.json           # 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key)
     ├── price_updater.service # systemd 서비스 파일 원본
     └── myassets.service      # systemd 서비스 파일 원본
 ```
@@ -313,6 +314,11 @@
 | ✅ 완료 | 과거 입출금내역 변경하도록 개선-> 입출금기록 변경시 twr asset 업데이트됨 |
 | ✅ 완료 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
 | ✅ 완료 | 시세 수집 공휴일 캐싱 (HolidayCache 클래스, 매일 08:00 KST 갱신, is_market_open() 연동, update_worker() data_time 버그 수정)
+| ✅ 완료 | 시장 상태 4단계 (`get_market_status()` — open/pre/after/closed), 기존 `is_market_open()` 하위호환 유지 |
+| ✅ 완료 | 종가 확정 로직 — after 상태에서 KR/US 종가 API 병행 호출, 확정 시 당일 조회 중단 (`_close_confirmed` 플래그) |
+| ✅ 완료 | 설정 화면 티커 배지 4종류 (장중/프리/애프터/휴장, 색상 구분) |
+| ✅ 완료 | 포트폴리오/계좌상세 종목 카드 현재가 표시 (거래 화폐단위, 등락률과 동일 색상) |
+| ✅ 완료 | 현금(KRW/USD) 종목 카드 배지 미표시 |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

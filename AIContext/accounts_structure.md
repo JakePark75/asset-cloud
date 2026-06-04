@@ -123,5 +123,12 @@ DB 조회 함수는 `accounts_DAL.py`로 분리됨.
 - `start_signal_listener(db_password)`를 server 함수 진입부에서 호출 (`price_signal.py` 연동)
 - DB NUMERIC 컬럼(current_price, change_pct, quantity 등)은 psycopg2가 Decimal로 반환 — float() 변환 후 사용
 - 모달 UI 함수들은 `accounts_modals.py`로 분리 (`modal_add_account_ui`, `modal_add_position_ui`, `modal_add_cash_ui`, `modal_edit_position_ui`, `modal_edit_cash_ui`)
-- 카드/행 렌더링 컴포넌트는 `accounts_components.py`로 분리 (`render_asset_card`, `render_ticker_row`)
+- 포맷 유틸 및 공통 헤더는 `components.py`로 분리 (`fmt_krw`, `fmt_usd`, `fmt_pct`, `fmt_pnl`, `fmt_change`, `render_summary_header`)
+  - `fmt_change(price, chg_pct, currency)`: 현재가 + 등락률 + CSS 클래스 반환 → `render_ticker_row`에서 사용
+  - `render_summary_header()`: 계좌목록/계좌상세/포트폴리오 공통 상단 요약 헤더
+  - `render_ticker_row`: 종목 행 우측 하단에 현재가 + 등락률 표시
+    - 현재가는 거래 화폐단위 그대로 표시 (KRW종목→원화, 미국주식→USD)
+    - 현재가 색상은 등락률과 동일 (positive/negative)
+    - 현금(KRW/USD)은 시장 상태 배지 표시 안 함
+    - 종목은 `get_market_status()`로 4종류 배지: 장중(녹)/프리(보라)/애프터(주황)/휴장(회색)
 ---

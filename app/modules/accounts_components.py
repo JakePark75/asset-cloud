@@ -83,8 +83,7 @@ def render_ticker_row(pos, usd_rate):
             ui.div(
                 ui.span(f"x{leverage}", class_=f"lev-badge lev-x{leverage}") if leverage > 1 else None,
                 ui.span(display_name, class_="ticker-name"),
-                # 상태 배지 추가
-                ui.span(f"{status_dot} {status_text}", class_=f"ticker-status {status_class}"),
+                ui.span(f"{status_dot} {status_text}", class_=f"ticker-status {status_class}") if status_dot else None,
                 class_="lev-name-wrap",
             ),
             ui.div(qty_str, class_="ticker-qty"),
@@ -92,7 +91,7 @@ def render_ticker_row(pos, usd_rate):
         ui.div(
             ui.div(amount_str, class_="ticker-amount"),
             ui.div(
-                ui.span(price_str, style="color:#888; margin-right:4px;") if price_str else None,
+                ui.span(price_str, class_ = chg_css, style="margin-right:4px;") if price_str else None,
                 ui.span(chg_str, class_=chg_css),
                 class_="ticker-change",
             ) if chg_str else ui.div(),

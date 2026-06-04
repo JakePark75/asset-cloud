@@ -4,6 +4,9 @@
 - 설정 화면 UI 및 서버 로직
 - 시세조회 간격 설정, 수동 티커 관리, 로그아웃
 
+### import
+- `from scheduler.price_updater import get_market_status` (기존 `is_market_open` → 교체)
+
 ### Reactive State
 
 | 변수 | 타입 | 설명 |
@@ -19,9 +22,14 @@
 - 버튼 클릭 시 JS로 active 클래스 전환 + `settings-btn_save_interval` input 세팅
 
 #### `ticker_list`
-- `is_manual = true` 인 티커만 조회
-- 종목명(티커) / 시장/레버리지 표시
-- 삭제 버튼: JS confirm 후 `confirm_delete_ticker` input 세팅
+- `get_market_status(market)` 로 시장 상태 판단, 4종류 배지 표시
+  - `"open"` → 🟢 장중 (`status-open`, 녹색)
+  - `"pre"` → 🟣 프리 (`status-pre`, 보라)
+  - `"after"` → 🟠 애프터 (`status-after`, 주황)
+  - `"closed"` → ⚪ 휴장 (`status-closed`, 회색)
+- `reactive.invalidate_later(60)` 로 1분마다 자동 갱신
+- 레버리지 배지 (`lev-x2`, `lev-x3`), 수동/자동 구분 표시
+- 삭제 버튼: `is_manual=true` 인 경우만 표시, JS confirm 후 `confirm_delete_ticker` input 세팅
 
 #### `modal_add_ticker`
 - `show_modal_ticker()` True일 때 렌더
