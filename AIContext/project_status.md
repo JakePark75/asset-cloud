@@ -218,7 +218,7 @@
 
 ### 파일 구성
 - `scheduler/price_updater.py` — 메인 스크립트
-- `scheduler/config.json` — 설정값 (kis_app_key, kis_app_secret, db_password, interval)
+- `scheduler/config.json` — 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key )
 - `scheduler/price_updater.service` — systemd 서비스 파일 원본
 
 ### 동작 방식
@@ -226,6 +226,9 @@
 - 전 종목 무조건 조회 방식에서 탈피하여 정규장 시간 외 불필요한 API 호출 차단
 - FX / CRYPTO: 24시간 조회
 - 국내/미국 주식: 현지 정규장 시간 전후 30분 버퍼(±30min) 적용
+- 공휴일 캐싱: HolidayCache 클래스가 매일 08:00 KST에 한국/미국 공휴일을 외부 API로 조회 후 캐싱. is_market_open()에서 캐시 참조하여 공휴일 여부 판단
+  - 공휴일 API 키 2개 config.json에 추가 필요 (kr_holiday_api_key, us_holiday_api_key)
+  - main() 루프에서 매 interval마다 holiday_cache.refresh_if_needed() 호출 (08:00 KST 이후 당일 첫 호출 시 1회만 조회)
 - tickers 테이블 전체 종목 조회 후 market별 API 호출
 - 종목별 독립 스레드로 병렬 실행
 - KR: KIS API (장마감 시 전일종가 fallback)
@@ -309,6 +312,7 @@
 | ✅ 완료 | 기존 일일자산누적 데이터 DB 일괄 이전 (2025-06-19~) |
 | ✅ 완료 | 과거 입출금내역 변경하도록 개선-> 입출금기록 변경시 twr asset 업데이트됨 |
 | ✅ 완료 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
+| ✅ 완료 | 시세 수집 공휴일 캐싱 (HolidayCache 클래스, 매일 08:00 KST 갱신, is_market_open() 연동, update_worker() data_time 버그 수정)
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
 | ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

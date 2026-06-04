@@ -3,12 +3,12 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, time as dt_time # time 모듈과 이름 충돌 방지
+from datetime import datetime, date, time as dt_time  # time 모듈과 이름 충돌 방지
 from logging.handlers import RotatingFileHandler
 
 import psycopg2
 import requests
-import pytz  # 추가 필요
+import pytz
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -68,30 +68,169 @@ def get_db_conn():
     )
 
 # ---------------------------------------------------------------------------
-# 공통 함수: 시장 개장 여부 판단 (30분 버퍼 포함)
+# 공휴일 캐시
 # ---------------------------------------------------------------------------
-def is_market_open(market):
+class HolidayCache:
+    """
+    매일 08:00 KST에 한국/미국 공휴일을 조회하여 캐싱.
+    - 한국: 공공데이터포털 특일 API
+    - 미국: Finnhub market-holiday API
+    당일 날짜가 공휴일이면 해당 시장을 휴장으로 판단.
+    """
+
+    def __init__(self):
+        self._lock         = threading.Lock()
+        self._fetched_date = None          # 마지막으로 조회한 날짜 (date 객체)
+        self._kr_holidays  = set()         # {date, ...}
+        self._us_holidays  = set()         # {date, ...}
+        self._last_fetch_hour = None       # 마지막 조회 시각(시)
+
+    # ------------------------------------------------------------------
+    # 한국 특일 API 조회
+    # ------------------------------------------------------------------
+    def _fetch_kr_holidays(self, year: int, month: int) -> set:
+        """공공데이터포털 특일 API → isHoliday=Y 인 날짜 집합 반환"""
+        key = config.get("data_go_kr_key", "")
+        if not key:
+            log.warning("data_go_kr_key 미설정 — 한국 공휴일 조회 건너뜀")
+            return set()
+
+        url = "http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getHoliDeInfo"
+        params = {
+            "serviceKey": key,
+            "solYear":    year,
+            "solMonth":   f"{month:02d}",
+            "numOfRows":  50,
+            "_type":      "json",
+        }
+        try:
+            res  = requests.get(url, params=params, timeout=10)
+            data = res.json()
+            items = data["response"]["body"]["items"]
+            # 항목이 없으면 빈 dict 또는 "" 반환됨
+            if not items or items == "":
+                return set()
+            item_list = items["item"]
+            if isinstance(item_list, dict):   # 항목이 1개면 dict로 옴
+                item_list = [item_list]
+            holidays = set()
+            for item in item_list:
+                if item.get("isHoliday") == "Y":
+                    d = str(item["locdate"])  # 예: "20250127"
+                    holidays.add(date(int(d[:4]), int(d[4:6]), int(d[6:])))
+            return holidays
+        except Exception as e:
+            log.error(f"한국 공휴일 조회 실패: {e}")
+            return set()
+
+    # ------------------------------------------------------------------
+    # 미국 Finnhub market-holiday 조회
+    # ------------------------------------------------------------------
+    def _fetch_us_holidays(self) -> set:
+        """Finnhub market-holiday API → tradingHour='' (완전 휴장) 날짜 집합 반환"""
+        key = config.get("finnhub_api_key", "")
+        if not key:
+            log.warning("finnhub_api_key 미설정 — 미국 공휴일 조회 건너뜀")
+            return set()
+
+        url = f"https://finnhub.io/api/v1/stock/market-holiday?exchange=US&token={key}"
+        try:
+            res  = requests.get(url, timeout=10)
+            data = res.json()
+            holidays = set()
+            for item in data.get("data", []):
+                # tradingHour가 빈 문자열이면 완전 휴장
+                if item.get("tradingHour", "") == "":
+                    d = item["atDate"]  # "YYYY-MM-DD"
+                    holidays.add(date.fromisoformat(d))
+            return holidays
+        except Exception as e:
+            log.error(f"미국 공휴일 조회 실패: {e}")
+            return set()
+
+    # ------------------------------------------------------------------
+    # 캐시 갱신 (매일 08:00 KST 기준)
+    # ------------------------------------------------------------------
+    def refresh_if_needed(self):
+        kst = pytz.timezone("Asia/Seoul")
+        now_kst = datetime.now(kst)
+        today   = now_kst.date()
+
+        with self._lock:
+            # 오늘 날짜로 이미 조회했으면 스킵
+            if self._fetched_date == today:
+                return
+
+            # 08:00 이전이면 아직 조회하지 않음 (당일 첫 실행 전)
+            if now_kst.hour < 8:
+                return
+
+            log.info(f"공휴일 캐시 갱신 시작 — {today}")
+
+            kr = self._fetch_kr_holidays(today.year, today.month)
+            us = self._fetch_us_holidays()
+
+            self._kr_holidays  = kr
+            self._us_holidays  = us
+            self._fetched_date = today
+
+            log.info(f"한국 공휴일: {sorted(kr)}")
+            log.info(f"미국 공휴일: {sorted(us)}")
+
+    # ------------------------------------------------------------------
+    # 공휴일 여부 조회
+    # ------------------------------------------------------------------
+    def is_kr_holiday(self, d: date = None) -> bool:
+        d = d or date.today()
+        with self._lock:
+            return d in self._kr_holidays
+
+    def is_us_holiday(self, d: date = None) -> bool:
+        d = d or date.today()
+        with self._lock:
+            return d in self._us_holidays
+
+
+# 전역 캐시 인스턴스
+holiday_cache = HolidayCache()
+
+
+# ---------------------------------------------------------------------------
+# 공통 함수: 시장 개장 여부 판단 (30분 버퍼 + 공휴일 체크)
+# ---------------------------------------------------------------------------
+def is_market_open(market: str) -> bool:
     if market in ("FX", "CRYPTO"):
         return True
 
     if market == "KR":
-        tz = pytz.timezone('Asia/Seoul')
+        tz = pytz.timezone("Asia/Seoul")
         open_t, close_t = dt_time(9, 0), dt_time(15, 30)
     elif market in ("NAS", "NYS", "AMS", "ARC"):
-        tz = pytz.timezone('America/New_York')
+        tz = pytz.timezone("America/New_York")
         open_t, close_t = dt_time(9, 30), dt_time(16, 0)
     else:
         return True
 
     now_local = datetime.now(tz)
-    if now_local.weekday() >= 5:  # 주말 휴장
+    today_local = now_local.date()
+
+    # 주말 휴장
+    if now_local.weekday() >= 5:
         return False
 
-    now_min = now_local.hour * 60 + now_local.minute
+    # 공휴일 휴장
+    if market == "KR" and holiday_cache.is_kr_holiday(today_local):
+        return False
+    if market in ("NAS", "NYS", "AMS", "ARC") and holiday_cache.is_us_holiday(today_local):
+        return False
+
+    # 정규장 시간 체크 (±30분 버퍼)
+    now_min   = now_local.hour * 60 + now_local.minute
     start_min = open_t.hour * 60 + open_t.minute - 30
-    end_min = close_t.hour * 60 + close_t.minute + 30
-    
+    end_min   = close_t.hour * 60 + close_t.minute + 30
+
     return start_min <= now_min <= end_min
+
 
 # ---------------------------------------------------------------------------
 # KIS API 토큰
@@ -116,7 +255,7 @@ def get_access_token():
 
 
 # ---------------------------------------------------------------------------
-# 시세 수집 함수 (기존 stock_updater.py 재활용)
+# 시세 수집 함수
 # ---------------------------------------------------------------------------
 def get_kr_price(ticker):
     token = get_access_token()
@@ -170,6 +309,7 @@ def get_yahoo_price(ticker):
     data_time = datetime.fromtimestamp(meta.get("regularMarketTime", 0))
     return price, change_pct, data_time
 
+
 # ---------------------------------------------------------------------------
 # DB 업데이트
 # ---------------------------------------------------------------------------
@@ -195,13 +335,14 @@ def update_ticker_in_db(conn, ticker, price, change_pct, data_time=None):
 def update_worker(row):
     ticker = row["ticker"]
     market = row["market"]
+    data_time = None
     try:
         if market == "KR":
             price, change_pct = get_kr_price(ticker)
         elif market in ("NAS", "NYS", "AMS", "ARC"):
             price, change_pct = get_us_price(ticker, market)
         elif market in ("FX", "INDEX", "CRYPTO"):
-                    price, change_pct, data_time = get_yahoo_price(ticker)
+            price, change_pct, data_time = get_yahoo_price(ticker)
         else:
             log.warning(f"[{ticker}] 알 수 없는 market: {market}")
             return
@@ -212,7 +353,6 @@ def update_worker(row):
 
         conn = get_db_conn()
         try:
-
             update_ticker_in_db(conn, ticker, price, change_pct, data_time if market in ("FX", "INDEX", "CRYPTO") else None)
             log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
         finally:
@@ -223,7 +363,7 @@ def update_worker(row):
 
 
 # ---------------------------------------------------------------------------
-# 전체 종목 조회 후 스레드 실행 (필터링 로직 삽입)
+# 전체 종목 조회 후 스레드 실행
 # ---------------------------------------------------------------------------
 def run_update_cycle(force=False):
     try:
@@ -240,17 +380,16 @@ def run_update_cycle(force=False):
         log.warning("tickers 테이블에 종목 없음")
         return
 
-    # --- 필터링 로직 추가 ---
     targets = rows if force else [r for r in rows if is_market_open(r["market"])]
-    
+
     if not targets:
         log.info("현재 업데이트 대상 종목이 없습니다. (모든 시장 휴장 중)")
         return
 
     log.info(f"업데이트 시작 — 활성 {len(targets)}개 / 전체 {len(rows)}개")
-    
+
     threads = []
-    for row in targets: # 필터링된 targets에 대해서만 스레드 생성
+    for row in targets:
         t = threading.Thread(target=update_worker, args=(row,), daemon=True)
         threads.append(t)
         t.start()
@@ -270,6 +409,7 @@ def run_update_cycle(force=False):
     except Exception as e:
         log.error(f"NOTIFY 실패: {e}")
 
+
 # ---------------------------------------------------------------------------
 # 메인 루프
 # ---------------------------------------------------------------------------
@@ -280,6 +420,10 @@ def main():
     while True:
         load_config()
         interval_sec = config["interval"] * 60
+
+        # 공휴일 캐시 갱신 (매일 08:00 KST 이후 첫 루프에서 1회 실행)
+        holiday_cache.refresh_if_needed()
+
         start = time.time()
         run_update_cycle()
         elapsed = time.time() - start
