@@ -35,15 +35,6 @@ def load_portfolio():
 @module.ui
 def portfolio_ui():
     return ui.div(
-        ui.tags.script("""
-            $(document).on('click', '.force-update-btn', function(e) {
-                e.preventDefault();
-                if (!confirm('전체 종목 시세를 강제 조회합니다.\\n장외시간 종목도 포함됩니다. 진행할까요?')) {
-                    e.stopImmediatePropagation();
-                    return false;
-                }
-            });
-        """),
         ui.output_ui("portfolio_content"),
         class_="page-container"
     )
@@ -53,11 +44,37 @@ def portfolio_server(input, output, session):
 
     @reactive.effect
     @reactive.event(input.force_update)
+    def _show_force_modal():
+        m = ui.modal(
+            ui.div(
+                ui.p("전체 종목 시세를 강제 조회합니다. 장외시간 종목도 포함됩니다."),
+                ui.div(
+                    ui.input_action_button("force_confirm", "확인", class_="btn-primary"),
+                    ui.input_action_button("force_cancel", "취소", class_="btn-secondary"),
+                    class_="modal-btn-row-half",
+                    style="display:flex; gap:8px; margin-top:12px;",
+                ),
+                class_="modal-body-inner",
+            ),
+            title="강제 시세 조회",
+            easy_close=True,
+            footer=None,
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.force_confirm)
     def _do_force_update():
+        ui.modal_remove()
         subprocess.Popen(
             [sys.executable, "scheduler/price_updater.py", "--force"],
             cwd="/home/ubuntu/asset-cloud"
         )
+
+    @reactive.effect
+    @reactive.event(input.force_cancel)
+    def _cancel_force_update():
+        ui.modal_remove()
 
     @render.ui
     def portfolio_content():
@@ -105,7 +122,6 @@ def portfolio_server(input, output, session):
 
         ticker_rows = []
         for ticker, qty, name, price, chg_pct, market, leverage in rows_sorted:
-            # render_ticker_row 튜플 형식: (pos_id, ticker, qty, name, price, chg_pct, market, leverage)
             pos = (None, ticker, qty, name, price, chg_pct, market, leverage)
             ticker_rows.append(render_ticker_row(pos, usd_rate))
 

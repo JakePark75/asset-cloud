@@ -565,3 +565,18 @@ body {
 .chart-touch-wrap {
     touch-action: pan-y;
 }
+
+.modal-btn-row .shiny-input-container {
+    width: auto !important;
+    flex: 1;
+}
+
+.modal-body-inner button {
+    flex: 1;
+}
+
+.modal-btn-row-half .btn-primary,
+.modal-btn-row-half .btn-secondary {
+    width: 50% !important;
+    padding: 10px;
+}
