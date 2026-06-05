@@ -1,0 +1,76 @@
+# 서버 명령어 치트시트
+
+## 서비스 관리
+
+| 작업 | 명령어 |
+|------|--------|
+| Shiny 앱 재시작 | `sudo systemctl restart myassets` |
+| Shiny 앱 중지 | `sudo systemctl stop myassets` |
+| Shiny 앱 시작 | `sudo systemctl start myassets` |
+| Shiny 앱 상태 | `sudo systemctl status myassets` |
+| 시세 수집 재시작 | `sudo systemctl restart price_updater` |
+| 시세 수집 상태 | `sudo systemctl status price_updater` |
+| daily_inserter 재시작 | `sudo systemctl restart daily_inserter` |
+| daily_inserter 상태 | `sudo systemctl status daily_inserter` |
+| nginx 재시작 | `sudo systemctl restart nginx` |
+
+## 로그 확인
+
+```bash
+# Shiny 앱 실시간 로그
+sudo journalctl -u myassets -f
+
+# 시세 수집 실시간 로그
+sudo journalctl -u price_updater -f
+
+# daily_inserter 실시간 로그
+sudo journalctl -u daily_inserter -f
+
+# 최근 100줄
+sudo journalctl -u myassets -n 100
+```
+
+## DB 접속
+
+```bash
+psql -U jake -d assetdb -W
+# 패스워드: qkrworb0!
+```
+
+## DB 자주 쓰는 쿼리
+
+```sql
+-- 최신 daily_summary 확인
+SELECT * FROM daily_summary ORDER BY date DESC LIMIT 5;
+
+-- 현재 tickers 시세 확인
+SELECT ticker, name, current_price, change_pct, updated_at FROM tickers ORDER BY market, ticker;
+
+-- positions 확인
+SELECT p.id, a.name, p.ticker, p.quantity FROM positions p JOIN accounts a ON p.account_id = a.id;
+
+-- NDX100 현재가
+SELECT ticker, current_price, updated_at FROM tickers WHERE ticker = '^NDX';
+
+-- USD/KRW 현재가
+SELECT ticker, current_price, updated_at FROM tickers WHERE ticker = 'USDKRW=X';
+```
+
+## 코드 배포
+
+```bash
+cd /home/ubuntu/asset-cloud
+git pull
+sudo systemctl restart myassets
+```
+
+## 서버 정보
+
+| 항목 | 값 |
+|------|-----|
+| VM IP | 161.33.151.220 |
+| 도메인 | myassets.mooo.com |
+| OS 유저 | ubuntu |
+| DB명 | assetdb |
+| DB유저 | jake |
+| 프로젝트 경로 | /home/ubuntu/asset-cloud |

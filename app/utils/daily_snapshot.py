@@ -152,12 +152,19 @@ def _get_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> f
                 break
 
     rows = _US_CACHE[ticker]
+    # 조회된 날짜 목록 로그
+    dates = [r.get("xymd") for r in rows[:5]]
+    print(f"  [{ticker}] API 반환 날짜(최근5): {dates}, target: {target_date_str}")
     for row in rows:
         if row.get("xymd") == target_date_str:
-            return float(row.get("clos", 0))
+            price = float(row.get("clos", 0))
+            print(f"  [{ticker}] 정확히 일치 → {target_date_str} 종가: {price}")
+            return price
     for row in rows:
         if row.get("xymd", "") <= target_date_str:
-            return float(row.get("clos", 0))
+            price = float(row.get("clos", 0))
+            print(f"  [{ticker}] fallback → {row.get('xymd')} 종가: {price}")
+            return price
     return 0.0
 
 # ---------------------------------------------------------------------------
@@ -234,6 +241,13 @@ def get_daily_snapshot(target_date: datetime.date) -> dict:
     target_date 기준 가장 최근 종가로 daily_summary 1행분 데이터를 계산한다.
     cash_flow / cash_flow_note 는 포함하지 않는다.
     """
+    # 상시 실행 프로세스(daily_inserter)에서 호출 시 전날 캐시가 남아있으면
+    # target_date 종가 대신 전날 종가로 계산되는 버그 방지 → 매 호출마다 초기화
+    global _KR_CACHE, _US_CACHE, _YAHOO_CACHE
+    _KR_CACHE = {}
+    _US_CACHE = {}
+    _YAHOO_CACHE = {}
+
     date_str = target_date.strftime("%Y%m%d")
     token = _get_token()
 
@@ -265,6 +279,34 @@ def get_daily_snapshot(target_date: datetime.date) -> dict:
 
     ratios = calculate_exposure_and_ratios(db_rows, usd_krw)
     total_asset = ratios["total_asset"]
+
+    # ── 스냅샷 상세 로그 ──────────────────────────────────────
+    print(f"\n{'='*55}")
+    print(f"📅 스냅샷 날짜   : {target_date}")
+    print(f"💱 환율 (USD/KRW): {usd_krw:,.2f}")
+    print(f"{'─'*55}")
+
+    cash_krw = sum(to_f(qty) for ticker, qty, price, lev, mkt in db_rows if ticker == "KRW")
+    cash_usd = sum(to_f(qty) for ticker, qty, price, lev, mkt in db_rows if ticker == "USD")
+    print(f"💵 현금 KRW      : {cash_krw:>20,.0f} 원")
+    print(f"💵 현금 USD      : {cash_usd:>20,.2f} USD  ({cash_usd * usd_krw:>15,.0f} 원)")
+    print(f"{'─'*55}")
+    print(f"{'종목':<10} {'수량':>12} {'종가':>14} {'평가액(원)':>18}")
+    print(f"{'─'*55}")
+    for ticker, qty, price, lev, mkt in db_rows:
+        if ticker in ("KRW", "USD"):
+            continue
+        qty_f = to_f(qty)
+        price_f = to_f(price)
+        mkt_str = (mkt or "").upper()
+        if mkt_str in ("NAS", "AMS", "ARC"):
+            eval_krw = qty_f * price_f * usd_krw
+        else:
+            eval_krw = qty_f * price_f
+        print(f"{ticker:<10} {qty_f:>12,.4f} {price_f:>14,.4f} {eval_krw:>18,.0f}")
+    print(f"{'─'*55}")
+    print(f"{'총자산':<10} {'':>12} {'':>14} {total_asset:>18,.0f} 원")
+    print(f"{'='*55}\n")
 
     # TWR 계산
     prev = _fetch_prev_summary(target_date - datetime.timedelta(days=1))

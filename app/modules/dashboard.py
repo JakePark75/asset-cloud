@@ -9,6 +9,7 @@ from app.utils.metrics import (
     to_f, calculate_xirr, calculate_monthly_irr,
     calculate_alpha, calculate_beta,
     calculate_daily_profit, calculate_retirement_asset,
+    calculate_exposure_and_ratios,
 )
 from app.modules.components import fmt_krw
 
@@ -35,9 +36,16 @@ def _arrow(val: float) -> str:
 # ── DAL ──────────────────────────────────────────────────────
 
 def _load_summary_data() -> dict:
-    """daily_summary 전체 조회 + 지표 계산"""
+    """
+    daily_summary 이력 + 실시간 positions/tickers 기반으로 지표 계산.
+    - 총자산/Exposure/비중: positions 실시간
+    - IRR/알파/베타의 마지막 데이터포인트: 실시간 total_asset, twr_asset, ndx100
+    - 이력 기준값(어제 total_asset, twr_asset): daily_summary 최신 행
+    """
     with get_db() as conn:
         cur = conn.cursor()
+
+        # daily_summary 전체 이력
         cur.execute("""
             SELECT date, total_asset, cash_flow, ndx100,
                    exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
@@ -45,6 +53,40 @@ def _load_summary_data() -> dict:
             ORDER BY date ASC
         """)
         rows = cur.fetchall()
+
+        # 실시간 USD/KRW (KRW/USD 현금 price 계산에 먼저 필요)
+        cur.execute("SELECT current_price FROM tickers WHERE ticker = 'USDKRW=X'")
+        fx = cur.fetchone()
+        usd_krw = to_f(fx[0]) if fx else 1300.0
+
+        # 실시간 positions + tickers (KRW/USD는 tickers에 없으므로 LEFT JOIN)
+        cur.execute("""
+            SELECT p.ticker, p.quantity, t.current_price, t.leverage, t.market
+            FROM positions p
+            LEFT JOIN tickers t ON p.ticker = t.ticker
+        """)
+        raw_rows = cur.fetchall()
+
+        # KRW/USD 현금은 tickers에 없어 current_price=NULL → 별도 price 주입
+        pos_rows = []
+        for ticker, qty, price, leverage, market in raw_rows:
+            if ticker == "KRW":
+                pos_rows.append((ticker, qty, 1.0, 1, "CASH"))
+            elif ticker == "USD":
+                pos_rows.append((ticker, qty, usd_krw, 1, "CASH"))
+            else:
+                pos_rows.append((ticker, qty, price, leverage, market))
+
+        # 실시간 NDX100
+        cur.execute("SELECT current_price FROM tickers WHERE ticker = '^NDX'")
+        ndx_row = cur.fetchone()
+        live_ndx100 = to_f(ndx_row[0]) if ndx_row else None
+
+        # 오늘 cash_flow (오늘 daily_summary 행이 이미 insert된 경우)
+        today = datetime.date.today()
+        cur.execute("SELECT cash_flow FROM daily_summary WHERE date = %s", (today,))
+        today_cf_row = cur.fetchone()
+        today_cf = to_f(today_cf_row[0]) if today_cf_row else 0.0
 
     if not rows:
         return {}
@@ -58,50 +100,70 @@ def _load_summary_data() -> dict:
     except Exception:
         retirement_date = datetime.date(2035, 12, 31)
 
-    latest = rows[-1]
-    prev   = rows[-2] if len(rows) >= 2 else None
+    # ── 실시간 총자산 / 비중 계산 ──────────────────────────────
+    rt = calculate_exposure_and_ratios(pos_rows, usd_krw)
+    total_asset  = rt["total_asset"]
+    exposure     = rt["exposure"]
+    cash_ratio   = rt["cash_ratio"]
+    invest_ratio = 1.0 - cash_ratio
+    x1_ratio     = rt["x1_ratio"]
+    x2_ratio     = rt["x2_ratio"]
+    x3_ratio     = rt["x3_ratio"]
 
-    total_asset  = to_f(latest[1])
-    today_cf     = to_f(latest[2])
-    prev_asset   = to_f(prev[1]) if prev else 0.0
+    # ── 어제 기준값 (daily_summary 최신 행) ───────────────────
+    latest   = rows[-1]
+    prev     = rows[-2] if len(rows) >= 2 else None
+    prev_asset   = to_f(latest[1])   # daily_summary 최신 = 어제 총자산
+    prev_twr     = to_f(latest[9])   # 어제 twr_asset
+    prev_ndx100  = to_f(latest[3])   # 어제 ndx100 (live 없을 때 fallback)
 
+    # ── 총자산 증감 ────────────────────────────────────────────
     asset_delta     = total_asset - prev_asset
     asset_delta_pct = (asset_delta / prev_asset) if prev_asset else 0.0
-    daily_profit    = calculate_daily_profit(total_asset, today_cf, prev_asset)
 
-    exposure     = to_f(latest[4])
-    cash_ratio   = to_f(latest[5])
-    x1_ratio     = to_f(latest[6])
-    x2_ratio     = to_f(latest[7])
-    x3_ratio     = to_f(latest[8])
-    invest_ratio = 1.0 - cash_ratio
+    # ── 금일 순수익 ────────────────────────────────────────────
+    daily_profit = calculate_daily_profit(total_asset, today_cf, prev_asset)
 
-    # XIRR cash_flows: 최초자산 음수 + 중간 입출금 반전 + 현재자산 양수
+    # ── 실시간 twr_asset 계산 ──────────────────────────────────
+    denom = prev_asset
+    live_twr = prev_twr * ((total_asset - today_cf) / denom) if denom != 0 else prev_twr
+
+    # ── NDX100: 실시간 우선, 없으면 daily_summary 최신값 ──────
+    live_ndx = live_ndx100 if live_ndx100 else prev_ndx100
+
+    # ── XIRR: 이력 + 실시간 마지막 포인트 ────────────────────
+    # rows[0] ~ rows[-1] 은 daily_summary 이력 (어제까지)
+    # 마지막 포인트를 오늘 실시간으로 대체
     cash_flows = [(rows[0][0], -to_f(rows[0][1]))]
-    cash_flows += [(r[0], -to_f(r[2])) for r in rows[1:-1] if to_f(r[2]) != 0]
-    cash_flows.append((latest[0], total_asset))
+    cash_flows += [(r[0], -to_f(r[2])) for r in rows[1:] if to_f(r[2]) != 0]
+    cash_flows.append((today, total_asset))
 
     annual_irr  = calculate_xirr(cash_flows)
     monthly_irr = calculate_monthly_irr(cash_flows)
 
-    start_row   = (rows[0][9], rows[0][3])
-    end_row     = (latest[9],  latest[3])
-    cumul_alpha = calculate_alpha(start_row, end_row)
-    total_months = max(1, (latest[0] - rows[0][0]).days / 30.0)
+    # ── 알파: 이력 start + 실시간 end ─────────────────────────
+    start_row    = (to_f(rows[0][9]), to_f(rows[0][3]))   # (twr_asset, ndx100) 최초
+    end_row      = (live_twr, live_ndx)
+    cumul_alpha  = calculate_alpha(start_row, end_row)
+    total_months = max(1, (today - rows[0][0]).days / 30.0)
     monthly_alpha = cumul_alpha / total_months
 
-    cutoff  = latest[0] - datetime.timedelta(days=30)
-    row_30  = next((r for r in rows if r[0] >= cutoff), rows[0])
-    alpha_30 = calculate_alpha((row_30[9], row_30[3]), (latest[9], latest[3]))
+    cutoff   = today - datetime.timedelta(days=30)
+    row_30   = next((r for r in rows if r[0] >= cutoff), rows[0])
+    alpha_30 = calculate_alpha((to_f(row_30[9]), to_f(row_30[3])), (live_twr, live_ndx))
 
-    beta_all = calculate_beta([(r[1], r[3]) for r in rows])
-    rows_30  = [r for r in rows if r[0] >= cutoff]
-    beta_30  = calculate_beta([(r[1], r[3]) for r in rows_30]) if len(rows_30) >= 3 else 0.0
+    # ── 베타: 이력 rows + 실시간 마지막 포인트 ────────────────
+    beta_rows_all = [(to_f(r[1]), to_f(r[3])) for r in rows] + [(total_asset, live_ndx)]
+    beta_all = calculate_beta(beta_rows_all)
+
+    rows_30      = [r for r in rows if r[0] >= cutoff]
+    beta_rows_30 = [(to_f(r[1]), to_f(r[3])) for r in rows_30] + [(total_asset, live_ndx)]
+    beta_30      = calculate_beta(beta_rows_30) if len(beta_rows_30) >= 3 else 0.0
 
     retirement_asset = calculate_retirement_asset(total_asset, monthly_irr, retirement_date)
 
     return {
-        "latest_date":      latest[0],
+        "latest_date":      today,
         "total_asset":      total_asset,
         "asset_delta":      asset_delta,
         "asset_delta_pct":  asset_delta_pct,
