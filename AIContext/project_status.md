@@ -125,7 +125,7 @@
 
 ### TWR (시간가중수익률)
 - 입출금 영향을 제거한 순수 운용 수익률
-
+- twr_asset(오늘) = twr_asset(어제) × (total_asset(오늘) - cash_flow(오늘)) / total_asset(어제)
 ---
 
 ## 5. 화면 구성 (확정)
