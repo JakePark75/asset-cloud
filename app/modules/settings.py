@@ -98,13 +98,15 @@ def settings_server(input, output, session):
         for ticker, name, market, leverage, is_manual in rows:
             status = get_market_status(market)
             if status == "open":
-                status_dot, status_text, status_class = "●", "장중", "status-open"
+                status_dot, status_text, status_class = "●", "Open", "status-open"
             elif status == "pre":
-                status_dot, status_text, status_class = "●", "프리", "status-pre"
+                status_dot, status_text, status_class = "●", "Pre", "status-pre"
             elif status == "after":
-                status_dot, status_text, status_class = "●", "애프터", "status-after"
+                status_dot, status_text, status_class = "●", "After", "status-after"
+            elif status == "closing":
+                status_dot, status_text, status_class = "●", "Closing...", "status-closing"
             else:
-                status_dot, status_text, status_class = "○", "휴장", "status-closed"
+                status_dot, status_text, status_class = "○", "Closed", "status-closed"
 
             items.append(
                 ui.div(

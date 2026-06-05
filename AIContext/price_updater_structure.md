@@ -43,7 +43,7 @@ run_update_cycle()
        ├─ status == "open"  → targets (실시간 조회)
        ├─ status == "after" → targets + close_targets (실시간 + 종가확정 병행)
        │                       단, _is_close_confirmed() == True면 완전 스킵
-       └─ status == "pre" / "closed" → 스킵
+       └─ status == "closed" → 스킵
        종목별 threading.Thread 병렬 실행 (모든 스레드 join 후 완료)
        완료 후 NOTIFY price_updated 전송
 ```
@@ -91,7 +91,7 @@ close_confirm_worker(row)
 ### get_market_status(market) → str
 - 시장 상태 반환: `"open"` / `"pre"` / `"after"` / `"closed"`
 - KR: 09:00~15:30 → open, 15:30~18:00 → after, 그 외 → closed
-- US(NAS/NYS/AMS/ARC): 04:00~09:30 → pre, 09:30~16:00 → open, 16:00~20:00 → after, 그 외 → closed
+- US(NAS/NYS/AMS/ARC): 04:00~16:00 → open (프리마켓 포함), 16:00~20:00 → after, 그 외 → closed
 - FX/CRYPTO/INDEX: 항상 "open" (24시간)
 - 주말/공휴일: closed
 

@@ -392,6 +392,11 @@ body {
     background: rgba(245, 158, 11, 0.12);
 }
 
+.status-closing {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+}
+
 .status-closed {
     color: #888;
     background: rgba(136, 136, 136, 0.1);

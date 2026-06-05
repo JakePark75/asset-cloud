@@ -211,6 +211,8 @@ def get_market_status(market: str) -> str:
     if market in ("FX", "CRYPTO", "INDEX"):
         return "open"
 
+    buf = config.get("interval", 1)  # 버퍼: 조회 주기(분), closed 경계에만 적용
+
     if market == "KR":
         tz = pytz.timezone("Asia/Seoul")
         now_local   = datetime.now(tz)
@@ -222,12 +224,12 @@ def get_market_status(market: str) -> str:
             return "closed"
 
         now_min = now_local.hour * 60 + now_local.minute
-        # 정규장: 09:00 ~ 15:30
-        if dt_time(9, 0) <= now_local.time() <= dt_time(15, 30):
+        # 정규장: 09:00(버퍼) ~ 15:30
+        if 9 * 60 - buf <= now_min <= 15 * 60 + 30:
             return "open"
-        # after: 15:30 초과 ~ 18:00 (종가 확정 대기 구간)
-        if dt_time(15, 30) < now_local.time() <= dt_time(18, 0):
-            return "after"
+        # closing: 15:30 초과 ~ 18:00 (종가 확정 대기, 종가확정 시 closed로 전환)
+        if 15 * 60 + 30 < now_min <= 18 * 60:
+            return "closing"
         return "closed"
 
     if market in ("NAS", "NYS", "AMS", "ARC"):
@@ -240,14 +242,15 @@ def get_market_status(market: str) -> str:
         if holiday_cache.is_us_holiday(today_local):
             return "closed"
 
-        # 프리마켓: 04:00 ~ 09:30
-        if dt_time(4, 0) <= now_local.time() < dt_time(9, 30):
+        now_min = now_local.hour * 60 + now_local.minute
+        # 프리마켓: 04:00(버퍼) ~ 09:30
+        if 4 * 60 - buf <= now_min < 9 * 60 + 30:
             return "pre"
         # 정규장: 09:30 ~ 16:00
-        if dt_time(9, 30) <= now_local.time() <= dt_time(16, 0):
+        if 9 * 60 + 30 <= now_min <= 16 * 60:
             return "open"
-        # 애프터마켓: 16:00 초과 ~ 20:00
-        if dt_time(16, 0) < now_local.time() <= dt_time(20, 0):
+        # 애프터마켓: 16:00 초과 ~ 20:00(버퍼)
+        if 16 * 60 < now_min <= 20 * 60 + buf:
             return "after"
         return "closed"
 
@@ -310,46 +313,7 @@ def get_confirmed_close_kr(ticker: str):
         return None
 
 
-def get_confirmed_close_us(ticker: str, excd: str):
-    """
-    US 당일 종가 확정 여부 확인.
-    output2 첫 번째 행이 오늘 날짜이고 tvol != "0" 이면 (종가, change_pct) 반환.
-    미확정이면 None 반환.
-    """
-    token   = get_access_token()
-    today   = datetime.now(pytz.timezone("America/New_York")).strftime("%Y%m%d")
-    url     = "https://openapi.koreainvestment.com:9443/uapi/overseas-price/v1/quotations/dailyprice"
-    headers = {
-        "authorization": f"Bearer {token}",
-        "appkey":        config["kis_app_key"],
-        "appsecret":     config["kis_app_secret"],
-        "tr_id":         "HHDFS76240000",
-        "custtype":      "P",
-    }
-    params = {
-        "AUTH": "",
-        "EXCD": excd,
-        "SYMB": ticker,
-        "GUBN": "0",
-        "BYMD": today,
-        "MODP": "0",
-    }
-    try:
-        res  = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-        rows = res.json().get("output2", [])
-        if not rows:
-            return None
-        row = rows[0]
-        if row.get("xymd") != today:
-            return None
-        if row.get("tvol", "0") == "0":
-            return None
-        price      = float(row.get("clos", 0))
-        change_pct = float(row.get("rate", 0))
-        return price, change_pct
-    except Exception as e:
-        log.error(f"[{ticker}] US 종가 확정 조회 실패: {e}")
-        return None
+
 
 
 # ---------------------------------------------------------------------------
@@ -505,12 +469,8 @@ def _set_close_confirmed(market_group: str):
 
 
 def _market_group(market: str) -> str:
-    """market → market_group 매핑"""
-    if market == "KR":
-        return "KR"
-    if market in ("NAS", "NYS", "AMS", "ARC"):
-        return "US"
-    return market
+    """market → market_group 매핑 (현재 KR만 종가확정 사용)"""
+    return "KR" if market == "KR" else market
 
 
 # ---------------------------------------------------------------------------
@@ -519,17 +479,12 @@ def _market_group(market: str) -> str:
 def close_confirm_worker(row: dict):
     ticker = row["ticker"]
     market = row["market"]
-    group  = _market_group(market)
 
     try:
-        if market == "KR":
-            result = get_confirmed_close_kr(ticker)
-        elif market in ("NAS", "NYS", "AMS", "ARC"):
-            excd   = market
-            result = get_confirmed_close_us(ticker, excd)
-        else:
+        if market != "KR":
             return
 
+        result = get_confirmed_close_kr(ticker)
         if result is None:
             return  # 아직 미확정
 
@@ -544,8 +499,8 @@ def close_confirm_worker(row: dict):
         finally:
             conn.close()
 
-        # 종가 확정 — 해당 그룹 당일 조회 중단 플래그 세팅
-        _set_close_confirmed(group)
+        # 종가 확정 — KR 당일 조회 중단 플래그 세팅
+        _set_close_confirmed("KR")
 
     except Exception as e:
         log.error(f"[{ticker}] 종가 확정 워커 실패: {e}")
@@ -578,18 +533,16 @@ def run_update_cycle(force=False):
 
         for r in rows:
             market = r["market"]
-            group  = _market_group(market)
             status = get_market_status(market)
 
-            if status == "open":
+            if status in ("open", "pre", "after"):
                 targets.append(r)
-            elif status == "after":
-                if _is_close_confirmed(group):
+            elif status == "closing":
+                if _is_close_confirmed("KR"):
                     pass  # 종가 확정됐으면 완전 스킵
                 else:
-                    targets.append(r)        # 실시간 시세도 계속 조회
-                    close_targets.append(r)  # 종가 확정 병행 시도
-            # pre / closed → 스킵
+                    close_targets.append(r)  # 종가 확정 조회만
+            # closed → 스킵
 
     if not targets and not close_targets:
         log.info("현재 업데이트 대상 종목이 없습니다.")
