@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily Asset Summary Inserter
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/asset-cloud
+ExecStart=/usr/bin/python3 scheduler/daily_inserter.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

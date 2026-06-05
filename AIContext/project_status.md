@@ -66,7 +66,8 @@
 │   ├── static/
 │   │   └── style.css    # 공통 스타일 (다크테마)
 │   ├── utils/
-│   │   └── metrics.py   # 순수 계산 함수 (IRR, 알파, 베타, Exposure 등)
+│   │   ├── metrics.py         # 순수 계산 함수 (IRR, 알파, 베타, Exposure 등)
+│   │   └── daily_snapshot.py  # 특정일 기준 가장 최근 종가 조회 + daily_summary 1행분 계산 → dict 반환
 │   └── modules/
 │       ├── components.py            # 포맷 유틸 (fmt_krw 등) + render_summary_header
 │       ├── dashboard.py             # 대시보드 UI/server
@@ -82,10 +83,13 @@
 │       ├── history_utils.py
 │       └── settings.py
 └── scheduler/
-    ├── price_updater.py      # 시세 수집 스케줄러
-    ├── config.json           # 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key, retirement_date)
-    ├── price_updater.service # systemd 서비스 파일 원본
-    └── myassets.service      # systemd 서비스 파일 원본
+    ├── price_updater.py       # 시세 수집 스케줄러
+    ├── daily_inserter.py      # 일간 누적 데이터 자동 삽입 스케줄러 (매일 daily_insert_time KST 실행)
+    ├── gen_daily_data.py      # 누락 기간 수동 보정용 스탠드얼론 스크립트 (서비스 아님)
+    ├── config.json            # 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key, retirement_date, daily_insert_time)
+    ├── price_updater.service  # systemd 서비스 파일 원본
+    ├── daily_inserter.service # systemd 서비스 파일 원본
+    └── myassets.service       # systemd 서비스 파일 원본
 ```
 ---
 
@@ -200,6 +204,7 @@
 | x2_ratio | NUMERIC | x2 비중 |
 | x3_ratio | NUMERIC | x3 비중 |
 | twr_asset | NUMERIC | TWR 계산용 보조값 |
+| usd_krw | NUMERIC(10,2) | 해당일 기준 USD/KRW 환율 |
 
 ---
 
@@ -322,5 +327,6 @@
 | ✅ 완료 | 포트폴리오/계좌상세 종목 카드 현재가 표시 (거래 화폐단위, 등락률과 동일 색상) |
 | ✅ 완료 | 현금(KRW/USD) 종목 카드 배지 미표시 |
 | ✅ 진행중 | 대시보드 화면 (총자산/증감/금일수익, Exposure, 레버리지·종목 비중 도넛차트, IRR, 알파/베타, 은퇴시뮬레이션) |
-| ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
+| ✅ 완료 | insert_daily_row 스케줄러 자동화 (daily_inserter.py, systemd 서비스) |
+| ✅ 완료 | daily_summary usd_krw 컬럼 추가 (NUMERIC(10,2)) 및 과거 데이터 업데이트 (2025-06-19~2026-05-29) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

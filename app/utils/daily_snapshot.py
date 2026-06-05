@@ -1,0 +1,291 @@
+"""
+daily_snapshot.py
+특정일 기준 "가장 최근 종가"를 KIS/Yahoo API로 조회하여
+daily_summary 1행분 데이터를 계산해 dict로 반환한다.
+
+반환 dict 키:
+    date, total_asset, usd_krw, ndx100,
+    exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
+    cash_flow, cash_flow_note 는 포함하지 않음 (사용자 수동 입력)
+"""
+
+import datetime
+import calendar
+import json
+import requests
+import urllib3
+from pathlib import Path
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+from app.db import get_db, get_config
+from app.utils.metrics import calculate_exposure_and_ratios, to_f
+
+# ---------------------------------------------------------------------------
+# config
+# ---------------------------------------------------------------------------
+CONFIG = get_config()
+
+# ---------------------------------------------------------------------------
+# API 캐시 (프로세스 수명 동안 유지)
+# ---------------------------------------------------------------------------
+_KR_CACHE: dict = {}
+_US_CACHE: dict = {}
+_YAHOO_CACHE: dict = {}
+_TOKEN: str | None = None
+
+# ---------------------------------------------------------------------------
+# KIS 토큰
+# ---------------------------------------------------------------------------
+def _get_token() -> str:
+    global _TOKEN
+    if _TOKEN:
+        return _TOKEN
+    res = requests.post(
+        "https://openapi.koreainvestment.com:9443/oauth2/tokenP",
+        json={
+            "grant_type": "client_credentials",
+            "appkey":     CONFIG["kis_app_key"],
+            "appsecret":  CONFIG["kis_app_secret"],
+        },
+        timeout=10,
+        verify=False,
+    )
+    _TOKEN = res.json().get("access_token")
+    return _TOKEN
+
+# ---------------------------------------------------------------------------
+# KIS 국내주식 과거 종가 (100건 루프, fallback: 가장 최근 종가)
+# ---------------------------------------------------------------------------
+def _get_kr_price(ticker: str, target_date_str: str, token: str) -> float:
+    if ticker not in _KR_CACHE:
+        _KR_CACHE[ticker] = []
+        url = (
+            "https://openapi.koreainvestment.com:9443"
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        )
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey":        CONFIG["kis_app_key"],
+            "appsecret":     CONFIG["kis_app_secret"],
+            "tr_id":         "FHKST03010100",
+            "custtype":      "P",
+        }
+        # 넉넉히 60일 전부터 조회
+        end_dt = datetime.datetime.strptime(target_date_str, "%Y%m%d")
+        start_dt = end_dt - datetime.timedelta(days=60)
+        current_end = end_dt.strftime("%Y%m%d")
+
+        for _ in range(3):
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD":         ticker,
+                "FID_ORG_ADJ_PRC":        "1",
+                "FID_PERIOD_DIV_CODE":    "D",
+                "FID_INPUT_DATE_1":       start_dt.strftime("%Y%m%d"),
+                "FID_INPUT_DATE_2":       current_end,
+            }
+            try:
+                rows = requests.get(
+                    url, headers=headers, params=params, timeout=10, verify=False
+                ).json().get("output2", [])
+                if not rows:
+                    break
+                _KR_CACHE[ticker].extend(rows)
+                oldest_str = rows[-1].get("stck_bsop_date", "")
+                if not oldest_str:
+                    break
+                oldest_dt = datetime.datetime.strptime(oldest_str, "%Y%m%d")
+                if oldest_dt <= start_dt:
+                    break
+                current_end = (oldest_dt - datetime.timedelta(days=1)).strftime("%Y%m%d")
+            except Exception as e:
+                print(f"⚠️ [{ticker}] KR 시세 조회 실패: {e}")
+                break
+
+    rows = _KR_CACHE[ticker]
+    # 정확히 일치하는 날짜 우선, 없으면 target_date 이전 가장 최근값
+    for row in rows:
+        if row.get("stck_bsop_date") == target_date_str:
+            return float(row.get("stck_clpr", 0))
+    for row in rows:
+        if row.get("stck_bsop_date", "") <= target_date_str:
+            return float(row.get("stck_clpr", 0))
+    return 0.0
+
+# ---------------------------------------------------------------------------
+# KIS 해외주식 과거 종가 (fallback: 가장 최근 종가)
+# ---------------------------------------------------------------------------
+def _get_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> float:
+    if ticker not in _US_CACHE:
+        _US_CACHE[ticker] = []
+        url = (
+            "https://openapi.koreainvestment.com:9443"
+            "/uapi/overseas-price/v1/quotations/dailyprice"
+        )
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey":        CONFIG["kis_app_key"],
+            "appsecret":     CONFIG["kis_app_secret"],
+            "tr_id":         "HHDFS76240000",
+            "custtype":      "P",
+        }
+        current_end = target_date_str
+        for _ in range(3):
+            params = {
+                "AUTH": "", "EXCD": excd, "SYMB": ticker,
+                "GUBN": "0", "BYMD": current_end, "MODP": "1",
+            }
+            try:
+                rows = requests.get(
+                    url, headers=headers, params=params, timeout=10, verify=False
+                ).json().get("output2", [])
+                if not rows:
+                    break
+                _US_CACHE[ticker].extend(rows)
+                dt = datetime.datetime.strptime(
+                    rows[-1].get("xymd"), "%Y%m%d"
+                ) - datetime.timedelta(days=1)
+                current_end = dt.strftime("%Y%m%d")
+            except Exception as e:
+                print(f"⚠️ [{ticker}] US 시세 조회 실패: {e}")
+                break
+
+    rows = _US_CACHE[ticker]
+    for row in rows:
+        if row.get("xymd") == target_date_str:
+            return float(row.get("clos", 0))
+    for row in rows:
+        if row.get("xymd", "") <= target_date_str:
+            return float(row.get("clos", 0))
+    return 0.0
+
+# ---------------------------------------------------------------------------
+# Yahoo Finance 과거 종가 (FX/INDEX/CRYPTO, fallback: 가장 최근 종가)
+# ---------------------------------------------------------------------------
+def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
+    if ticker not in _YAHOO_CACHE:
+        try:
+            end_dt = target_date
+            start_dt = end_dt - datetime.timedelta(days=10)
+            start_ts = calendar.timegm(start_dt.timetuple())
+            end_ts   = calendar.timegm(end_dt.timetuple()) + 86400 * 5
+
+            url = (
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+                f"?period1={start_ts}&period2={end_ts}&interval=1d"
+            )
+            res = requests.get(
+                url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False
+            ).json()
+            result = res.get("chart", {}).get("result")
+
+            cache_list = []
+            if result and result[0].get("indicators", {}).get("quote"):
+                ts_list = result[0].get("timestamp", [])
+                closes  = result[0]["indicators"]["quote"][0].get("close", [])
+                for ts, c in zip(ts_list, closes):
+                    if c is not None:
+                        cache_list.append((ts, float(c)))
+            _YAHOO_CACHE[ticker] = cache_list
+        except Exception as e:
+            print(f"⚠️ [{ticker}] Yahoo 시세 조회 실패: {e}")
+            _YAHOO_CACHE[ticker] = []
+
+    cache_list = _YAHOO_CACHE[ticker]
+    target_ts  = calendar.timegm(target_date.timetuple())
+
+    # target_date 이전 가장 최근값 반환 (12시간 오차 마진)
+    matched = [(ts, c) for ts, c in cache_list if ts <= target_ts + 43200]
+    if matched:
+        return matched[-1][1]
+    return 0.0
+
+# ---------------------------------------------------------------------------
+# DB 헬퍼
+# ---------------------------------------------------------------------------
+def _fetch_positions() -> list:
+    """(ticker, quantity, leverage, market) 목록"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT p.ticker, p.quantity, t.leverage, t.market
+                FROM positions p
+                LEFT JOIN tickers t ON p.ticker = t.ticker
+            """)
+            return cur.fetchall()
+
+def _fetch_prev_summary(date: datetime.date) -> tuple | None:
+    """전날 (total_asset, twr_asset) 반환"""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT total_asset, twr_asset
+                FROM daily_summary
+                WHERE date = %s
+            """, (date,))
+            return cur.fetchone()
+
+# ---------------------------------------------------------------------------
+# 공개 API
+# ---------------------------------------------------------------------------
+def get_daily_snapshot(target_date: datetime.date) -> dict:
+    """
+    target_date 기준 가장 최근 종가로 daily_summary 1행분 데이터를 계산한다.
+    cash_flow / cash_flow_note 는 포함하지 않는다.
+    """
+    date_str = target_date.strftime("%Y%m%d")
+    token = _get_token()
+
+    # 환율 / NDX100
+    usd_krw = _get_yahoo_price("USDKRW=X", target_date) or 1350.0
+    ndx100  = _get_yahoo_price("^NDX",     target_date)
+
+    # 포지션별 시세 조회
+    position_rows = _fetch_positions()
+    db_rows = []
+    for ticker, qty, leverage, market in position_rows:
+        market_str = (market or "KR").upper()
+
+        if ticker == "KRW":
+            price = 1.0
+        elif ticker == "USD":
+            price = usd_krw
+        elif market_str == "KR":
+            price = _get_kr_price(ticker, date_str, token)
+        elif market_str in ("NAS", "AMS", "ARC"):
+            price = _get_us_price(ticker, market_str, date_str, token)
+        elif market_str in ("FX", "INDEX", "CRYPTO"):
+            price = _get_yahoo_price(ticker, target_date)
+        else:
+            print(f"⚠️ [{ticker}] 알 수 없는 market: {market_str} — 0 처리")
+            price = 0.0
+
+        db_rows.append((ticker, qty, price, leverage, market))
+
+    ratios = calculate_exposure_and_ratios(db_rows, usd_krw)
+    total_asset = ratios["total_asset"]
+
+    # TWR 계산
+    prev = _fetch_prev_summary(target_date - datetime.timedelta(days=1))
+    if prev is None:
+        twr_asset = total_asset
+    else:
+        prev_total = to_f(prev[0])
+        prev_twr   = to_f(prev[1])
+        # cash_flow 는 이 시점에 알 수 없으므로 0으로 계산
+        # inserter가 INSERT 후 cash_flow 가 입력되면 history 화면의 twr 재계산 로직이 보정
+        twr_asset = prev_twr * ((total_asset / prev_total) if prev_total else 1.0)
+
+    return {
+        "date":        target_date,
+        "total_asset": total_asset,
+        "usd_krw":     usd_krw,
+        "ndx100":      ndx100,
+        "exposure":    ratios["exposure"],
+        "cash_ratio":  ratios["cash_ratio"],
+        "x1_ratio":    ratios["x1_ratio"],
+        "x2_ratio":    ratios["x2_ratio"],
+        "x3_ratio":    ratios["x3_ratio"],
+        "twr_asset":   twr_asset,
+    }
