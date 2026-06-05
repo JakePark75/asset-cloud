@@ -22,6 +22,11 @@ with open(CONFIG_FILE, encoding="utf-8") as f:
     config_data = json.load(f)
 
 # ---------------------------------------------------------------------------
+# 설정 상수
+# ---------------------------------------------------------------------------
+MAX_QUERY_DAYS = 1000  # 조회 가능한 최대 날짜 범위 (일). 이 값을 초과하면 조회를 거부한다.
+
+# ---------------------------------------------------------------------------
 # API 최적화를 위한 글로벌 캐시 저장소 (기존 로직 훼손 방지)
 # ---------------------------------------------------------------------------
 _GLOBAL_START_DATE_STR = None
@@ -47,8 +52,9 @@ def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> fl
     """KIS 국내주식 기간별시세"""
     global _KR_CACHE, _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR
     
-    # 캐시에 없으면 최초 1회 전체 기간 조회
+    # 캐시에 없으면 100건씩 루프로 전체 기간 조회 (KIS KR API 1회 최대 100건 제한 대응)
     if ticker not in _KR_CACHE:
+        _KR_CACHE[ticker] = []
         url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
         headers = {
             "authorization": f"Bearer {token}",
@@ -58,22 +64,44 @@ def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> fl
             "custtype":      "P",
         }
         # 시작일보다 30일 더 넉넉하게 가져와서 휴장일 fallback 보장
-        start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date_str, "%Y%m%d") - datetime.timedelta(days=30)
-        end_dt = datetime.datetime.strptime(_GLOBAL_END_DATE_STR or target_date_str, "%Y%m%d")
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD":         ticker,
-            "FID_ORG_ADJ_PRC":        "1",
-            "FID_PERIOD_DIV_CODE":    "D",
-            "FID_INPUT_DATE_1":       start_dt.strftime("%Y%m%d"),
-            "FID_INPUT_DATE_2":       end_dt.strftime("%Y%m%d"),
-        }
-        try:
-            res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-            _KR_CACHE[ticker] = res.json().get("output2", [])
-        except Exception as e:
-            print(f"⚠️ [{ticker}] KIS 국내 과거 시세 조회 실패: {e}")
-            _KR_CACHE[ticker] = []
+        global_start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date_str, "%Y%m%d") - datetime.timedelta(days=30)
+        current_end_dt = datetime.datetime.strptime(_GLOBAL_END_DATE_STR or target_date_str, "%Y%m%d")
+        current_end = current_end_dt.strftime("%Y%m%d")
+
+        total_days = (current_end_dt - global_start_dt).days
+        if total_days > MAX_QUERY_DAYS:
+            print(f"❌ 조회 범위({total_days}일)가 최대치({MAX_QUERY_DAYS}일)를 초과합니다. 범위를 줄여주세요.")
+            return 0.0
+
+        loop_count = (total_days // 100) + 2  # 100건씩, 여유 2회 추가
+
+        for _ in range(loop_count):
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD":         ticker,
+                "FID_ORG_ADJ_PRC":        "1",
+                "FID_PERIOD_DIV_CODE":    "D",
+                "FID_INPUT_DATE_1":       global_start_dt.strftime("%Y%m%d"),
+                "FID_INPUT_DATE_2":       current_end,
+            }
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
+                rows = res.json().get("output2", [])
+                if not rows:
+                    break
+                _KR_CACHE[ticker].extend(rows)
+                # 가장 오래된 날짜(마지막 row)보다 하루 앞이 이미 start 이전이면 종료
+                oldest_date_str = rows[-1].get("stck_bsop_date", "")
+                if not oldest_date_str:
+                    break
+                oldest_dt = datetime.datetime.strptime(oldest_date_str, "%Y%m%d")
+                if oldest_dt <= global_start_dt:
+                    break
+                # 다음 루프: 가장 오래된 날짜 하루 전을 end로 설정
+                current_end = (oldest_dt - datetime.timedelta(days=1)).strftime("%Y%m%d")
+            except Exception as e:
+                print(f"⚠️ [{ticker}] KIS 국내 과거 시세 조회 실패: {e}")
+                break
 
     rows = _KR_CACHE[ticker]
     
