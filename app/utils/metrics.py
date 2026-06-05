@@ -26,8 +26,6 @@ def calculate_exposure_and_ratios(db_rows: list[tuple], usd_krw: float) -> dict:
         # 💡 [교정] 미국 주식 등 해외 종목이거나 market이 US/FX인 경우 환율을 명확히 곱해줍니다.
         if ticker == "KRW":
             eval_krw = qty
-        elif ticker == "USD":
-            eval_krw = qty * usd_krw
         elif market.upper() in ("NAS", "AMS", "ARC"):
             eval_krw = qty * price * usd_krw
         else:
@@ -78,3 +76,53 @@ def calculate_alpha(start_row: tuple, end_row: tuple) -> float:
     my_end, bch_end = to_f(end_row[0]), to_f(end_row[1])
     if my_start == 0 or bch_start == 0: return 0.0
     return ((my_end / my_start) - 1.0) - ((bch_end / bch_start) - 1.0)
+
+def calculate_monthly_irr(cash_flows: list[tuple]) -> float:
+    """
+    XIRR(연환산) → 월환산 IRR 반환
+    cash_flows: [(date, amount), ...] — 입출금은 음수, 현재 자산은 양수 마지막 항목
+    반환값: 월 수익률 (예: 0.02 = 2%)
+    """
+    annual_irr = calculate_xirr(cash_flows)
+    if annual_irr <= -1.0: return 0.0
+    return (1 + annual_irr) ** (1 / 12) - 1
+
+def calculate_daily_profit(today_asset: float, today_cash_flow: float, yesterday_asset: float) -> float:
+    """
+    금일 순수 운용 수익 (입출금 제외)
+    = (오늘 총자산 - 오늘 입출금) - 어제 총자산
+    """
+    if yesterday_asset == 0: return 0.0
+    return (today_asset - today_cash_flow) - yesterday_asset
+
+def calculate_retirement_asset(total_asset: float, monthly_irr: float, retirement_date: datetime.date) -> float:
+    """
+    은퇴 시점 예상 자산액
+    현재 총자산에 월평균 IRR 복리 적용
+    monthly_irr: 월 수익률 (예: 0.02 = 2%)
+    retirement_date: 은퇴 목표일
+    """
+    if monthly_irr <= -1.0 or total_asset <= 0: return 0.0
+    today = datetime.date.today()
+    if retirement_date <= today: return total_asset
+    months = (retirement_date.year - today.year) * 12 + (retirement_date.month - today.month)
+    if months <= 0: return total_asset
+    return total_asset * ((1 + monthly_irr) ** months)
+
+def calculate_beta(rows: list[tuple]) -> float:
+    """
+    포트폴리오 베타 (vs NDX100)
+    rows: [(total_asset, ndx100), ...] 날짜 오름차순
+    일별 수익률 기반 공분산 / NDX100 분산
+    반환값: 베타 (예: 1.5)
+    """
+    if not rows or len(rows) < 3: return 0.0
+    assets = np.array([to_f(r[0]) for r in rows])
+    ndx    = np.array([to_f(r[1]) for r in rows])
+    if np.any(assets[:-1] == 0) or np.any(ndx[:-1] == 0): return 0.0
+    my_ret  = np.diff(assets) / assets[:-1]
+    ndx_ret = np.diff(ndx)    / ndx[:-1]
+    var_ndx = np.var(ndx_ret, ddof=1)
+    if var_ndx == 0: return 0.0
+    cov = np.cov(my_ret, ndx_ret, ddof=1)[0][1]
+    return float(cov / var_ndx)

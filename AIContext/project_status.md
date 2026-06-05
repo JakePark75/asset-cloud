@@ -65,9 +65,11 @@
 │   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
 │   ├── static/
 │   │   └── style.css    # 공통 스타일 (다크테마)
+│   ├── utils/
+│   │   └── metrics.py   # 순수 계산 함수 (IRR, 알파, 베타, Exposure 등)
 │   └── modules/
 │       ├── components.py            # 포맷 유틸 (fmt_krw 등) + render_summary_header
-│       ├── dashboard.py
+│       ├── dashboard.py             # 대시보드 UI/server
 │       ├── portfolio.py
 │       ├── accounts.py              # UI/server 진입점
 │       ├── accounts_DAL.py          # DB 조회 로직
@@ -81,7 +83,7 @@
 │       └── settings.py
 └── scheduler/
     ├── price_updater.py      # 시세 수집 스케줄러
-    ├── config.json           # 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key)
+    ├── config.json           # 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key, retirement_date)
     ├── price_updater.service # systemd 서비스 파일 원본
     └── myassets.service      # systemd 서비스 파일 원본
 ```
@@ -319,6 +321,6 @@
 | ✅ 완료 | 설정 화면 티커 배지 4종류 (장중/프리/애프터/휴장, 색상 구분) |
 | ✅ 완료 | 포트폴리오/계좌상세 종목 카드 현재가 표시 (거래 화폐단위, 등락률과 동일 색상) |
 | ✅ 완료 | 현금(KRW/USD) 종목 카드 배지 미표시 |
+| ✅ 진행중 | 대시보드 화면 (총자산/증감/금일수익, Exposure, 레버리지·종목 비중 도넛차트, IRR, 알파/베타, 은퇴시뮬레이션) |
 | ⬜ 대기 | insert_daily_row 스케줄러 자동화 |
-| ⬜ 대기 | 대시보드 화면 (지표 계산 및 표시) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

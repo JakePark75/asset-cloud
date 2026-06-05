@@ -585,3 +585,100 @@ body {
     width: 50% !important;
     padding: 10px;
 }
+
+/* ── 대시보드 ─────────────────────────────────────── */
+
+.dash-hero {
+    padding: 28px 0 20px 0;
+}
+
+.dash-hero-label {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 4px;
+}
+
+.dash-hero-amount {
+    font-size: 36px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: -0.5px;
+}
+
+.dash-hero-delta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.dash-hero-delta-pct {
+    font-size: 13px;
+    opacity: 0.85;
+}
+
+.dash-section {
+    margin-bottom: 20px;
+}
+
+.dash-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+}
+
+.dash-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.dash-card {
+    background-color: #1a1a1a;
+    border-radius: 12px;
+    padding: 14px;
+    min-height: 72px;
+}
+
+.dash-card-wide {
+    min-height: auto;
+}
+
+.dash-card-empty {
+    background: transparent;
+    border: 1px dashed #222;
+    min-height: 72px;
+}
+
+.dash-card-label {
+    font-size: 11px;
+    color: #555;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.dash-card-value-text {
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffffff;
+    display: block;
+}
+
+.dash-card-sub {
+    font-size: 11px;
+    color: #666;
+    display: block;
+    margin-top: 2px;
+}
+
+.neutral {
+    color: #888888;
+}

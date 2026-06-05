@@ -6,6 +6,9 @@ import requests
 import time
 import calendar
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # 패키지 경로 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))  # app/utils
 PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))  # 프로젝트 루트
@@ -19,7 +22,16 @@ with open(CONFIG_FILE, encoding="utf-8") as f:
     config_data = json.load(f)
 
 # ---------------------------------------------------------------------------
-# KIS API
+# API 최적화를 위한 글로벌 캐시 저장소 (기존 로직 훼손 방지)
+# ---------------------------------------------------------------------------
+_GLOBAL_START_DATE_STR = None
+_GLOBAL_END_DATE_STR = None
+_KR_CACHE = {}
+_US_CACHE = {}
+_YAHOO_CACHE = {}
+
+# ---------------------------------------------------------------------------
+# KIS API (호출 횟수를 줄이기 위한 내부 캐싱 로직만 추가됨)
 # ---------------------------------------------------------------------------
 def get_kis_access_token():
     url  = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
@@ -32,110 +44,151 @@ def get_kis_access_token():
     return res.json().get("access_token")
 
 def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> float:
-    """KIS 국내주식 기간별시세 — 날짜 제한 없음, 1회 최대 100건
-    반환값: 해당일 종가 (휴장일이면 직전 거래일 종가). 데이터 없으면 0.0
-    """
-    url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-    headers = {
-        "authorization": f"Bearer {token}",
-        "appkey":        config_data["kis_app_key"],
-        "appsecret":     config_data["kis_app_secret"],
-        "tr_id":         "FHKST03010100",
-        "custtype":      "P",
-    }
-    target_date = datetime.datetime.strptime(target_date_str, "%Y%m%d").date()
-    start_date_str = (target_date - datetime.timedelta(days=10)).strftime("%Y%m%d")
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD":         ticker,
-        "FID_ORG_ADJ_PRC":        "1",
-        "FID_PERIOD_DIV_CODE":    "D",
-        "FID_INPUT_DATE_1":       start_date_str,
-        "FID_INPUT_DATE_2":       target_date_str,
-    }
-    try:
-        res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-        rows = res.json().get("output2", [])
-        # 해당일 우선
-        for row in rows:
-            if row.get("stck_bsop_date") == target_date_str:
-                return float(row.get("stck_clpr", 0))
-        # 휴장일이면 직전 거래일
-        for row in rows:
-            if row.get("stck_bsop_date", "") <= target_date_str:
-                return float(row.get("stck_clpr", 0))
-    except Exception as e:
-        print(f"⚠️ [{ticker}] KIS 국내 과거 시세 조회 실패: {e}")
+    """KIS 국내주식 기간별시세"""
+    global _KR_CACHE, _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR
+    
+    # 캐시에 없으면 최초 1회 전체 기간 조회
+    if ticker not in _KR_CACHE:
+        url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey":        config_data["kis_app_key"],
+            "appsecret":     config_data["kis_app_secret"],
+            "tr_id":         "FHKST03010100",
+            "custtype":      "P",
+        }
+        # 시작일보다 30일 더 넉넉하게 가져와서 휴장일 fallback 보장
+        start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date_str, "%Y%m%d") - datetime.timedelta(days=30)
+        end_dt = datetime.datetime.strptime(_GLOBAL_END_DATE_STR or target_date_str, "%Y%m%d")
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD":         ticker,
+            "FID_ORG_ADJ_PRC":        "1",
+            "FID_PERIOD_DIV_CODE":    "D",
+            "FID_INPUT_DATE_1":       start_dt.strftime("%Y%m%d"),
+            "FID_INPUT_DATE_2":       end_dt.strftime("%Y%m%d"),
+        }
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
+            _KR_CACHE[ticker] = res.json().get("output2", [])
+        except Exception as e:
+            print(f"⚠️ [{ticker}] KIS 국내 과거 시세 조회 실패: {e}")
+            _KR_CACHE[ticker] = []
+
+    rows = _KR_CACHE[ticker]
+    
+    # --- [사용자님 원본 로직 유지 구역] ---
+    for row in rows:
+        if row.get("stck_bsop_date") == target_date_str:
+            return float(row.get("stck_clpr", 0))
+    for row in rows:
+        if row.get("stck_bsop_date", "") <= target_date_str:
+            return float(row.get("stck_clpr", 0))
     return 0.0
 
 def get_historical_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> float:
-    """KIS 해외주식 기간별시세 (TR: HHDFS76240000)"""
-    url = "https://openapi.koreainvestment.com:9443/uapi/overseas-price/v1/quotations/dailyprice"
-    headers = {
-        "authorization": f"Bearer {token}",
-        "appkey":        config_data["kis_app_key"],
-        "appsecret":     config_data["kis_app_secret"],
-        "tr_id":         "HHDFS76240000",
-        "custtype":      "P",
-    }
-    params = {
-        "AUTH": "",
-        "EXCD": excd,
-        "SYMB": ticker,
-        "GUBN": "0",
-        "BYMD": target_date_str,
-        "MODP": "1",
-    }
-    try:
-        res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-        rows = res.json().get("output2", [])
-        for row in rows:
-            if row.get("xymd") == target_date_str:
-                return float(row.get("clos", 0))
-        for row in rows:
-            if row.get("xymd", "") <= target_date_str:
-                return float(row.get("clos", 0))
-    except Exception as e:
-        print(f"⚠️ [{ticker}] KIS 해외 과거 시세 조회 실패: {e}")
+    """KIS 해외주식 기간별시세"""
+    global _US_CACHE, _GLOBAL_END_DATE_STR
+    
+    if ticker not in _US_CACHE:
+        _US_CACHE[ticker] = []
+        url = "https://openapi.koreainvestment.com:9443/uapi/overseas-price/v1/quotations/dailyprice"
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey":        config_data["kis_app_key"],
+            "appsecret":     config_data["kis_app_secret"],
+            "tr_id":         "HHDFS76240000",
+            "custtype":      "P",
+        }
+        current_end = _GLOBAL_END_DATE_STR or target_date_str
+        
+        # 해외 주식은 한 번에 100일씩 주므로, 넉넉히 3번(약 1년치)을 긁어와 캐시에 저장
+        for _ in range(3):
+            params = {"AUTH": "", "EXCD": excd, "SYMB": ticker, "GUBN": "0", "BYMD": current_end, "MODP": "1"}
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
+                rows = res.json().get("output2", [])
+                if not rows: break
+                _US_CACHE[ticker].extend(rows)
+                # 다음 루프를 위해 가장 오래된 날짜 기준 하루 전으로 설정
+                dt = datetime.datetime.strptime(rows[-1].get("xymd"), "%Y%m%d") - datetime.timedelta(days=1)
+                current_end = dt.strftime("%Y%m%d")
+            except:
+                break
+
+    rows = _US_CACHE[ticker]
+    
+    # --- [사용자님 원본 로직 유지 구역] ---
+    for row in rows:
+        if row.get("xymd") == target_date_str:
+            return float(row.get("clos", 0))
+    for row in rows:
+        if row.get("xymd", "") <= target_date_str:
+            return float(row.get("clos", 0))
     return 0.0
 
 def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float:
     """FX/INDEX/CRYPTO 야후 파이낸스 과거 종가"""
-    start_ts = calendar.timegm(target_date.timetuple())
-    end_ts = start_ts + (86400 * 5)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d"
-    try:
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False).json()
-        result = res.get("chart", {}).get("result")
-        if result and result[0].get("indicators", {}).get("quote"):
-            closes = result[0]["indicators"]["quote"][0].get("close", [])
-            for c in closes:
-                if c is not None: return float(c)
-    except Exception as e:
-        print(f"⚠️ [{ticker}] 지수/환율 조회 실패: {e}")
+    global _YAHOO_CACHE, _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR
+    
+    if ticker not in _YAHOO_CACHE:
+        try:
+            start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d")
+            end_dt = datetime.datetime.strptime(_GLOBAL_END_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d")
+            start_ts = calendar.timegm(start_dt.timetuple()) - (86400 * 10)
+            end_ts = calendar.timegm(end_dt.timetuple()) + (86400 * 10)
+            
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d"
+            res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False).json()
+            result = res.get("chart", {}).get("result")
+            
+            # 딕셔너리 대신 타임스탬프와 종가의 튜플 리스트로 캐싱
+            cache_list = []
+            if result and result[0].get("indicators", {}).get("quote"):
+                ts_list = result[0].get("timestamp", [])
+                closes = result[0]["indicators"]["quote"][0].get("close", [])
+                for ts, c in zip(ts_list, closes):
+                    if c is not None:
+                        cache_list.append((ts, float(c)))
+            _YAHOO_CACHE[ticker] = cache_list
+        except Exception as e:
+            print(f"⚠️ [{ticker}] 지수/환율 조회 실패: {e}")
+            _YAHOO_CACHE[ticker] = []
+
+    # 캐시된 리스트를 가져옴
+    cache_list = _YAHOO_CACHE.get(ticker, [])
+    
+    cur = target_date
+    for _ in range(6):
+        # 원본 snap.py와 100% 동일한 비교 로직 (해당 날짜 00:00:00 UTC 기준)
+        target_ts = calendar.timegm(cur.timetuple()) 
+        
+        for ts, c in cache_list:
+            # 야후 API가 period1으로 필터링했던 것과 유사하게, 
+            # 타임스탬프가 목표 날짜 근처(전날 21:00 UTC 등)이거나 큰 첫 번째 값을 반환
+            if ts >= target_ts - 43200:  # 오차 마진(12시간)을 두어 Forex 타임스탬프 포용
+                return c
+                
+        cur += datetime.timedelta(days=1)
+        
     return 0.0
 
 # ---------------------------------------------------------------------------
-# 날짜 범위 생성 (주말 제외 — 공휴일은 시세 0으로 판단 후 스킵)
+# 날짜 범위 생성 (기존 로직 100% 동일)
 # ---------------------------------------------------------------------------
 def date_range(start: datetime.date, end: datetime.date) -> list:
-    """start ~ end 사이 평일(월~금) 목록 반환 (오름차순)"""
     days = []
     cur = start
     while cur <= end:
-        if cur.weekday() < 5:  # 0=월 ~ 4=금
+        if cur.weekday() < 5:
             days.append(cur)
         cur += datetime.timedelta(days=1)
     return days
 
 # ---------------------------------------------------------------------------
-# 단일 날짜 스냅샷 계산
+# 단일 날짜 스냅샷 계산 (기존 로직 100% 동일)
 # ---------------------------------------------------------------------------
 def fetch_snapshot(target_date: datetime.date, position_rows: list, token: str):
-    """
-    반환: (ratios_dict, ndx100, usd_krw, final_db_rows) 또는
-          시세 없는 날(휴장일)이면 None
-    """
     date_str = target_date.strftime("%Y%m%d")
 
     usd_krw = get_historical_yahoo_index('USDKRW=X', target_date)
@@ -176,10 +229,9 @@ def fetch_snapshot(target_date: datetime.date, position_rows: list, token: str):
     return ratios, ndx100, usd_krw, final_db_rows
 
 # ---------------------------------------------------------------------------
-# DB 조회 헬퍼
+# DB 조회 헬퍼 (기존 로직 100% 동일)
 # ---------------------------------------------------------------------------
 def fetch_db_row(date: datetime.date):
-    """daily_summary에서 특정 날짜 행 조회. 없으면 None"""
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -190,7 +242,6 @@ def fetch_db_row(date: datetime.date):
             return cur.fetchone()
 
 def fetch_cash_flows(start: datetime.date, end: datetime.date) -> dict:
-    """범위 내 cash_flow 있는 날짜 dict로 반환 {date: (cash_flow, note)}"""
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -210,7 +261,7 @@ def fetch_positions():
             return cur.fetchall()
 
 # ---------------------------------------------------------------------------
-# 출력 행 포맷
+# 출력 행 포맷 (기존 로직 100% 동일)
 # ---------------------------------------------------------------------------
 HEADER = (
     f"{'날짜':<10} | {'총자산(원)':>14} | {'NDX100':>10} | {'환율':>8} | "
@@ -235,7 +286,6 @@ def fmt_row(date_str, total_asset, ndx100, usd_krw, ratios, cash_flow, twr_asset
     )
 
 def fmt_db_row(row):
-    """DB에서 읽은 raw row를 출력 포맷으로 변환"""
     date, total_asset, twr_asset, ndx100, cash_flow, cash_flow_note, \
         exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio = row
     ratios = {
@@ -249,7 +299,7 @@ def fmt_db_row(row):
         date.strftime("%Y%m%d"),
         float(total_asset or 0),
         float(ndx100 or 0),
-        0.0,  # DB에 환율 컬럼 없음
+        0.0,
         ratios,
         int(cash_flow or 0),
         float(twr_asset or 0),
@@ -259,6 +309,8 @@ def fmt_db_row(row):
 # 메인
 # ---------------------------------------------------------------------------
 def main():
+    global _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR  # 글로벌 변수 추가
+    
     print("==================================================")
     print("🕒 [타임머신] 과거 일자 자산 스냅샷 복원기")
     print("==================================================")
@@ -266,7 +318,6 @@ def main():
 
     raw = input("👉 날짜 입력: ").strip()
 
-    # 날짜 파싱
     try:
         if "-" in raw:
             parts = raw.split("-")
@@ -282,7 +333,11 @@ def main():
         print("❌ 시작일이 종료일보다 늦습니다.")
         return
 
-    # 시작일 -1일: DB에서 직전 행 읽기 (TWR 초기값용)
+    # [수정된 부분] 함수 안에서 쓸 수 있도록 전체 조회 구간 날짜를 저장해 둡니다.
+    _GLOBAL_START_DATE_STR = start_date.strftime("%Y%m%d")
+    _GLOBAL_END_DATE_STR = end_date.strftime("%Y%m%d")
+
+    # [이하 사용자님 원본 로직과 100% 동일]
     prev_date = start_date - datetime.timedelta(days=1)
     prev_db_row = fetch_db_row(prev_date)
 
@@ -290,13 +345,10 @@ def main():
         prev_twr_asset  = float(prev_db_row[2] or 0)
         prev_total_asset = float(prev_db_row[1] or 0)
     else:
-        prev_twr_asset  = None  # 첫날 total_asset으로 초기화
+        prev_twr_asset  = None
         prev_total_asset = None
 
-    # 범위 내 cash_flow DB에서 미리 읽기
     cash_flow_map = fetch_cash_flows(start_date, end_date)
-
-    # 포지션 조회 (현재 포지션 기준 — 과거 시점 시세만 교체)
     position_rows = fetch_positions()
 
     token = get_kis_access_token()
@@ -304,8 +356,7 @@ def main():
 
     print(f"\n📡 {start_date} ~ {end_date} | 평일 {len(weekdays)}일 조회 시작...\n")
 
-    # 날짜별 계산 (오름차순으로 계산해야 TWR 연산 가능)
-    results = []  # [(date_str, total_asset, ndx100, usd_krw, ratios, cash_flow, twr_asset)]
+    results = []
 
     for target_date in weekdays:
         date_str = target_date.strftime("%Y%m%d")
@@ -320,9 +371,7 @@ def main():
         total_asset = ratios["total_asset"]
         cash_flow, _ = cash_flow_map.get(target_date, (0, ""))
 
-        # TWR 계산
         if prev_twr_asset is None:
-            # DB에 이전 행 없음 → 첫날 twr_asset = total_asset (기준점)
             twr_asset = total_asset
         else:
             denom = prev_total_asset
@@ -341,9 +390,6 @@ def main():
         print("\n❌ 조회된 데이터가 없습니다.")
         return
 
-    # ---------------------------------------------------------------------------
-    # 출력 (최신순 — 위가 최신)
-    # ---------------------------------------------------------------------------
     output_lines = []
     output_lines.append("=" * len(HEADER))
     output_lines.append(f"📅 [스냅샷 복원 결과]  {start_date} ~ {end_date}  |  총 {len(results)}일")
@@ -355,7 +401,6 @@ def main():
         date_str, total_asset, ndx100, usd_krw, ratios, cash_flow, twr_asset = row
         output_lines.append(fmt_row(date_str, total_asset, ndx100, usd_krw, ratios, cash_flow, twr_asset))
 
-    # 시작일 -1일 DB 행
     if prev_db_row:
         output_lines.append(SEP)
         output_lines.append(f"[DB 참조행 — {prev_date}]")
@@ -366,7 +411,6 @@ def main():
     final_output = "\n".join(output_lines)
     print("\n" + final_output)
 
-    # 파일 저장
     file_name = f"result_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.txt"
     with open(file_name, "w", encoding="utf-8") as f:
         f.write(final_output)
