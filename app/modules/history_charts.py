@@ -75,7 +75,7 @@ def make_chart_asset(rows):
         name="총자산",
         line=dict(color="#00c073", width=2),
         hovertemplate="%{customdata}<extra></extra>",
-        customdata=[fmt_krw(a) + "원" for a in assets],
+        customdata=[[fmt_krw(a) + "원", cflows[i], notes[i]] for i, a in enumerate(assets)],
     ))
 
     dep_idx = [i for i, cf in enumerate(cflows) if cf > 0]
@@ -88,7 +88,7 @@ def make_chart_asset(rows):
             marker=dict(
                 symbol="triangle-up",
                 size=10,
-                color="#00c073",
+                color="#ff4d4d",
                 line=dict(color="#ffffff", width=1),
             ),
             hovertemplate="%{customdata}<extra>입금</extra>",
@@ -108,7 +108,7 @@ def make_chart_asset(rows):
             marker=dict(
                 symbol="triangle-down",
                 size=10,
-                color="#ff4d4d",
+                color="#4d9fff",
                 line=dict(color="#ffffff", width=1),
             ),
             hovertemplate="%{customdata}<extra>출금</extra>",
@@ -289,20 +289,35 @@ def _touch_script(chart_id: str) -> str:
       var range = getCurrentRange();
       var r0    = range[0];
       var r1    = range[1];
-      var chartW = rect.width;
-      // 차트 영역 비율로 ms 계산 (margin 무시 — 오차 허용)
-      var ratio  = (clientX - rect.left) / chartW;
+
+      // 실제 Plotly 플롯 영역
+      var plot = gd.querySelector('.nsewdrag');
+      if (!plot) return 0;
+
+      var plotRect = plot.getBoundingClientRect();
+
+      var px = clientX - plotRect.left;
+
+      if (px < 0) px = 0;
+      if (px > plotRect.width) px = plotRect.width;
+
+      var ratio = px / plotRect.width;
       var targetMs = r0 + ratio * (r1 - r0);
 
-      // gd.data[0].x 에서 가장 가까운 날짜 인덱스 탐색
       var xs  = gd.data[0].x;
       var best = 0;
       var bestDiff = Math.abs(toMs(xs[0]) - targetMs);
+
       for (var i = 1; i < xs.length; i++) {{
         var diff = Math.abs(toMs(xs[i]) - targetMs);
-        if (diff < bestDiff) {{ bestDiff = diff; best = i; }}
-        else break; // xs는 정렬돼 있으므로 diff가 커지기 시작하면 종료
+        if (diff < bestDiff) {{
+          bestDiff = diff;
+          best = i;
+        }} else {{
+          break;
+        }}
       }}
+
       return best;
     }}
 
@@ -337,6 +352,28 @@ def _touch_script(chart_id: str) -> str:
           '<span style="color:' + color + '">■</span> ' + name + ': ' + valStr
         );
       }}
+      var cd0 = gd.data[0].customdata && gd.data[0].customdata[idx];
+      if (Array.isArray(cd0)) {{
+        var cf = cd0[1];
+        var note = cd0[2];
+
+        if (cf !== 0) {{
+          var cfColor = cf > 0 ? '#ff4d4d' : '#4d9fff';
+
+          lines.push(
+            '<span style="color:' + cfColor + '">■</span> 입출금: ' +
+            (cf > 0 ? '+' : '') +
+            Math.round(cf).toLocaleString() +
+            '원'
+          );
+
+          if (note) {{
+            lines.push(
+              '<span style="color:' + cfColor + '">■</span> 내역: ' + note
+            );
+          }}
+        }}
+      }}
       popup.innerHTML = lines.join('<br>');
       popup.style.display = 'block';
 
@@ -354,7 +391,15 @@ def _touch_script(chart_id: str) -> str:
       }}
 
       // 수직 보조선 위치
-      vline.style.left    = localX + 'px';
+      var plot = gd.querySelector('.nsewdrag');
+
+      if (plot) {{
+        var plotRect = plot.getBoundingClientRect();
+        vline.style.left = (plotRect.left - gdRect.left + (clientX - plotRect.left)) + 'px';
+      }} else {{
+        vline.style.left = localX + 'px';
+      }}
+
       vline.style.display = 'block';
     }}
 
