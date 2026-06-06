@@ -91,16 +91,19 @@
 ## 4. daily_inserter.py
 
 ### 동작 방식
-- 1분 간격 루프로 실행
-- 매일 `config.json`의 `daily_insert_time` (KST) 이후, 당일 최초 1회 실행
-- `get_daily_snapshot(어제)` 호출 → `daily_summary` UPSERT
+- `threading.Timer` 기반으로 동작 (while 루프 없음)
+- 서비스 시작 시 당일(or 익일) `config.json`의 `daily_insert_time` (KST) 까지 타이머 등록
+- 타이머 도달 시 미국 시장 상태(`get_market_status("NAS")`) 확인
+  - `closed` : 전날 스냅샷 계산 후 `daily_summary` UPSERT → 다음날 타이머 등록
+  - `after`  : 애프터마켓 진행 중 → 1시간 후 재시도 타이머 등록
+  - 그 외    : 예상치 못한 상태 → 다음날 타이머 등록
 
 ### UPSERT 정책
 - `ON CONFLICT (date) DO UPDATE` — 같은 날짜 재실행 시 덮어쓰기
 - `cash_flow` / `cash_flow_note` 는 UPSERT 시 덮어쓰지 않음 (사용자 입력값 보호)
 
 ### 오류 처리
-- 오류 발생 시 `last_run_date` 갱신하지 않음 → 1분 후 자동 재시도
+- 오류 발생 시에도 다음날 타이머 등록 (서비스 중단 없음)
 
 ### systemd 서비스
 - 서비스명: `daily_inserter`
