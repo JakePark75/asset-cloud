@@ -6,7 +6,7 @@ def load_history():
         cur = conn.cursor()
         cur.execute("""
             SELECT date, total_asset, twr_asset, ndx100, cash_flow, cash_flow_note,
-                   exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio
+                   exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, usd_krw
             FROM daily_summary
             ORDER BY date ASC
         """)

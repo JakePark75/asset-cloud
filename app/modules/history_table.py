@@ -1,17 +1,12 @@
 from shiny import ui
-import json
 from .history_utils import fmt_krw, fmt_10m
 
 def render_history_table(rows):
-    """
-    daily_summary rows (ASC) → Shiny UI 테이블 반환 (최신순 표시).
-    """
     if not rows:
         return ui.p("데이터가 없습니다.", style="color:#888; padding:16px;")
 
     rows_desc = list(reversed(rows))
 
-    # 전일 대비 계산용
     index_map = {r[0]: i for i, r in enumerate(rows)}
     asset_map = {r[0]: float(r[1] or 0) for r in rows}
     dates_asc = [r[0] for r in rows]
@@ -24,25 +19,31 @@ def render_history_table(rows):
         ui.tags.th("날짜"),
         ui.tags.th("총자산"),
         ui.tags.th("전일대비"),
-        ui.tags.th("입출금"),
         ui.tags.th("Exp"),
         ui.tags.th("현금"),
+        ui.tags.th("입출금"),
         ui.tags.th("x1"),
         ui.tags.th("x2"),
         ui.tags.th("x3"),
+        ui.tags.th("TWR"),
+        ui.tags.th("나스닥"),
+        ui.tags.th("환율"),
     )
 
     trs = []
     for r in rows_desc:
-        date, total, twr, ndx, cf, cf_note, exp, cash, x1, x2, x3 = r
+        date, total, twr, ndx, cf, cf_note, exp, cash, x1, x2, x3, usd_krw = r
 
-        total_f = float(total or 0)
-        cf_f    = float(cf or 0)
-        exp_f   = float(exp or 0)
-        cash_f  = float(cash or 0)
-        x1_f    = float(x1 or 0)
-        x2_f    = float(x2 or 0)
-        x3_f    = float(x3 or 0)
+        total_f  = float(total   or 0)
+        twr_f    = float(twr     or 0)
+        ndx_f    = float(ndx     or 0)
+        cf_f     = float(cf      or 0)
+        exp_f    = float(exp     or 0)
+        cash_f   = float(cash    or 0)
+        x1_f     = float(x1      or 0)
+        x2_f     = float(x2      or 0)
+        x3_f     = float(x3      or 0)
+        usd_krw_f = float(usd_krw or 0)
 
         # 전일 대비
         prev = prev_asset(date)
@@ -80,23 +81,25 @@ def render_history_table(rows):
         date_str = date.strftime("%Y-%m-%d")
         trs.append(ui.tags.tr(
             ui.tags.td(date.strftime("%y%m%d")),
-            ui.tags.td(fmt_10m(total_f), style="text-align:right;"),
-            ui.tags.td(diff_cell,          style="text-align:right;"),
-            ui.tags.td(cf_cell,            style="text-align:right;"),
-            ui.tags.td(f"{exp_f*100:.1f}%",  style="text-align:right;"),
-            ui.tags.td(f"{cash_f*100:.1f}%", style="text-align:right;"),
-            ui.tags.td(f"{x1_f*100:.1f}%",  style="text-align:right;"),
-            ui.tags.td(f"{x2_f*100:.1f}%",  style="text-align:right;"),
-            ui.tags.td(f"{x3_f*100:.1f}%",  style="text-align:right;"),
+            ui.tags.td(fmt_10m(total_f),          style="text-align:right;"),
+            ui.tags.td(diff_cell,                  style="text-align:right;"),
+            ui.tags.td(f"{exp_f*100:.1f}%",        style="text-align:right;"),
+            ui.tags.td(f"{cash_f*100:.1f}%",       style="text-align:right;"),
+            ui.tags.td(cf_cell,                    style="text-align:right;"),
+            ui.tags.td(f"{x1_f*100:.1f}%",        style="text-align:right;"),
+            ui.tags.td(f"{x2_f*100:.1f}%",        style="text-align:right;"),
+            ui.tags.td(f"{x3_f*100:.1f}%",        style="text-align:right;"),
+            ui.tags.td(fmt_10m(twr_f),             style="text-align:right;"),
+            ui.tags.td(f"{ndx_f:,.2f}"  if ndx_f  else "-", style="text-align:right;"),
+            ui.tags.td(f"{usd_krw_f:,.2f}" if usd_krw_f else "-", style="text-align:right;"),
             onclick=f"Shiny.setInputValue('history-selected_date', '{date_str}', {{priority: 'event'}})",
             style="cursor:pointer;",
         ))
-        
-    result = ui.div(
+
+    return ui.div(
         ui.tags.table(
             ui.tags.thead(header),
             ui.tags.tbody(*trs),
             class_="history-table",
         )
     )
-    return result
