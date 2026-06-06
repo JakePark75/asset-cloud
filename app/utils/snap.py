@@ -163,8 +163,8 @@ def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float
         try:
             start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d")
             end_dt = datetime.datetime.strptime(_GLOBAL_END_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d")
-            start_ts = calendar.timegm(start_dt.timetuple()) - (86400 * 10)
-            end_ts = calendar.timegm(end_dt.timetuple()) + (86400 * 10)
+            start_ts = int(start_dt.timestamp()) - (86400 * 10)
+            end_ts = int(end_dt.timestamp()) + (86400 * 10)
             
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d"
             res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False).json()
@@ -186,19 +186,10 @@ def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float
     # 캐시된 리스트를 가져옴
     cache_list = _YAHOO_CACHE.get(ticker, [])
     
-    cur = target_date
-    for _ in range(6):
-        # 원본 snap.py와 100% 동일한 비교 로직 (해당 날짜 00:00:00 UTC 기준)
-        target_ts = calendar.timegm(cur.timetuple()) 
-        
-        for ts, c in cache_list:
-            # 야후 API가 period1으로 필터링했던 것과 유사하게, 
-            # 타임스탬프가 목표 날짜 근처(전날 21:00 UTC 등)이거나 큰 첫 번째 값을 반환
-            if ts >= target_ts - 43200:  # 오차 마진(12시간)을 두어 Forex 타임스탬프 포용
-                return c
-                
-        cur += datetime.timedelta(days=1)
-        
+    target_str = target_date.strftime("%Y-%m-%d")
+    matched = [(ts, c) for ts, c in cache_list if datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d") <= target_str]
+    if matched:
+        return matched[-1][1]
     return 0.0
 
 # ---------------------------------------------------------------------------

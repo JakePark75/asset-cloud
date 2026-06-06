@@ -4,11 +4,13 @@ daily_inserter.py
 daily_summary 테이블에 UPSERT한다.
 
 동작 방식:
-    1. 서비스 시작 시 오늘(or 내일) daily_insert_time 까지 타이머 등록
-    2. 타이머 도달 시 미국 시장 상태 확인
-       - closed : 전날 스냅샷 계산 후 INSERT, 다음날 타이머 등록
+    1. 서비스 시작 시 DB에서 마지막 스냅샷 날짜 확인
+       - 빠진 날짜가 있으면 snap.py 로직으로 즉시 순서대로 채움
+    2. 보정 완료 후 다음 daily_insert_time 까지 타이머 등록
+    3. 타이머 도달 시 미국 시장 상태 확인
+       - closed : 전날 스냅샷 계산 후 INSERT → 다음날 타이머 등록
        - after  : 아직 애프터마켓 중 → 1시간 후 재시도 타이머 등록
-    3. while 루프 없이 threading.Timer 로만 동작
+    4. while 루프 없이 threading.Timer 로만 동작
 """
 
 import datetime
@@ -22,6 +24,7 @@ sys.path.insert(0, PROJECT_ROOT)
 from app.db import get_db, get_config
 from app.utils.daily_snapshot import get_daily_snapshot
 from scheduler.price_updater import get_market_status
+import app.utils.snap as snap
 
 # ---------------------------------------------------------------------------
 # DB UPSERT
@@ -54,6 +57,92 @@ def _upsert(snapshot: dict) -> None:
         conn.commit()
 
 # ---------------------------------------------------------------------------
+# DB 헬퍼
+# ---------------------------------------------------------------------------
+def _fetch_last_snapshot_date() -> datetime.date | None:
+    """DB에서 가장 최근 스냅샷 날짜 반환. 없으면 None."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(date) FROM daily_summary")
+            row = cur.fetchone()
+            return row[0] if row and row[0] else None
+
+def _fetch_prev_summary(date: datetime.date) -> tuple | None:
+    """전날 (total_asset, twr_asset) 반환."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT total_asset, twr_asset
+                FROM daily_summary WHERE date = %s
+            """, (date,))
+            return cur.fetchone()
+
+# ---------------------------------------------------------------------------
+# 빠진 날짜 보정
+# ---------------------------------------------------------------------------
+def _backfill(start_date: datetime.date, end_date: datetime.date) -> None:
+    """
+    start_date ~ end_date 범위의 빠진 스냅샷을 snap.py 로직으로 채운다.
+    snap.py의 글로벌 캐시(_GLOBAL_START_DATE_STR 등)를 활용해 API 호출을 최소화한다.
+    """
+    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+          f"🔄 누락 스냅샷 보정 시작: {start_date} ~ {end_date}", flush=True)
+
+    # snap.py 글로벌 캐시 범위 세팅 (API 호출 최소화)
+    snap._GLOBAL_START_DATE_STR = start_date.strftime("%Y%m%d")
+    snap._GLOBAL_END_DATE_STR   = end_date.strftime("%Y%m%d")
+
+    token        = snap.get_kis_access_token()
+    position_rows = snap.fetch_positions()
+    weekdays     = snap.date_range(start_date, end_date)
+
+    # 시작일 전날 TWR 기준값 조회
+    prev = _fetch_prev_summary(start_date - datetime.timedelta(days=1))
+    prev_twr_asset   = float(prev[1]) if prev else None
+    prev_total_asset = float(prev[0]) if prev else None
+
+    for target_date in weekdays:
+        date_str = target_date.strftime("%Y%m%d")
+        print(f"  ⏳ {date_str} 보정 중...", end=" ", flush=True)
+
+        result = snap.fetch_snapshot(target_date, position_rows, token)
+        if result is None:
+            print("⏭️  휴장일 스킵", flush=True)
+            continue
+
+        ratios, ndx100, usd_krw, _ = result
+        total_asset = ratios["total_asset"]
+
+        # TWR 계산
+        if prev_twr_asset is None:
+            twr_asset = total_asset
+        else:
+            denom = prev_total_asset
+            twr_asset = prev_twr_asset * ((total_asset / denom) if denom else 1.0)
+
+        prev_twr_asset   = twr_asset
+        prev_total_asset = total_asset
+
+        _upsert({
+            "date":        target_date,
+            "total_asset": total_asset,
+            "usd_krw":     usd_krw,
+            "ndx100":      ndx100,
+            "exposure":    ratios["exposure"],
+            "cash_ratio":  ratios["cash_ratio"],
+            "x1_ratio":    ratios["x1_ratio"],
+            "x2_ratio":    ratios["x2_ratio"],
+            "x3_ratio":    ratios["x3_ratio"],
+            "twr_asset":   twr_asset,
+        })
+        print(f"✅ 총자산: {total_asset:,.0f} 원", flush=True)
+
+    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+          f"✅ 누락 스냅샷 보정 완료", flush=True)
+
+# ---------------------------------------------------------------------------
 # 타이머 스케줄링
 # ---------------------------------------------------------------------------
 def _next_trigger_time() -> datetime.datetime:
@@ -62,7 +151,7 @@ def _next_trigger_time() -> datetime.datetime:
     KST 기준 datetime 반환.
     """
     config = get_config()
-    raw = config.get("daily_insert_time", "09:10")
+    raw = config.get("daily_insert_time", "07:30")
     h, m = map(int, raw.split(":"))
 
     now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
@@ -89,12 +178,10 @@ def _schedule_next() -> None:
 def _schedule_retry() -> None:
     """애프터마켓 중일 때 1시간 후 재시도 타이머 등록."""
     now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
-    delay = 3600  # 1시간
-
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"⏳ 애프터마켓 진행 중 → 1시간 후 재시도", flush=True)
 
-    threading.Timer(delay, _on_trigger).start()
+    threading.Timer(3600, _on_trigger).start()
 
 # ---------------------------------------------------------------------------
 # 트리거 핸들러
@@ -113,7 +200,6 @@ def _on_trigger() -> None:
           f"📡 시장 상태: {status}", flush=True)
 
     if status == "closed":
-        # 전날 스냅샷 계산 및 INSERT
         yesterday = now_kst.date() - datetime.timedelta(days=1)
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
               f"⏳ {yesterday} 스냅샷 계산 시작...", flush=True)
@@ -126,11 +212,9 @@ def _on_trigger() -> None:
         except Exception as e:
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"❌ 오류 발생: {e}", flush=True)
-        # 성공/실패 무관하게 다음날 타이머 등록
         _schedule_next()
 
     elif status == "after":
-        # 애프터마켓 중 → 1시간 후 재시도
         _schedule_retry()
 
     else:
@@ -146,10 +230,25 @@ def main():
     now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"📅 daily_inserter 시작", flush=True)
+
+    # 빠진 날짜 보정
+    yesterday = now_kst.date() - datetime.timedelta(days=1)
+    last_date = _fetch_last_snapshot_date()
+
+    if last_date is None:
+        print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+              f"⚠️ DB에 스냅샷 없음 → 보정 스킵", flush=True)
+    elif last_date < yesterday:
+        # 마지막 스냅샷 다음날부터 어제까지 보정
+        _backfill(last_date + datetime.timedelta(days=1), yesterday)
+    else:
+        print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+              f"✅ 누락 없음 (최근: {last_date})", flush=True)
+
+    # 다음 실행 타이머 등록
     _schedule_next()
 
-    # 메인 스레드가 종료되지 않도록 대기
-    # (threading.Timer는 데몬 스레드가 아니므로 타이머가 살아있는 한 프로세스 유지)
+    # 메인 스레드 유지
     threading.Event().wait()
 
 if __name__ == "__main__":

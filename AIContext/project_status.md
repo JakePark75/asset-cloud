@@ -53,40 +53,82 @@
   - 서비스 파일 원본: `scheduler/price_updater.service` (깃허브 관리)
 
 ### 프로젝트 디렉토리 구조
+
+> 각 파일의 상세 함수/로직은 `AIContext/` 하위 구조 문서 참조.
+> 유틸 함수 상세는 `utils_structure.md` 참조.
+
 ```
 /home/ubuntu/asset-cloud/
 ├── AIContext/           # AI 컨텍스트 MD 파일 (nginx 정적 서빙)
+│   ├── project_status.md
+│   ├── utils_structure.md       # ★ app/utils 유틸 함수 상세 (metrics, daily_snapshot, snap)
+│   ├── app_structure.md
+│   ├── accounts_structure.md
+│   ├── history_structure.md
+│   ├── dashboard_structure.md
+│   ├── portfolio_structure.md
+│   ├── settings_structure.md
+│   ├── scheduler_structure.md
+│   └── price_updater_structure.md
 ├── README.md
 ├── app/
-│   ├── app.py           # 진입점 (Shiny App + Starlette 라우팅, 하단 탭바)
-│   ├── auth.py          # 로그인 인증 (verify_login, create_token, verify_token)
+│   ├── app.py           # 진입점 (Shiny App + Starlette 라우팅, 하단 탭바, 로그인)
+│   │                    # → 상세: app_structure.md
+│   ├── auth.py          # 로그인 인증
+│   │                    # verify_login() / create_token() / verify_token()
 │   ├── db.py            # DB 연결 공통
+│   │                    # get_db() / get_config() / get_usd_krw() / save_config()
 │   ├── context_api.py   # AI 컨텍스트 MD 서빙 API
 │   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
+│   │                    # price_signal.get() 호출로 렌더러에 의존성 등록
 │   ├── static/
-│   │   └── style.css    # 공통 스타일 (다크테마)
-│   ├── utils/
-│   │   ├── metrics.py         # 순수 계산 함수 (IRR, 알파, 베타, Exposure 등)
-│   │   └── daily_snapshot.py  # 특정일 기준 가장 최근 종가 조회 + daily_summary 1행분 계산 → dict 반환
+│   │   └── style.css    # 공통 스타일 (다크테마, 인라인 style 지양)
+│   ├── utils/           # ★ 순수 유틸 — DB/화면 의존 없음. 상세: utils_structure.md
+│   │   ├── metrics.py         # 순수 계산 함수
+│   │   │                      # to_f() / calculate_exposure_and_ratios()
+│   │   │                      # calculate_xirr() / calculate_monthly_irr()
+│   │   │                      # calculate_alpha() / calculate_beta()
+│   │   │                      # calculate_daily_profit() / calculate_retirement_asset()
+│   │   ├── daily_snapshot.py  # 단일 날짜 스냅샷 계산 → dict 반환 (daily_inserter에서 사용)
+│   │   │                      # get_daily_snapshot(target_date) → dict
+│   │   └── snap.py            # 날짜 범위 스냅샷 계산 (캐시 최적화, 누락 보정용)
+│   │                          # fetch_snapshot() / fetch_positions() / date_range()
+│   │                          # _GLOBAL_START_DATE_STR / _GLOBAL_END_DATE_STR 세팅 필요
 │   └── modules/
-│       ├── components.py            # 포맷 유틸 (fmt_krw 등) + render_summary_header
-│       ├── dashboard.py             # 대시보드 UI/server
-│       ├── portfolio.py
-│       ├── accounts.py              # UI/server 진입점
-│       ├── accounts_DAL.py          # DB 조회 로직
-│       ├── accounts_components.py   # 카드/행 렌더링 컴포넌트
-│       ├── accounts_modals.py       # 모달 UI
-│       ├── history.py
-│       ├── history_DAL.py
-│       ├── history_charts.py
-│       ├── history_table.py
-│       ├── history_utils.py
-│       └── settings.py
+│       ├── components.py            # 공통 포맷 유틸 + 공통 UI 컴포넌트
+│       │                            # fmt_krw() / fmt_usd() / fmt_pct() / fmt_pnl() / fmt_change()
+│       │                            # render_summary_header() / render_ticker_row()
+│       ├── dashboard.py             # 대시보드 UI/server → dashboard_structure.md
+│       ├── portfolio.py             # 포트폴리오 UI/server → portfolio_structure.md
+│       ├── accounts.py              # 계좌 UI/server 진입점 → accounts_structure.md
+│       ├── accounts_DAL.py          # 계좌 DB 조회
+│       │                            # fetch_accounts_summary() / fetch_account_details()
+│       ├── accounts_components.py   # 계좌 카드/행 렌더링
+│       │                            # render_asset_card() / render_ticker_row()
+│       ├── accounts_modals.py       # 계좌 모달 UI (추가/수정)
+│       ├── history.py               # 실적 히스토리 UI/server → history_structure.md
+│       ├── history_DAL.py           # 히스토리 DB 조회 + TWR 재계산
+│       │                            # load_history() / save_cash_flow() / calc_twr_pct() / calc_ndx_pct()
+│       ├── history_charts.py        # Plotly 차트 생성
+│       │                            # make_chart_asset() / make_chart_twr()
+│       ├── history_table.py         # 일간 누적 테이블 렌더링
+│       │                            # render_history_table()
+│       ├── history_utils.py         # 히스토리 전용 포맷 유틸
+│       │                            # fmt_krw() / fmt_10m()
+│       └── settings.py              # 설정 화면 UI/server → settings_structure.md
 └── scheduler/
-    ├── price_updater.py       # 시세 수집 스케줄러
-    ├── daily_inserter.py      # 일간 누적 데이터 자동 삽입 스케줄러 (매일 daily_insert_time KST 실행)
+    ├── price_updater.py       # 실시간 시세 수집 스케줄러 → price_updater_structure.md
+    │                          # get_market_status() ★ — daily_inserter, settings에서 import해서 사용
+    │                          # get_kr_price() / get_us_price() / get_yahoo_price()
+    │                          # HolidayCache (매일 08:00 KST 공휴일 갱신)
+    ├── daily_inserter.py      # 일간 누적 데이터 자동 삽입 → scheduler_structure.md
+    │                          # threading.Timer 기반, 매일 daily_insert_time KST 실행
+    │                          # 서비스 시작 시 누락 날짜 자동 보정 (_backfill)
     ├── gen_daily_data.py      # 누락 기간 수동 보정용 스탠드얼론 스크립트 (서비스 아님)
-    ├── config.json            # 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key, retirement_date, daily_insert_time)
+    ├── config.json            # 공통 설정값
+    │                          # kis_app_key / kis_app_secret / db_password / interval
+    │                          # kr_holiday_api_key / us_holiday_api_key
+    │                          # retirement_date / daily_insert_time
     ├── price_updater.service  # systemd 서비스 파일 원본
     ├── daily_inserter.service # systemd 서비스 파일 원본
     └── myassets.service       # systemd 서비스 파일 원본
@@ -329,4 +371,6 @@
 | ✅ 진행중 | 대시보드 화면 (총자산/증감/금일수익, Exposure, 레버리지·종목 비중 도넛차트, IRR, 알파/베타, 은퇴시뮬레이션) |
 | ✅ 완료 | insert_daily_row 스케줄러 자동화 (daily_inserter.py, systemd 서비스) |
 | ✅ 완료 | daily_summary usd_krw 컬럼 추가 (NUMERIC(10,2)) 및 과거 데이터 업데이트 (2025-06-19~2026-05-29) |
+| ✅ 미국주식 Yahoo로 대체 (daily_snapshot.py)
+| ✅ daily_inserter.py threading.Timer 구조로 개편 + 누락 날짜 자동추가 로직 추가
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

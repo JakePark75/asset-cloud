@@ -92,11 +92,18 @@
 
 ### 동작 방식
 - `threading.Timer` 기반으로 동작 (while 루프 없음)
-- 서비스 시작 시 당일(or 익일) `config.json`의 `daily_insert_time` (KST) 까지 타이머 등록
+- 서비스 시작 시 DB에서 마지막 스냅샷 날짜 확인 → 누락 날짜 있으면 `_backfill()`로 즉시 보정
+- 보정 완료 후 당일(or 익일) `config.json`의 `daily_insert_time` (KST) 까지 타이머 등록
 - 타이머 도달 시 미국 시장 상태(`get_market_status("NAS")`) 확인
   - `closed` : 전날 스냅샷 계산 후 `daily_summary` UPSERT → 다음날 타이머 등록
   - `after`  : 애프터마켓 진행 중 → 1시간 후 재시도 타이머 등록
   - 그 외    : 예상치 못한 상태 → 다음날 타이머 등록
+
+### 누락 날짜 자동 보정 (`_backfill`)
+- 서비스 시작 시 DB `MAX(date)` 조회
+- 어제까지 빠진 날짜가 있으면 `app.utils.snap` 모듈의 캐시 최적화 로직으로 순서대로 채움
+- `snap._GLOBAL_START_DATE_STR` / `snap._GLOBAL_END_DATE_STR` 세팅 → API 호출 최소화
+- UPSERT 방식이므로 중복 실행 안전
 
 ### UPSERT 정책
 - `ON CONFLICT (date) DO UPDATE` — 같은 날짜 재실행 시 덮어쓰기

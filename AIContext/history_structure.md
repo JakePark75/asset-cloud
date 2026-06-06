@@ -44,7 +44,7 @@
 
 ### `load_history()`
 - daily_summary 전체 조회 (ASC)
-- 반환 컬럼: date, total_asset, twr_asset, ndx100, cash_flow, cash_flow_note, exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio
+- 반환 컬럼: date, total_asset, twr_asset, ndx100, cash_flow, cash_flow_note, exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, usd_krw
 
 ### `calc_twr_pct(rows)`
 - twr_asset 첫 번째 값 기준으로 정규화 → 수익률(%) 리스트 반환
@@ -101,10 +101,13 @@
 
 ### `render_history_table(rows)` → Shiny UI
 - daily_summary rows (ASC) → 최신순(DESC)으로 뒤집어서 렌더
-- 컬럼: 날짜(yymmdd) / 총자산(억) / 전일대비 / 입출금 / Exp / 현금 / x1 / x2 / x3
+- 컬럼 순서: 날짜(yymmdd) / 총자산(억) / 전일대비 / Exp / 현금 / 입출금 / x1 / x2 / x3 / TWR / 나스닥 / 환율
 - 전일 대비: 금액 + 등락률(%), positive/negative 색상
 - 입출금: 0이 아닌 경우만 표시, 사유 있으면 dotted underline + title tooltip
 - 비율 컬럼(Exp/현금/x1/x2/x3): DB값 × 100 → % 표시
+- TWR: 억 단위 (`fmt_10m`)
+- 나스닥: 소수점 2자리, 없으면 "-"
+- 환율: 소수점 2자리, 없으면 "-"
 - 행 클릭 시 `history-selected_date` input 세팅 (네임스페이스 하드코딩)
 
 ---

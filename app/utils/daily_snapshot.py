@@ -142,6 +142,9 @@ def _get_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> f
                 ).json().get("output2", [])
                 if not rows:
                     break
+                # raw 응답 첫 번째 행 전체 필드 출력 (디버깅용)
+                if not _US_CACHE[ticker]:
+                    print(f"  [{ticker}] raw 응답 첫행: {rows[0]}")
                 _US_CACHE[ticker].extend(rows)
                 dt = datetime.datetime.strptime(
                     rows[-1].get("xymd"), "%Y%m%d"
@@ -202,10 +205,14 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
     cache_list = _YAHOO_CACHE[ticker]
     target_ts  = calendar.timegm(target_date.timetuple())
 
-    # target_date 이전 가장 최근값 반환 (12시간 오차 마진)
-    matched = [(ts, c) for ts, c in cache_list if ts <= target_ts + 43200]
+    # target_date 이전 가장 최근값 반환 (로컬 타임 기준 비교)
+    target_str = target_date.strftime("%Y-%m-%d")
+    matched = [(ts, c) for ts, c in cache_list if datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d") <= target_str]
     if matched:
+        matched_date = datetime.datetime.fromtimestamp(matched[-1][0]).strftime("%Y-%m-%d")
+        print(f"  [{ticker}] Yahoo → {matched_date} 가격: {matched[-1][1]}")
         return matched[-1][1]
+    print(f"  [{ticker}] Yahoo → 매칭 없음")
     return 0.0
 
 # ---------------------------------------------------------------------------
@@ -268,7 +275,7 @@ def get_daily_snapshot(target_date: datetime.date) -> dict:
         elif market_str == "KR":
             price = _get_kr_price(ticker, date_str, token)
         elif market_str in ("NAS", "AMS", "ARC"):
-            price = _get_us_price(ticker, market_str, date_str, token)
+            price = _get_yahoo_price(ticker, target_date)
         elif market_str in ("FX", "INDEX", "CRYPTO"):
             price = _get_yahoo_price(ticker, target_date)
         else:
