@@ -1,7 +1,8 @@
 from shiny import ui, render, module, reactive
 from app.db import get_connection, get_config, save_config
-from scheduler.price_updater import get_market_status
+from scheduler.price_updater_common import get_market_status
 from datetime import datetime, time
+import subprocess
 import pytz
 
 @module.ui
@@ -47,11 +48,12 @@ def settings_server(input, output, session):
     def interval_buttons():
         current = get_config().get("interval", 1)
         buttons = []
-        for v in [1, 3, 5, 10, 30]:
+        options = [(0, "실시간"), (1, "1분"), (3, "3분"), (5, "5분"), (10, "10분"), (30, "30분")]
+        for v, label in options:
             active_class = "interval-btn active" if v == current else "interval-btn"
             buttons.append(
                 ui.tags.button(
-                    f"{v}분",
+                    label,
                     class_=active_class,
                     onclick=f"Shiny.setInputValue('settings-btn_save_interval', {v}, {{priority: 'event'}}); document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active')); this.classList.add('active');"
                 )
@@ -63,11 +65,12 @@ def settings_server(input, output, session):
     @reactive.event(input.btn_save_interval)
     def _():
         val = input.btn_save_interval()
-        if not val or val < 1:
+        if val is None:
             return
         config = get_config()
         config["interval"] = val
         save_config(config)
+        subprocess.Popen(["sudo", "systemctl", "restart", "price_updater"])
 
     # 수동 티커 목록 (배지 로직 추가)
     @render.ui

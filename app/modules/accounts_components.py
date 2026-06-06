@@ -1,6 +1,6 @@
 from shiny import ui
 from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
-from scheduler.price_updater import get_market_status
+from scheduler.price_updater_common import get_market_status
 
 
 def render_asset_card(acc, ns):

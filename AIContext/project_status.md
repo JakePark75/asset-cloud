@@ -34,6 +34,7 @@
 | shiny | 1.6.2 | 웹 프레임워크 |
 | psycopg2 | 2.9.12 | PostgreSQL 동기 연결 (DB 조회/수정) |
 | asyncpg | 0.31.0 | PostgreSQL 비동기 연결 (LISTEN/NOTIFY) |
+| websockets | - | KIS 웹소켓 실시간 시세 수신 |
 
 ### Shiny 1.6.2 주의사항
 - `App()`의 `lifespan` 파라미터 미지원
@@ -117,21 +118,29 @@
 │       │                            # fmt_krw() / fmt_10m()
 │       └── settings.py              # 설정 화면 UI/server → settings_structure.md
 └── scheduler/
-    ├── price_updater.py       # 실시간 시세 수집 스케줄러 → price_updater_structure.md
-    │                          # get_market_status() ★ — daily_inserter, settings에서 import해서 사용
-    │                          # get_kr_price() / get_us_price() / get_yahoo_price()
-    │                          # HolidayCache (매일 08:00 KST 공휴일 갱신)
-    ├── daily_inserter.py      # 일간 누적 데이터 자동 삽입 → scheduler_structure.md
-    │                          # threading.Timer 기반, 매일 daily_insert_time KST 실행
-    │                          # 서비스 시작 시 누락 날짜 자동 보정 (_backfill)
-    ├── gen_daily_data.py      # 누락 기간 수동 보정용 스탠드얼론 스크립트 (서비스 아님)
-    ├── config.json            # 공통 설정값
-    │                          # kis_app_key / kis_app_secret / db_password / interval
-    │                          # kr_holiday_api_key / us_holiday_api_key
-    │                          # retirement_date / daily_insert_time
-    ├── price_updater.service  # systemd 서비스 파일 원본
-    ├── daily_inserter.service # systemd 서비스 파일 원본
-    └── myassets.service       # systemd 서비스 파일 원본
+    ├── price_updater.py         # 런처 — interval=0이면 WS모드, >0이면 REST모드 분기
+    │                            # → 상세: price_updater_structure.md
+    ├── price_updater_common.py  # 공통 모듈 — 설정/DB/시장상태/공휴일/Yahoo/DB업데이트
+    │                            # get_market_status() ★ — daily_inserter, settings에서 import
+    │                            # get_yahoo_price() / update_ticker_in_db()
+    │                            # HolidayCache / get_access_token()
+    ├── price_updater_rest.py    # REST 폴링 모드 — N분 주기 전 종목 조회
+    │                            # get_kr_price() / get_us_price() / get_confirmed_close_kr()
+    │                            # run_update_cycle() / update_worker() / close_confirm_worker()
+    ├── price_updater_ws.py      # 웹소켓 모드 — KIS WS 실시간 수신 + Yahoo 폴링
+    │                            # get_approval_key() / kis_ws_task() / yahoo_poll_task()
+    │                            # subscription_refresh_task() / get_subscribe_targets()
+    ├── daily_inserter.py        # 일간 누적 데이터 자동 삽입 → scheduler_structure.md
+    │                            # threading.Timer 기반, 매일 daily_insert_time KST 실행
+    │                            # 서비스 시작 시 누락 날짜 자동 보정 (_backfill)
+    ├── gen_daily_data.py        # 누락 기간 수동 보정용 스탠드얼론 스크립트 (서비스 아님)
+    ├── config.json              # 공통 설정값
+    │                            # kis_app_key / kis_app_secret / db_password / interval
+    │                            # data_go_kr_key / finnhub_api_key
+    │                            # retirement_date / daily_insert_time
+    ├── price_updater.service    # systemd 서비스 파일 원본
+    ├── daily_inserter.service   # systemd 서비스 파일 원본
+    └── myassets.service         # systemd 서비스 파일 원본
 ```
 ---
 
@@ -261,32 +270,34 @@
 |------|------|------|
 | `get_usd_krw()` | `(float, float)` or `(None, None)` | USDKRW=X의 current_price, change_pct 반환. 환율 표시가 필요한 모든 화면에서 사용 |
 | `save_config(data)` | `None` | 설정값을 config.json에 저장 |
-| `get_db()` | |컨텍스트 매니저, DB 커넥션 안전 반환. 모든 DAL에서 get_connection() 대신 사용
+| `get_db()` | | 컨텍스트 매니저, DB 커넥션 안전 반환. 모든 DAL에서 get_connection() 대신 사용 |
 ---
 
 ## 8. 시세 수집 스케줄러
 
 ### 파일 구성
-- `scheduler/price_updater.py` — 메인 스크립트
-- `scheduler/config.json` — 설정값 (kis_app_key, kis_app_secret, db_password, interval, kr_holiday_api_key, us_holiday_api_key )
-- `scheduler/price_updater.service` — systemd 서비스 파일 원본
+| 파일 | 역할 |
+|------|------|
+| `scheduler/price_updater.py` | 런처 — interval 값으로 REST/WS 모드 분기 |
+| `scheduler/price_updater_common.py` | 공통 모듈 (설정, DB, 시장상태, 공휴일, Yahoo) |
+| `scheduler/price_updater_rest.py` | REST 폴링 모드 (interval > 0) |
+| `scheduler/price_updater_ws.py` | 웹소켓 실시간 모드 (interval = 0) |
+| `scheduler/config.json` | 설정값 |
+| `scheduler/price_updater.service` | systemd 서비스 파일 원본 |
 
 ### 동작 방식
-- 시장별 개장 시간 기반 필터링 (is_market_open) 도입
-- 전 종목 무조건 조회 방식에서 탈피하여 정규장 시간 외 불필요한 API 호출 차단
-- FX / CRYPTO: 24시간 조회
-- 국내/미국 주식: 현지 정규장 시간 전후 30분 버퍼(±30min) 적용
-- 공휴일 캐싱: HolidayCache 클래스가 매일 08:00 KST에 한국/미국 공휴일을 외부 API로 조회 후 캐싱. is_market_open()에서 캐시 참조하여 공휴일 여부 판단
-  - 공휴일 API 키 2개 config.json에 추가 필요 (kr_holiday_api_key, us_holiday_api_key)
-  - main() 루프에서 매 interval마다 holiday_cache.refresh_if_needed() 호출 (08:00 KST 이후 당일 첫 호출 시 1회만 조회)
-- tickers 테이블 전체 종목 조회 후 market별 API 호출
-- 종목별 독립 스레드로 병렬 실행
-- KR: KIS API (장마감 시 전일종가 fallback)
-- NAS/AMS/ARC: KIS API 미국주식
-- FX/INDEX/CRYPTO: Yahoo Finance (환율/지수/암호화폐 포함, data_time 저장)
-- 업데이트 주기: config.json의 interval(분), 실행 중 변경 즉시 반영
+- `interval = 0`: 웹소켓 모드 — KIS WS로 KR/US 종목 실시간 push 수신, FX/INDEX/CRYPTO는 Yahoo 60초 폴링
+- `interval > 0`: REST 폴링 모드 — N분 주기로 전 종목 REST API 조회
+- 설정 변경 시 `systemctl restart price_updater` → 런처가 새 interval로 모드 재분기
+- 시장별 개장 시간 기반 필터링 (get_market_status) — 불필요한 API 호출 차단
+- FX / CRYPTO / INDEX: 24시간 조회
+- 국내/미국 주식: 현지 장 시간 기반 (pre/open/after/closing/closed)
+- 공휴일 캐싱: HolidayCache 클래스, 매일 08:00 KST 1회 갱신
+  - 한국: 공공데이터포털 특일 API (`data_go_kr_key`)
+  - 미국: Finnhub market-holiday API (`finnhub_api_key`)
 - 업데이트 완료 후 PostgreSQL `NOTIFY price_updated` 전송
 - systemd 서비스: VM 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
+- 웹소켓 모드에서 구독 대상 변경 감지 시 os.execv()로 자체 재시작
 
 ---
 
@@ -305,18 +316,14 @@
 - 시세 업데이트 시 의존 렌더러 자동 재실행 → DB 재조회 → 화면 갱신
 - 백그라운드 태스크는 첫 세션 접속 시 1회만 시작 (`_task_started` 플래그)
 
-### 설정 화면 구현 특이점 및 향후 작업
+### 설정 화면 구현 특이점
 
-#### 구현 특이점
-- 시세 수집 상태 실시간 모니터링
-- 티커 목록 내 is_market_open 로직을 연동하여 현재 업데이트 대상 여부 표시
-  - 업데이트 중 / ○ 대기(휴장) 배지 및 reactive.invalidate_later(60)를 통한 1분 단위 자동 갱신
-시세조회 간격 버튼: JS로 active 클래스 전환 + settings-btn_save_interval input 세팅 (네임스페이스 하드코딩)
-- 시세조회 간격 버튼: JS로 active 클래스 전환 + `settings-btn_save_interval` input 세팅 (네임스페이스 하드코딩)
+- 시세조회 간격 버튼: 실시간(0) / 1분 / 3분 / 5분 / 10분 / 30분
+  - interval=0 선택 시 웹소켓 모드로 전환 (price_updater 서비스 재시작)
+  - JS로 active 클래스 전환 + `settings-btn_save_interval` input 세팅 (네임스페이스 하드코딩)
+- 티커 목록 내 시장 상태 배지 5종 (open/pre/after/closing/closed), `reactive.invalidate_later(60)` 1분 자동 갱신
 - 로그아웃: Shiny server 거치지 않고 JS에서 직접 쿠키 삭제 후 reload
 - 티커 추가 시 ON CONFLICT로 기존 티커 덮어쓰기 가능
-
-#### 향후 추가 예정 기능
 
 ### 구현 현황
 - 하단 탭바 네비게이션 (5개 탭)
@@ -353,24 +360,27 @@
 | ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
 | ✅ 완료 | 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY) |
 | ✅ 완료 | nginx Basic Auth 접근 제한 | → Shiny 앱 내 로그인으로 방향 변경 |
-| ✅ 완료 | Shiny 앱 로그인 화면 구현
-| ✅ 완료 | 계좌 화면 환율 표시 (USD/KRW, 등락률, 색상)
+| ✅ 완료 | Shiny 앱 로그인 화면 구현 |
+| ✅ 완료 | 계좌 화면 환율 표시 (USD/KRW, 등락률, 색상) |
 | ✅ 완료 | 설정 화면 구현 (시세조회 간격, 수동 티커 관리, 로그아웃) | → 티커 정렬, 레버리지 뱃지, 수동/자동 구분 표시 포함 |
 | ✅ 완료 | 설정 화면 — 스케줄러 interval 조절 |
 | ✅ 완료 | 설정 화면 — 티커 정렬 방식 추가 (레버리지순, 평가액순 등) |
 | ✅ 완료 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ✅ 완료 | 기존 일일자산누적 데이터 DB 일괄 이전 (2025-06-19~) |
-| ✅ 완료 | 과거 입출금내역 변경하도록 개선-> 입출금기록 변경시 twr asset 업데이트됨 |
+| ✅ 완료 | 과거 입출금내역 변경하도록 개선 → 입출금기록 변경시 twr_asset 업데이트됨 |
 | ✅ 완료 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
-| ✅ 완료 | 시세 수집 공휴일 캐싱 (HolidayCache 클래스, 매일 08:00 KST 갱신, is_market_open() 연동, update_worker() data_time 버그 수정)
+| ✅ 완료 | 시세 수집 공휴일 캐싱 (HolidayCache 클래스, 매일 08:00 KST 갱신, is_market_open() 연동, update_worker() data_time 버그 수정) |
 | ✅ 완료 | 시장 상태 4단계 (`get_market_status()` — open/pre/after/closed), 기존 `is_market_open()` 하위호환 유지 |
-| ✅ 완료 | 종가 확정 로직 — after 상태에서 KR/US 종가 API 병행 호출, 확정 시 당일 조회 중단 (`_close_confirmed` 플래그) |
-| ✅ 완료 | 설정 화면 티커 배지 4종류 (장중/프리/애프터/휴장, 색상 구분) |
+| ✅ 완료 | 종가 확정 로직 — closing 상태에서 KR 종가 API 병행 호출, 확정 시 당일 조회 중단 (`_close_confirmed` 플래그) |
+| ✅ 완료 | 설정 화면 티커 배지 5종류 (open/pre/after/closing/closed, 색상 구분) |
 | ✅ 완료 | 포트폴리오/계좌상세 종목 카드 현재가 표시 (거래 화폐단위, 등락률과 동일 색상) |
 | ✅ 완료 | 현금(KRW/USD) 종목 카드 배지 미표시 |
-| ✅ 진행중 | 대시보드 화면 (총자산/증감/금일수익, Exposure, 레버리지·종목 비중 도넛차트, IRR, 알파/베타, 은퇴시뮬레이션) |
+| ✅ 완료 | 시세 수집 웹소켓 모드 추가 (price_updater_ws.py) — KIS WS 실시간 push, Yahoo 폴링 병행 |
+| ✅ 완료 | price_updater 3파일 분리 (common/rest/ws) + 런처(price_updater.py)로 모드 분기 |
+| ✅ 완료 | 설정 화면 interval 버튼에 실시간(0) 옵션 추가 |
 | ✅ 완료 | insert_daily_row 스케줄러 자동화 (daily_inserter.py, systemd 서비스) |
 | ✅ 완료 | daily_summary usd_krw 컬럼 추가 (NUMERIC(10,2)) 및 과거 데이터 업데이트 (2025-06-19~2026-05-29) |
-| ✅ 미국주식 Yahoo로 대체 (daily_snapshot.py)
-| ✅ daily_inserter.py threading.Timer 구조로 개편 + 누락 날짜 자동추가 로직 추가
+| ✅ 완료 | 미국주식 Yahoo로 대체 (daily_snapshot.py) |
+| ✅ 완료 | daily_inserter.py threading.Timer 구조로 개편 + 누락 날짜 자동추가 로직 추가 |
+| ✅ 진행중 | 대시보드 화면 (총자산/증감/금일수익, Exposure, 레버리지·종목 비중 도넛차트, IRR, 알파/베타, 은퇴시뮬레이션) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |
