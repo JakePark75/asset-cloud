@@ -41,7 +41,22 @@
 }
 .db-hero-content { position: relative; z-index: 2; }
 .db-hero-delta-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.db-hero-chart { position: absolute; left: 55%; right: 0; top: 25%; bottom: 0; z-index: 1;}
+.db-hero-chart {
+    position: absolute;
+    /* 사용자님이 의도하신 대로 이 값만 변경하면 자동으로 영역에 꽉 찹니다 */
+    left: 50%;    
+    right: 0%;
+    top: 5%;      
+    bottom: 20%;
+    z-index: 1;
+    overflow: hidden;
+}
+
+/* 이코드가 없어도 잘되는것 같은데.. 없으면 안되는 경우도 있다고 해서 박아둠 */
+.db-hero-chart svg {
+    width: 100%;
+    height: 100%;
+}
 
 /* ── 섹션 ───────────────────────────────────── */
 .db-section { margin-top: 20px; }

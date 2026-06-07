@@ -276,36 +276,29 @@ def _donut_svg(slices: list[dict]) -> str:
 {paths_html}
 </svg>'''
 
-
 def _hero_line_svg(values: list[float]) -> str:
-    """
-    총자산 히어로 오버레이 라인차트 SVG
-    축 없음, 그린 라인 + 하단 그라데이션 fill
-    """
-    if len(values) < 2:
+    if not values or len(values) < 2:
         return ""
-
-    W, H = 300, 110
-    pad_b = 10
-
-    min_v = min(values)
-    max_v = max(values)
-    rng   = max_v - min_v or 1
-
-    def px(i, v):
-        x = i / (len(values) - 1) * W
-        y = H - pad_b - ((v - min_v) / rng) * (H - pad_b - 10)
-        return x, y
-
-    pts = [px(i, v) for i, v in enumerate(values)]
+    
+    # 1. 데이터를 0~100 좌표계로 정규화
+    min_v, max_v = min(values), max(values)
+    v_range = (max_v - min_v) or 1
+    
+    pts = []
+    for i, v in enumerate(values):
+        x = (i / (len(values) - 1)) * 100
+        y = 100 - ((v - min_v) / v_range) * 100
+        pts.append((x, y))
+    
+    # 2. Path와 Polyline 생성
     polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
-
-    # fill path: 라인 → 우하단 → 좌하단
-    fill_d = f"M {pts[0][0]:.1f},{pts[0][1]:.1f} "
-    fill_d += " ".join(f"L {x:.1f},{y:.1f}" for x, y in pts[1:])
-    fill_d += f" L {pts[-1][0]:.1f},{H} L {pts[0][0]:.1f},{H} Z"
-
-    return f'''<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+    fill_d = f"M {pts[0][0]:.1f},{pts[0][1]:.1f} " + \
+             " ".join(f"L {x:.1f},{y:.1f}" for x, y in pts[1:]) + \
+             f" L {pts[-1][0]:.1f},100 L {pts[0][0]:.1f},100 Z"
+             
+    # 3. 뷰박스 고정 + preserveAspectRatio="none" (강제 맵핑)
+    # vector-effect="non-scaling-stroke" (선 굵기 유지)
+    return f'''<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="display:block; width:100%; height:100%;">
   <defs>
     <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#00c073" stop-opacity="0.25"/>
@@ -313,10 +306,10 @@ def _hero_line_svg(values: list[float]) -> str:
     </linearGradient>
   </defs>
   <path d="{fill_d}" fill="url(#hg)" />
-  <polyline points="{polyline}" fill="none" stroke="#00c073" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
-  <circle cx="{pts[-1][0]:.1f}" cy="{pts[-1][1]:.1f}" r="3" fill="#00c073"/>
+  <polyline points="{polyline}" fill="none" stroke="#00c073" stroke-width="2" 
+            vector-effect="non-scaling-stroke" 
+            stroke-linejoin="round" stroke-linecap="round"/>
 </svg>'''
-
 
 # ── UI ───────────────────────────────────────────────────────
 
