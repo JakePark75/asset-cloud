@@ -2,6 +2,33 @@
 
 SERVICES=("myassets" "price_updater" "daily_inserter" "nginx")
 
+# 압축 수행 함수
+compress_source() {
+    # TZ 환경변수를 통해 KST 시간으로 타임스탬프 생성
+    local timestamp=$(TZ='Asia/Seoul' date +"%Y%m%d_%H%M")
+    local filename="asset-cloud_$timestamp.tar.gz"
+    local temp_path="/tmp/$filename"
+    
+    echo "--- 소스 전체 압축 중 (KST: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S')) ---"
+    
+    # 1. /tmp에 압축 파일을 생성 (압축 대상 폴더 밖이므로 에러 없음)
+    sudo tar -czvf "$temp_path" .
+    
+    # 2. 생성된 압축 파일을 현재 폴더로 이동
+    sudo mv "$temp_path" .
+    
+    # 3. 소유권 변경 (현재 유저로 변경하여 나중에 편집/삭제 용이하게 함)
+    sudo chown $USER:$USER "$filename"
+    
+    if [ $? -eq 0 ]; then
+        echo ""
+        echo "✅ 압축 완료: $filename"
+    else
+        echo ""
+        echo "❌ 압축 실패"
+    fi
+}
+
 show_service_menu() {
     local action=$1
     local include_all=$2
@@ -16,7 +43,7 @@ show_service_menu() {
     echo "  0. 뒤로"
     echo ""
     read -n 1 -p "선택: " svc_choice
-echo
+    echo
 
     if [ "$svc_choice" = "0" ]; then
         return
@@ -52,15 +79,17 @@ while true; do
     echo "  1. 재시작"
     echo "  2. 상태 확인"
     echo "  3. 로그 보기"
+    echo "  4. 소스 전체 압축"
     echo "  0. 종료"
     echo ""
     read -n 1 -p "선택: " choice
-echo
+    echo
 
     case $choice in
         1) show_service_menu "restart" "true" ;;
         2) show_service_menu "status" "true" ;;
         3) show_service_menu "log" "false" ;;
+        4) compress_source ;;
         0) echo "종료"; exit 0 ;;
         *) echo "❌ 잘못된 선택" ;;
     esac
