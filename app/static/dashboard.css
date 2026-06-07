@@ -33,16 +33,15 @@
 /* ── HERO ───────────────────────────────────── */
 .db-hero {
     position: relative;
-    padding: 24px 16px 20px 16px;
-    margin: 0 -16px;
+    padding: 24px 16px 10px 16px;
     background: var(--db-surface);
     border-bottom: 1px solid var(--db-border);
     overflow: hidden;
-    min-height: 110px;
+    border-radius: 4px;
 }
 .db-hero-content { position: relative; z-index: 2; }
 .db-hero-delta-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.db-hero-chart { position: absolute; right: 0; top: 0; bottom: 0; width: 55%; z-index: 1; pointer-events: none; }
+.db-hero-chart { position: absolute; left: 55%; right: 0; top: 20%; bottom: 0; z-index: 1; pointer-events: none; overflow: hidden; }
 
 /* ── 섹션 ───────────────────────────────────── */
 .db-section { margin-top: 20px; }
@@ -54,13 +53,8 @@
 .db-hero-delta { font-size: 16px; font-weight: 600; }
 .db-hero-delta-tag { font-size: 12px; color: #888888; background: var(--db-surface2); border: 1px solid var(--db-border2); border-radius: 4px; padding: 2px 8px; }
 
-/* ── 금일 수익 ──────────────────────────────── */
-.db-today-card { background: var(--db-surface); border-radius: 12px; padding: 16px; margin-bottom: 10px; }
-.db-today-label { font-size: 12px; font-weight: 600; color: var(--db-text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
-.db-today-value { font-size: 26px; font-weight: 700; }
-
 /* ── Exposure 통합 카드 ─────────────────────── */
-.db-exposure-card { background: var(--db-surface); border-radius: 12px; padding: 16px; margin-bottom: 10px; }
+.db-exposure-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; margin-bottom: 10px; }
 .db-exposure-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
 .db-exposure-val { font-size: 30px; font-weight: 700; line-height: 1.1; }
 .db-exposure-sub { font-size: 12px; color: var(--db-text-muted); margin-top: 3px; }
@@ -93,7 +87,7 @@
     padding: 2px 6px; color: #b0b0b0;
     white-space: nowrap; flex: 1; justify-content: center;
 }
-.db-lev-legend-dot { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+.db-lev-legend-dot { width: 9px; height: 9px; border-radius: 4px; flex-shrink: 0; }
 .db-lev-legend-dot.x1   { background: var(--db-green); }
 .db-lev-legend-dot.x2   { background: var(--db-amber); }
 .db-lev-legend-dot.x3   { background: var(--db-red);   }
@@ -101,12 +95,12 @@
 
 /* ── 수익률/알파 카드 ───────────────────────── */
 .db-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-.db-metric-card { background: var(--db-surface); border-radius: 12px; padding: 16px; min-height: 80px; }
+.db-metric-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; min-height: 80px; }
 .db-metric-label { font-size: 12px; font-weight: 600; color: var(--db-text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
 .db-metric-value { font-size: 22px; font-weight: 700; color: var(--db-text); display: block; }
 
 /* ── 베타 ───────────────────────────────────── */
-.db-beta-card { background: var(--db-surface); border-radius: 12px; padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.db-beta-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .db-beta-label { font-size: 12px; font-weight: 600; color: var(--db-text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
 .db-beta-values { display: flex; align-items: baseline; gap: 4px; }
 .db-beta-value { font-size: 24px; font-weight: 700; color: var(--db-text); }
@@ -114,7 +108,7 @@
 .db-beta-sep { font-size: 20px; color: var(--db-border2); margin: 0 4px; }
 
 /* ── 종목 도넛 ──────────────────────────────── */
-.db-donut-card { background: var(--db-surface); border-radius: 12px; padding: 16px; margin-bottom: 10px; }
+.db-donut-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; margin-bottom: 10px; }
 .db-donut-title { font-size: 15px; font-weight: 600; color: var(--db-text); margin-bottom: 14px; }
 .db-donut-title-sub { font-size: 13px; color: var(--db-text-muted); font-weight: 400; margin-left: 6px; }
 .db-donut-wrap { display: flex; align-items: center; gap: 16px; }
@@ -127,7 +121,7 @@
 .db-donut-legend-pct { font-size: 13px; font-weight: 600; color: var(--db-text-muted); flex-shrink: 0; }
 
 /* ── 은퇴 ───────────────────────────────────── */
-.db-retirement { background: #0e0b1a; border-radius: 12px; border: 1px solid #2d1f5e; border-left: 3px solid var(--db-purple); padding: 16px; margin-top: 20px; margin-bottom: 10px; }
+.db-retirement { background: #0e0b1a; border-radius: 4px;; border: 1px solid #2d1f5e; border-left: 3px solid var(--db-purple); padding: 16px; margin-top: 20px; margin-bottom: 10px; }
 .db-retirement-eyebrow { font-size: 11px; font-weight: 600; color: #6650a4; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px; }
 .db-retirement-subtitle { font-size: 12px; color: #5c4f8a; margin-bottom: 12px; }
 .db-retirement-amount { font-size: 28px; font-weight: 700; color: var(--db-purple); letter-spacing: -0.02em; line-height: 1.15; }

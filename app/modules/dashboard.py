@@ -334,7 +334,6 @@ def dashboard_ui():
             ui.div(
                 {"class": "db-section"},
                 ui.div("오늘", class_="db-section-title"),
-                ui.output_ui("out_daily_profit"),
                 ui.output_ui("out_exposure_card"),
             ),
 
@@ -442,21 +441,6 @@ def dashboard_server(input, output, session):
 
     # ── 금일 순수익 ───────────────────────────────────
 
-    @output
-    @render.ui
-    def out_daily_profit():
-        d = data()
-        if not d:
-            return ui.div({"class": "db-today-card"}, ui.span("–"))
-        val = d["daily_profit"]
-        return ui.div(
-            {"class": "db-today-card"},
-            ui.div("금일 순수익", class_="db-today-label"),
-            ui.span(
-                f"{_arrow(val)} {fmt_krw(abs(val))}",
-                class_=f"db-today-value {_pnl_class(val)}",
-            ),
-        )
 
     # ── Exposure + 레버리지 통합 카드 ─────────────────
 
