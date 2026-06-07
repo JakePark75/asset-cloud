@@ -28,8 +28,8 @@ def _pnl_class(val: float) -> str:
     return "db-neu"
 
 def _arrow(val: float) -> str:
-    if val > 0: return "▲"
-    if val < 0: return "▼"
+    if val > 0: return "+"
+    if val < 0: return "-"
     return "–"
 
 def _fmt_krw_short(val: float) -> str:

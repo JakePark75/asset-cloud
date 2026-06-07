@@ -4,11 +4,11 @@
    :  (= #00c073, = #ff4d4d)
  */
 
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+Mono+KR:wght@400;500;600;700&display=swap');
 
 /*  CSS   */
 :root {
-    --font:          'JetBrains Mono', 'Noto Sans KR', monospace;
+    --font:          'JetBrains Mono', 'Noto Sans Mono KR', monospace;
     --bg:            #0a0a0a;
     --surface:       #1a1a1a;
     --surface2:      #222222;
@@ -115,6 +115,8 @@ body {
     font-size: 28px;
     font-weight: 700;
     color: var(--text-bright);
+    letter-spacing: -0.5px;
+    line-height: 1.15;
 }
 
 .amount-sub {
@@ -149,7 +151,8 @@ body {
 }
 
 .total-summary-pnl-text {
-    font-size: 13px;
+    font-size: 15px;
+    font-weight: 600;
     white-space: nowrap;
     flex-shrink: 1;
     min-width: 0;
@@ -159,13 +162,14 @@ body {
     font-size: 36px;
     font-weight: 700;
     color: var(--text-bright);
+    letter-spacing: -0.5px;
+    line-height: 1.15;
 }
 
-.total-summary-pnl-text { font-size: 15px; }
 
 .account-alias {
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 14px;
 }
 
 /*     */
@@ -263,3 +267,31 @@ body {
 
 /*    */
 #screen-login .shiny-input-container { width: 100%; }
+/* render_summary_header — 대시보드 히어로 스타일 */
+.summary-label {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+.summary-amount {
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--text-bright);
+    letter-spacing: -0.5px;
+    line-height: 1.15;
+}
+.summary-delta-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 8px;
+}
+.summary-delta {
+    font-size: 16px;
+    font-weight: 600;
+}
+.summary-usd {
+    font-size: 11px;
+    color: #888888;
+    margin-left: auto;
+}
