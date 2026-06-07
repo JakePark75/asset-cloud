@@ -226,6 +226,8 @@ def _fetch_positions() -> list:
                 SELECT p.ticker, p.quantity, t.leverage, t.market
                 FROM positions p
                 LEFT JOIN tickers t ON p.ticker = t.ticker
+                LEFT JOIN accounts a ON p.account_id = a.id
+                WHERE a.is_watch = false
             """)
             return cur.fetchall()
 
