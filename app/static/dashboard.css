@@ -41,7 +41,7 @@
 }
 .db-hero-content { position: relative; z-index: 2; }
 .db-hero-delta-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.db-hero-chart { position: absolute; left: 55%; right: 0; top: 20%; bottom: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+.db-hero-chart { position: absolute; left: 55%; right: 0; top: 25%; bottom: 0; z-index: 1;}
 
 /* ── 섹션 ───────────────────────────────────── */
 .db-section { margin-top: 20px; }
