@@ -66,7 +66,7 @@
 │   ├── app_structure.md
 │   ├── accounts_structure.md
 │   ├── history_structure.md
-│   ├── dashboard_structure.md
+│   ├── dashboard_structure.md   # ★ 대시보드 구조 (Bloomberg 스타일, SVG 차트)
 │   ├── portfolio_structure.md
 │   ├── settings_structure.md
 │   ├── scheduler_structure.md
@@ -83,7 +83,8 @@
 │   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
 │   │                    # price_signal.get() 호출로 렌더러에 의존성 등록
 │   ├── static/
-│   │   └── style.css    # 공통 스타일 (다크테마, 인라인 style 지양)
+│   │   ├── style.css    # 공통 스타일 (다크테마, 인라인 style 지양)
+│   │   └── dashboard.css  # 대시보드 전용 스타일 (Bloomberg 다크테마, JetBrains Mono 폰트)
 │   ├── utils/           # ★ 순수 유틸 — DB/화면 의존 없음. 상세: utils_structure.md
 │   │   ├── metrics.py         # 순수 계산 함수
 │   │   │                      # to_f() / calculate_exposure_and_ratios()
@@ -99,7 +100,7 @@
 │       ├── components.py            # 공통 포맷 유틸 + 공통 UI 컴포넌트
 │       │                            # fmt_krw() / fmt_usd() / fmt_pct() / fmt_pnl() / fmt_change()
 │       │                            # render_summary_header() / render_ticker_row()
-│       ├── dashboard.py             # 대시보드 UI/server → dashboard_structure.md
+│       ├── dashboard.py             # 대시보드 UI/server (Bloomberg 스타일 재작성) → dashboard_structure.md
 │       ├── portfolio.py             # 포트폴리오 UI/server → portfolio_structure.md
 │       ├── accounts.py              # 계좌 UI/server 진입점 → accounts_structure.md
 │       ├── accounts_DAL.py          # 계좌 DB 조회
@@ -382,5 +383,5 @@
 | ✅ 완료 | daily_summary usd_krw 컬럼 추가 (NUMERIC(10,2)) 및 과거 데이터 업데이트 (2025-06-19~2026-05-29) |
 | ✅ 완료 | 미국주식 Yahoo로 대체 (daily_snapshot.py) |
 | ✅ 완료 | daily_inserter.py threading.Timer 구조로 개편 + 누락 날짜 자동추가 로직 추가 |
-| ✅ 진행중 | 대시보드 화면 (총자산/증감/금일수익, Exposure, 레버리지·종목 비중 도넛차트, IRR, 알파/베타, 은퇴시뮬레이션) |
+| ✅ 완료 | 대시보드 화면 (Bloomberg 스타일 전면 재작성 — SVG 라인차트/도넛, Exposure 통합카드, JetBrains Mono 폰트, dashboard.css 분리) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |
