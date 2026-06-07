@@ -87,13 +87,13 @@ def calculate_monthly_irr(cash_flows: list[tuple]) -> float:
     if annual_irr <= -1.0: return 0.0
     return (1 + annual_irr) ** (1 / 12) - 1
 
-def calculate_daily_profit(today_asset: float, today_cash_flow: float, yesterday_asset: float) -> float:
+def calculate_daily_profit(today_asset: float, yesterday_asset: float) -> float:
     """
-    금일 순수 운용 수익 (입출금 제외)
-    = (오늘 총자산 - 오늘 입출금) - 어제 총자산
+    금일 손익 = 오늘 실시간 총평가액 - daily_summary 마지막 행 total_asset
+    입출금 보정 없음 (입출금 있는 날은 오차 감수)
     """
     if yesterday_asset == 0: return 0.0
-    return (today_asset - today_cash_flow) - yesterday_asset
+    return today_asset - yesterday_asset
 
 def calculate_retirement_asset(total_asset: float, monthly_irr: float, retirement_date: datetime.date) -> float:
     """

@@ -1,7 +1,7 @@
-/* ═══════════════════════════════════════════════
-   DASHBOARD — 대시보드 전용 스타일
-   기존 style.css 컬러/폰트 시스템 기반
-═══════════════════════════════════════════════ */
+/* 
+   DASHBOARD    
+    style.css /  
+ */
 
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+Mono+KR:wght@400;500;600;700&display=swap');
 
@@ -30,10 +30,10 @@
     font-family: var(--db-font);
 }
 
-/* ── HERO ───────────────────────────────────── */
+/*  HERO  */
 .db-hero {
     position: relative;
-    padding: 24px 16px 10px 16px;
+    padding: 24px 0 10px 0;
     background: var(--db-surface);
     border-bottom: 1px solid var(--db-border);
     overflow: hidden;
@@ -43,7 +43,7 @@
 .db-hero-delta-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .db-hero-chart {
     position: absolute;
-    /* 사용자님이 의도하신 대로 이 값만 변경하면 자동으로 영역에 꽉 찹니다 */
+    /*           */
     left: 50%;    
     right: 0%;
     top: 5%;      
@@ -52,23 +52,23 @@
     overflow: hidden;
 }
 
-/* 이코드가 없어도 잘되는것 같은데.. 없으면 안되는 경우도 있다고 해서 박아둠 */
+/*    ..       */
 .db-hero-chart svg {
     width: 100%;
     height: 100%;
 }
 
-/* ── 섹션 ───────────────────────────────────── */
+/*    */
 .db-section { margin-top: 20px; }
 .db-section-title { font-size: 11px; font-weight: 500; color: #4a4a4a; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
 
-/* HERO 텍스트는 흰색 유지 */
+/* HERO    */
 .db-hero-label { font-size: 14px; color: #888888; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
 .db-hero-amount { font-size: 36px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px; line-height: 1.15; }
 .db-hero-delta { font-size: 16px; font-weight: 600; }
 .db-hero-delta-tag { font-size: 12px; color: #888888; background: var(--db-surface2); border: 1px solid var(--db-border2); border-radius: 4px; padding: 2px 8px; }
 
-/* ── Exposure 통합 카드 ─────────────────────── */
+/*  Exposure    */
 .db-exposure-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; margin-bottom: 10px; }
 .db-exposure-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
 .db-exposure-val { font-size: 30px; font-weight: 700; line-height: 1.1; }
@@ -78,7 +78,7 @@
 .db-ratio-val { font-size: 17px; font-weight: 700; color: var(--db-text); }
 .db-ratio-label { font-size: 11px; color: var(--db-text-muted); margin-top: 3px; }
 
-/* ── 레버리지 바 ────────────────────────────── */
+/*     */
 .db-lev-bar-track { display: flex; height: 18px; border-radius: 4px; overflow: hidden; gap: 2px; margin-bottom: 10px; }
 .db-lev-bar-seg {
     display: flex; align-items: center; justify-content: center;
@@ -93,7 +93,7 @@
 .db-lev-bar-seg.x3   { background: var(--db-red);   color: rgba(0,0,0,0.8); }
 .db-lev-bar-seg.cash { background: #000000;          color: #ffffff; }
 
-/* 범례 — 한 줄 고정 */
+/*      */
 .db-lev-legend { display: flex; gap: 5px; flex-wrap: nowrap; }
 .db-lev-legend-item {
     font-size: 10px; font-weight: 600;
@@ -108,13 +108,13 @@
 .db-lev-legend-dot.x3   { background: var(--db-red);   }
 .db-lev-legend-dot.cash { background: #000000; border: 1px solid #444; }
 
-/* ── 수익률/알파 카드 ───────────────────────── */
+/*  /   */
 .db-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
 .db-metric-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; min-height: 80px; }
 .db-metric-label { font-size: 12px; font-weight: 600; color: var(--db-text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
 .db-metric-value { font-size: 22px; font-weight: 700; color: var(--db-text); display: block; }
 
-/* ── 베타 ───────────────────────────────────── */
+/*    */
 .db-beta-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .db-beta-label { font-size: 12px; font-weight: 600; color: var(--db-text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
 .db-beta-values { display: flex; align-items: baseline; gap: 4px; }
@@ -122,7 +122,7 @@
 .db-beta-tag { font-size: 12px; color: var(--db-text-muted); }
 .db-beta-sep { font-size: 20px; color: var(--db-border2); margin: 0 4px; }
 
-/* ── 종목 도넛 ──────────────────────────────── */
+/*     */
 .db-donut-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; margin-bottom: 10px; }
 .db-donut-title { font-size: 15px; font-weight: 600; color: var(--db-text); margin-bottom: 14px; }
 .db-donut-title-sub { font-size: 13px; color: var(--db-text-muted); font-weight: 400; margin-left: 6px; }
@@ -135,7 +135,7 @@
 .db-donut-legend-name { font-size: 13px; color: var(--db-text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .db-donut-legend-pct { font-size: 13px; font-weight: 600; color: var(--db-text-muted); flex-shrink: 0; }
 
-/* ── 은퇴 ───────────────────────────────────── */
+/*    */
 .db-retirement { background: #0e0b1a; border-radius: 4px;; border: 1px solid #2d1f5e; border-left: 3px solid var(--db-purple); padding: 16px; margin-top: 20px; margin-bottom: 10px; }
 .db-retirement-eyebrow { font-size: 11px; font-weight: 600; color: #6650a4; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px; }
 .db-retirement-subtitle { font-size: 12px; color: #5c4f8a; margin-bottom: 12px; }
@@ -143,8 +143,4 @@
 .db-retirement-sub { font-size: 12px; color: #5c4f8a; margin-top: 8px; }
 .db-retirement-compound { font-size: 12px; color: #6650a4; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
 
-/* ── 공통 ───────────────────────────────────── */
-.db-pos { color: var(--db-green) !important; }
-.db-neg { color: var(--db-red)   !important; }
-.db-warn{ color: var(--db-amber) !important; }
-.db-neu { color: var(--db-text)  !important; }
+/*     base.css   */

@@ -1,0 +1,265 @@
+/* 
+   BASE    
+   : JetBrains Mono ()
+   :  (= #00c073, = #ff4d4d)
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+
+/*  CSS   */
+:root {
+    --font:          'JetBrains Mono', 'Noto Sans KR', monospace;
+    --bg:            #0a0a0a;
+    --surface:       #1a1a1a;
+    --surface2:      #222222;
+    --border:        #222222;
+    --border2:       #2a2a2a;
+    --text:          #b0b0b0;
+    --text-bright:   #ffffff;
+    --text-muted:    #606060;
+    --text-dim:      #505050;
+    --green:         #00c073;
+    --amber:         #e6a817;
+    --red:           #ff4d4d;
+    --blue:          #4d9fff;
+    --purple:        #a78bfa;
+    --radius-sm:     4px;
+    --radius-md:     8px;
+}
+
+/*     */
+body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    max-width: 480px;
+    margin: 0 auto;
+}
+
+/*     */
+.navbar {
+    background-color: var(--bg) !important;
+    border-bottom: 1px solid var(--border);
+}
+
+.navbar-brand, .nav-link {
+    color: var(--text-bright) !important;
+}
+
+.navbar-toggler {
+    border-color: var(--text-bright) !important;
+}
+
+.navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255, 255, 255, 1%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") !important;
+}
+
+/*    ()  */
+.positive { color: var(--green); font-size: 13px; }
+.negative { color: var(--red);   font-size: 13px; }
+.neutral  { color: var(--text-muted); }
+
+/* dashboard.css     */
+.db-pos  { color: var(--green) !important; }
+.db-neg  { color: var(--red)   !important; }
+.db-warn { color: var(--amber) !important; }
+.db-neu  { color: var(--text)  !important; }
+
+/*     */
+.bottom-tabbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-width: 480px;
+    margin: 0 auto;
+    display: flex;
+    background-color: #111111;
+    border-top: 1px solid var(--border);
+    z-index: 1000;
+    height: 60px;
+}
+
+.tab-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 10px;
+    cursor: pointer;
+    padding: 8px 0;
+}
+
+.tab-btn.active { color: var(--green); }
+.tab-btn span   { margin-top: 2px; }
+
+/*    show/hide  */
+.tab-content        { display: none; }
+.tab-content.active { display: block; }
+
+/*     */
+.asset-card {
+    background-color: var(--surface);
+    border-radius: var(--radius-sm);
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+}
+
+.asset-card:active { background-color: var(--surface2); }
+
+/*     */
+.amount-large {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-bright);
+}
+
+.amount-sub {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+/*    */
+.section-heading {
+    padding: 16px 0 8px 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0;
+}
+
+.page-inner     { padding: 0; }
+.page-container { }
+
+/*    (components.py)  */
+.total-summary {
+    padding: 24px 0 16px 0;
+}
+
+.total-summary-pnl {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+}
+
+.total-summary-pnl-text {
+    font-size: 13px;
+    white-space: nowrap;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.total-summary-amount {
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--text-bright);
+}
+
+.total-summary-pnl-text { font-size: 15px; }
+
+.account-alias {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/*     */
+.btn-add {
+    background-color: var(--surface2);
+    color: var(--text-bright);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-md);
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+}
+
+.btn-danger-sm {
+    background-color: transparent;
+    color: var(--red);
+    border: none;
+    font-size: 13px;
+    padding: 0;
+}
+
+/*     */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-box {
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 24px;
+    width: 85%;
+    max-width: 360px;
+}
+
+.modal-title       { margin: 0; }
+
+.modal-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.modal-close-icon  { cursor: pointer; font-size: 20px; }
+
+.modal-content {
+    background: #1e1e1e !important;
+    color: #eee !important;
+}
+
+.modal-header  { border-bottom: 1px solid var(--border2) !important; }
+.modal-body    { padding: 16px !important; }
+
+.modal-body-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.modal-body-inner .btn-primary { width: 100%; padding: 10px; }
+
+.modal-body-inner input,
+.modal-body-inner .shiny-input-container {
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+.modal-body-inner .shiny-input-container input {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    background-color: var(--surface2) !important;
+    border: 1px solid #444 !important;
+    color: var(--text-bright) !important;
+    border-radius: 6px !important;
+}
+
+.modal-body-inner button { flex: 1; }
+
+.modal-btn-row .shiny-input-container { width: auto !important; flex: 1; }
+
+.modal-btn-row-half .btn-primary,
+.modal-btn-row-half .btn-secondary {
+    width: 50% !important;
+    padding: 10px;
+}
+
+.modal-date-label { font-size: 13px; color: #aaa; margin-bottom: 16px; }
+.modal-label      { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
+
+/*    */
+#screen-login .shiny-input-container { width: 100%; }

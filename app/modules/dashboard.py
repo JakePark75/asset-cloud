@@ -65,6 +65,8 @@ def _load_summary_data() -> dict:
             SELECT p.ticker, p.quantity, t.current_price, t.leverage, t.market
             FROM positions p
             LEFT JOIN tickers t ON p.ticker = t.ticker
+            LEFT JOIN accounts a ON p.account_id = a.id
+            WHERE a.is_watch = false
         """)
         raw_rows = cur.fetchall()
 
@@ -82,9 +84,6 @@ def _load_summary_data() -> dict:
         live_ndx100 = to_f(ndx_row[0]) if ndx_row else None
 
         today = datetime.date.today()
-        cur.execute("SELECT cash_flow FROM daily_summary WHERE date = %s", (today,))
-        today_cf_row = cur.fetchone()
-        today_cf = to_f(today_cf_row[0]) if today_cf_row else 0.0
 
     if not rows:
         return {}
@@ -113,10 +112,10 @@ def _load_summary_data() -> dict:
 
     asset_delta     = total_asset - prev_asset
     asset_delta_pct = (asset_delta / prev_asset) if prev_asset else 0.0
-    daily_profit    = calculate_daily_profit(total_asset, today_cf, prev_asset)
+    daily_profit    = calculate_daily_profit(total_asset, prev_asset)
 
     denom    = prev_asset
-    live_twr = prev_twr * ((total_asset - today_cf) / denom) if denom != 0 else prev_twr
+    live_twr = prev_twr * (total_asset / denom) if denom != 0 else prev_twr
     live_ndx = live_ndx100 if live_ndx100 else prev_ndx100
 
     cash_flows  = [(rows[0][0], -to_f(rows[0][1]))]
@@ -187,6 +186,8 @@ def _load_position_data() -> list[dict]:
             SELECT p.ticker, t.name, t.market, t.leverage, p.quantity, t.current_price
             FROM positions p
             LEFT JOIN tickers t ON p.ticker = t.ticker
+            LEFT JOIN accounts a ON p.account_id = a.id
+            WHERE a.is_watch = false
             ORDER BY p.ticker
         """)
         rows = cur.fetchall()

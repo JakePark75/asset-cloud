@@ -1,0 +1,85 @@
+/* 
+   HISTORY     
+   (history.py)
+ */
+
+/*      */
+.period-btn-group {
+    display: flex;
+    gap: 8px;
+    padding: 16px 0 8px 0;
+}
+
+.period-btn {
+    flex: 1;
+    background-color: var(--surface);
+    border: 1px solid var(--border2);
+    color: var(--text-muted);
+    border-radius: var(--radius-md);
+    padding: 8px 0;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.period-btn.active {
+    background-color: var(--green);
+    border-color: var(--green);
+    color: #000;
+    font-weight: 600;
+}
+
+/*     */
+.chart-section { margin-bottom: 8px; }
+
+.chart-title {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: 12px 0 4px 0;
+}
+
+/*     */
+.history-table-wrap {
+    margin-top: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.history-table thead th {
+    color: var(--text-muted);
+    font-weight: 500;
+    padding: 6px 3px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+    position: sticky;
+    top: 0;
+    background-color: var(--bg);
+    z-index: 1;
+}
+
+.history-table thead th:first-child { text-align: left; }
+
+.history-table tbody td {
+    padding: 6px 3px;
+    border-bottom: 1px solid #161616;
+    color: #cccccc;
+    vertical-align: middle;
+}
+
+.history-table tbody td:first-child {
+    color: var(--text-muted);
+    text-align: left;
+}
+
+.history-table tbody tr:active { background-color: var(--surface); }
+
+/*  period input  (Shiny  )  */
+#history-period                             { display: none !important; }
+#history-period + label                     { display: none !important; }
+.shiny-input-container:has(#history-period) { display: none !important; }

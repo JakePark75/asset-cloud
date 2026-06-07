@@ -11,6 +11,7 @@ def modal_add_account_ui(ns):
             ),
             ui.input_text(ns("new_account_name"), "계좌명", placeholder="예) 키움증권"),
             ui.input_text(ns("new_account_alias"), "별명 (선택)", placeholder="예) 키움"),
+            ui.input_checkbox(ns("new_account_is_watch"), "감시 계좌 (내 자산 아님)", value=False),
             ui.input_action_button(ns("btn_confirm_add"), "추가", class_="btn-add"),
             class_="modal-box",
             onclick="event.stopPropagation();",

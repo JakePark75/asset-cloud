@@ -4,6 +4,12 @@ from app.db import get_connection
 def fetch_accounts_summary():
     conn = get_connection()
     cur = conn.cursor()
+
+    # daily_summary 마지막 행 total_asset (어제 자산)
+    cur.execute("SELECT total_asset FROM daily_summary ORDER BY date DESC LIMIT 1")
+    row = cur.fetchone()
+    yesterday_total = float(row[0]) if row else 0.0
+
     cur.execute("""
         SELECT 
             id, name, alias,
@@ -26,26 +32,32 @@ def fetch_accounts_summary():
                     WHEN ticker NOT IN ('KRW', 'USD') THEN (quantity * current_price * (CASE WHEN market IN ('NAS', 'AMS', 'ARC') THEN (SELECT current_price FROM tickers WHERE ticker = 'USDKRW=X') ELSE 1 END)) * (change_pct / 100)
                     ELSE 0 
                 END
-            ), 0) as pnl
+            ), 0) as pnl,
+            is_watch
         FROM (
-            SELECT a.id, a.name, a.alias, p.ticker, p.quantity, pr.current_price, pr.change_pct, pr.market
+            SELECT a.id, a.name, a.alias, a.is_watch, p.ticker, p.quantity, pr.current_price, pr.change_pct, pr.market
             FROM accounts a
             LEFT JOIN positions p ON a.id = p.account_id
             LEFT JOIN tickers pr ON p.ticker = pr.ticker
         ) as sub
-        GROUP BY id, name, alias
+        GROUP BY id, name, alias, is_watch
         ORDER BY id
     """)
     rows = cur.fetchall()
     cur.close()
     conn.close()
-    return rows
+
+    # 반환 형식: (id, name, alias, total, cash, pnl, is_watch)
+    result = []
+    for r in rows:
+        result.append((r[0], r[1], r[2], float(r[3]), float(r[4]), float(r[5]), r[6]))
+    return result, yesterday_total
 
 def fetch_account_details(account_id):
     conn = get_connection()
     cur = conn.cursor()
     
-    cur.execute("SELECT name, alias FROM accounts WHERE id = %s", (account_id,))
+    cur.execute("SELECT name, alias, is_watch FROM accounts WHERE id = %s", (account_id,))
     acc = cur.fetchone()
     
     cur.execute("""

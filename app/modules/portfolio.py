@@ -19,18 +19,26 @@ def load_portfolio():
     usd_rate, usd_chg = get_usd_krw()
     usd_rate = usd_rate or 0
 
+    # 감시계좌 제외
     cur.execute("""
         SELECT p.ticker, SUM(p.quantity) as quantity,
             t.name, t.current_price, t.change_pct, t.market, t.leverage
         FROM positions p
         LEFT JOIN tickers t ON p.ticker = t.ticker
+        LEFT JOIN accounts a ON p.account_id = a.id
+        WHERE a.is_watch = false
         GROUP BY p.ticker, t.name, t.current_price, t.change_pct, t.market, t.leverage
     """)
     rows = cur.fetchall()
+
+    # daily_summary 마지막 행 (어제 자산)
+    cur.execute("SELECT total_asset FROM daily_summary ORDER BY date DESC LIMIT 1")
+    row = cur.fetchone()
+    yesterday_total = float(row[0]) if row else 0.0
+
     cur.close()
     conn.close()
-    return rows, usd_rate, usd_chg
-
+    return rows, usd_rate, usd_chg, yesterday_total
 
 @module.ui
 def portfolio_ui():
@@ -79,24 +87,19 @@ def portfolio_server(input, output, session):
     @render.ui
     def portfolio_content():
         price_signal.get()
-        rows, usd_rate, usd_chg = load_portfolio()
+        rows, usd_rate, usd_chg, yesterday_total = load_portfolio()
 
         total_asset = 0
-        total_pnl = 0
-        total_invested = 0
         for ticker, qty, name, price, chg_pct, market, leverage in rows:
             qty_f = float(qty or 0)
             price_f = float(price or 0)
-            chg_pct_f = float(chg_pct or 0)
             if ticker == "KRW": amount = qty_f
             elif ticker == "USD": amount = qty_f * usd_rate
             elif market in ("NAS", "AMS", "ARC"): amount = qty_f * price_f * usd_rate
             else: amount = qty_f * price_f
             total_asset += amount
-            if ticker not in ("KRW", "USD"):
-                prev = amount / (1 + chg_pct_f / 100) if chg_pct_f != -100 else 0
-                total_pnl += amount - prev
-                total_invested += prev
+
+        total_pnl = total_asset - yesterday_total
 
         def calc_amount(ticker, qty_f, price_f, market):
             if ticker == "KRW": return qty_f
@@ -109,8 +112,8 @@ def portfolio_server(input, output, session):
             key=lambda r: (1 if r[0] in ("KRW", "USD") else 0, -calc_amount(r[0], float(r[1] or 0), float(r[3] or 0), r[5]))
         )
 
-        pnl_pct = (total_pnl / total_invested * 100) if total_invested else 0
-
+        pnl_pct = (total_pnl / yesterday_total * 100) if yesterday_total else 0
+        
         summary = render_summary_header(
             label="포트폴리오",
             total_asset=total_asset,
@@ -129,10 +132,8 @@ def portfolio_server(input, output, session):
             ui.div(
                 summary,
                 ui.input_action_button("force_update", "↺", class_="force-update-btn"),
-                style="position:relative;",
-            ),
-            ui.div(
                 ui.div(*ticker_rows, class_="ticker-list"),
-                class_="page-inner"
+                class_="page-inner",
+                style="position:relative;",
             )
         )

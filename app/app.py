@@ -13,8 +13,11 @@ from app.auth import verify_login, create_token, verify_token
 
 app_ui = ui.page_fluid(
     ui.tags.meta(name="viewport", content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"),
-    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "style.css")),
+    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "base.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "dashboard.css")),
+    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "portfolio.css")),
+    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "accounts.css")),
+    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "history.css")),
     ui.tags.script(src="https://cdn.plot.ly/plotly-latest.min.js"),
     # 로그인 화면
     ui.div(

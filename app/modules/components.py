@@ -63,7 +63,7 @@ def render_summary_header(label: str, total_asset: float, pnl: float, pnl_pct: f
     if usd_rate is not None and usd_chg is not None:
         usd_css = "positive" if usd_chg >= 0 else "negative"
         usd_elem = ui.span(
-            ui.span("USD/KRW ", style="color:#888888;"),
+            ui.span("USD ", style="color:#888888;"),
             ui.span(f"{usd_rate:,.2f} ({fmt_pct(usd_chg)})", class_=usd_css),
             style="margin-left:auto; font-size:11px;",
         )

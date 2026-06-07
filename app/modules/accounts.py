@@ -47,29 +47,29 @@ def accounts_server(input, output, session):
         # 1. 메인 계좌 목록 화면 (acc_id가 없을 때)
         # ---------------------------------------------------------
         if acc_id is None:
-            accounts = fetch_accounts_summary()
+            accounts, yesterday_total = fetch_accounts_summary()
             
-            # 합계 계산
-            total_sum = sum(acc[3] for acc in accounts)
-            cash_sum = sum(acc[4] for acc in accounts)
-            pnl_sum = sum(acc[5] for acc in accounts)
-            invest_sum = total_sum - cash_sum
+            # 합계 계산 (감시계좌 제외)
+            total_sum = sum(acc[3] for acc in accounts if not acc[6])
+            cash_sum = sum(acc[4] for acc in accounts if not acc[6])
+            pnl_sum = total_sum - yesterday_total
             
-            pnl_pct_sum = (pnl_sum / invest_sum * 100) if invest_sum > 0 else 0
-
+            pnl_pct_sum = (pnl_sum / yesterday_total * 100) if yesterday_total > 0 else 0
+            
             return ui.div(
-                render_summary_header(
-                    label="총자산",
-                    total_asset=total_sum,
-                    pnl=pnl_sum,
-                    pnl_pct=pnl_pct_sum,
-                    usd_rate=usd_rate_val,
-                    usd_chg=usd_chg,
-                ),
-                # 계좌 리스트 (Inner Padding)
                 ui.div(
+                    render_summary_header(
+                        label="총자산",
+                        total_asset=total_sum,
+                        pnl=pnl_sum,
+                        pnl_pct=pnl_pct_sum,
+                        usd_rate=usd_rate_val,
+                        usd_chg=usd_chg,
+                    ),
                     ui.h4("계좌 목록", class_="section-heading"),
-                    ui.div(*[render_asset_card(acc, ns) for acc in accounts]) if accounts else ui.p("등록된 계좌가 없습니다.", style="color:#888; padding:16px 0;"),
+                    ui.div(*[render_asset_card(acc, ns) for acc in accounts if not acc[6]]) if any(not acc[6] for acc in accounts) else ui.p("등록된 계좌가 없습니다.", style="color:#888; padding:16px 0;"),
+                    ui.h4("감시 계좌", class_="section-heading") if any(acc[6] for acc in accounts) else ui.span(),
+                    ui.div(*[render_asset_card(acc, ns) for acc in accounts if acc[6]]) if any(acc[6] for acc in accounts) else ui.span(),
                     ui.input_action_button("btn_add_account", "+ 계좌 추가", class_="btn-add"),
                     class_="page-inner",
                 )
@@ -96,22 +96,20 @@ def accounts_server(input, output, session):
             acc_usd_rate, acc_usd_chg = get_usd_krw()
 
             return ui.div(
-                # 상단 타이틀바
                 ui.div(
                     ui.input_action_button("btn_back", "‹", class_="detail-titlebar-back"),
                     ui.span(f"{acc[0]}" + (f" ({acc[1]})" if acc[1] else ""), class_="detail-titlebar-title"),
                     class_="detail-titlebar",
                 ),
-                render_summary_header(
-                    label="계좌자산",
-                    total_asset=total_sum,
-                    pnl=pnl_sum,
-                    pnl_pct=pnl_pct_sum,
-                    usd_rate=acc_usd_rate,
-                    usd_chg=acc_usd_chg,
-                ),
-                # 종목 리스트 및 관리 버튼
                 ui.div(
+                    render_summary_header(
+                        label="계좌자산",
+                        total_asset=total_sum,
+                        pnl=pnl_sum,
+                        pnl_pct=pnl_pct_sum,
+                        usd_rate=acc_usd_rate,
+                        usd_chg=acc_usd_chg,
+                    ),
                     ui.div(*[
                         ui.div(
                             render_ticker_row(pos, usd_rate),
@@ -194,9 +192,10 @@ def accounts_server(input, output, session):
         if not name:
             return
         alias = input.new_account_alias().strip() or None
+        is_watch = input.new_account_is_watch() if hasattr(input, 'new_account_is_watch') else False
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("INSERT INTO accounts (name, alias) VALUES (%s, %s)", (name, alias))
+        cur.execute("INSERT INTO accounts (name, alias, is_watch) VALUES (%s, %s, %s)", (name, alias, is_watch))
         conn.commit()
         cur.close()
         conn.close()
