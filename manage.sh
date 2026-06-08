@@ -5,13 +5,11 @@ PROJECT_ROOT="/home/ubuntu/asset-cloud"
 
 # 압축 수행 함수
 compress_source() {
-    # TZ 환경변수를 통해 KST 시간으로 타임스탬프 생성
     local timestamp=$(TZ='Asia/Seoul' date +"%Y%m%d_%H%M")
     local filename="asset-cloud_$timestamp.tar.gz"
     local temp_path="/tmp/$filename"
     local dest_path="$PROJECT_ROOT/$filename"
 
-    # /tmp 찌꺼기 정리 (이전 중단된 압축 파일)
     local stale=$(ls /tmp/asset-cloud_*.tar.gz 2>/dev/null)
     if [ -n "$stale" ]; then
         echo "--- /tmp 찌꺼기 발견, 삭제 중 ---"
@@ -22,8 +20,24 @@ compress_source() {
     echo "--- 소스 전체 압축 중 (KST: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S')) ---"
     echo "--- 대상: $PROJECT_ROOT ---"
 
-    # 1. /tmp에 압축 파일 생성
-    sudo tar -czvf "$temp_path" -C "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
+    sudo tar -czvf "$temp_path" \
+        --exclude='.git' \
+        --exclude='__pycache__' \
+        --exclude='*.pyc' \
+        --exclude='*.pyo' \
+        --exclude='.pytest_cache' \
+        --exclude='.mypy_cache' \
+        --exclude='.ruff_cache' \
+        --exclude='node_modules' \
+        --exclude='.next' \
+        --exclude='dist' \
+        --exclude='build' \
+        --exclude='*.egg-info' \
+        --exclude='.venv' \
+        --exclude='venv' \
+        --exclude='*.log' \
+        --exclude='asset-cloud_*.tar.gz' \
+        -C "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
 
     if [ $? -ne 0 ]; then
         echo ""
@@ -32,10 +46,7 @@ compress_source() {
         return
     fi
 
-    # 2. 프로젝트 루트로 이동
     sudo mv "$temp_path" "$dest_path"
-
-    # 3. 소유권 변경
     sudo chown $USER:$USER "$dest_path"
 
     if [ $? -eq 0 ]; then
