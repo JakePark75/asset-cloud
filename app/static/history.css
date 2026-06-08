@@ -83,3 +83,13 @@
 #history-period                             { display: none !important; }
 #history-period + label                     { display: none !important; }
 .shiny-input-container:has(#history-period) { display: none !important; }
+/* 더보기 버튼 */
+.history-load-more {
+    text-align: center;
+    padding: 12px;
+    color: var(--text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    display: none;
+}
+.history-load-more:active { opacity: 0.6; }
