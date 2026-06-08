@@ -68,8 +68,8 @@ def render_ticker_row(pos, usd_rate):
         amount_str = fmt_krw(qty_f * usd_rate)
         qty_str = fmt_usd(qty_f)
         price_str = ""
-        chg_str = fmt_pct(chg_f)
-        chg_css = "positive" if chg_f >= 0 else "negative"
+        chg_str = ""
+        chg_css = ""
 
     else:
         rate = usd_rate if t_market in ('NAS', 'AMS', 'ARC') else 1

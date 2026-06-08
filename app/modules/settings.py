@@ -1,5 +1,6 @@
 from shiny import ui, render, module, reactive
 from app.db import get_connection, get_config, save_config
+from app.modules.components import fmt_change
 from scheduler.price_updater_common import get_market_status
 from datetime import datetime, time
 import subprocess
@@ -82,7 +83,7 @@ def settings_server(input, output, session):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT ticker, name, market, leverage, is_manual FROM tickers
+            SELECT ticker, name, market, leverage, is_manual, current_price, change_pct FROM tickers
             ORDER BY
                 is_manual DESC,
                 CASE WHEN market IN ('FX', 'INDEX', 'CRYPTO') THEN 1 ELSE 0 END,
@@ -98,7 +99,9 @@ def settings_server(input, output, session):
             return ui.p("등록된 티커가 없습니다.", style="color:#888; padding: 8px 0;")
 
         items = []
-        for ticker, name, market, leverage, is_manual in rows:
+        for ticker, name, market, leverage, is_manual, current_price, change_pct in rows:
+            currency = "USD" if market in ("NAS", "AMS", "ARC") else "KRW"
+            price_str, chg_str, chg_css = fmt_change(float(current_price or 0), float(change_pct or 0), currency=currency)
             status = get_market_status(market)
             if status == "open":
                 status_dot, status_text, status_class = "●", "Open", "status-open"
@@ -128,8 +131,14 @@ def settings_server(input, output, session):
                             "삭제",
                             class_="btn-danger-sm",
                             onclick=f"if(confirm('{ticker} 티커를 삭제할까요?')) Shiny.setInputValue('{session.ns('confirm_delete_ticker')}', '{ticker}', {{priority: 'event'}});"
-                        ) if is_manual else None,
-                        class_="ticker-row-btn"
+                        ) if is_manual else ui.div(),
+                        ui.div(
+                            ui.span(price_str, class_=chg_css, style="margin-right:4px;") if price_str else None,
+                            ui.span(chg_str, class_=chg_css),
+                            class_="ticker-change",
+                        ) if chg_str else ui.div(),
+                        class_="ticker-row-btn",
+                        style="display:flex; flex-direction:column; align-items:flex-end; gap:0;",
                     ),
                     class_="ticker-row",
                 )
