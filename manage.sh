@@ -1,6 +1,7 @@
 #!/bin/bash
 
 SERVICES=("myassets" "price_updater" "daily_inserter" "nginx")
+PROJECT_ROOT="/home/ubuntu/asset-cloud"
 
 # 압축 수행 함수
 compress_source() {
@@ -8,24 +9,41 @@ compress_source() {
     local timestamp=$(TZ='Asia/Seoul' date +"%Y%m%d_%H%M")
     local filename="asset-cloud_$timestamp.tar.gz"
     local temp_path="/tmp/$filename"
-    
+    local dest_path="$PROJECT_ROOT/$filename"
+
+    # /tmp 찌꺼기 정리 (이전 중단된 압축 파일)
+    local stale=$(ls /tmp/asset-cloud_*.tar.gz 2>/dev/null)
+    if [ -n "$stale" ]; then
+        echo "--- /tmp 찌꺼기 발견, 삭제 중 ---"
+        sudo rm -f /tmp/asset-cloud_*.tar.gz
+        echo "✅ 삭제 완료"
+    fi
+
     echo "--- 소스 전체 압축 중 (KST: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S')) ---"
-    
-    # 1. /tmp에 압축 파일을 생성 (압축 대상 폴더 밖이므로 에러 없음)
-    sudo tar -czvf "$temp_path" .
-    
-    # 2. 생성된 압축 파일을 현재 폴더로 이동
-    sudo mv "$temp_path" .
-    
-    # 3. 소유권 변경 (현재 유저로 변경하여 나중에 편집/삭제 용이하게 함)
-    sudo chown $USER:$USER "$filename"
-    
+    echo "--- 대상: $PROJECT_ROOT ---"
+
+    # 1. /tmp에 압축 파일 생성
+    sudo tar -czvf "$temp_path" -C "$(dirname "$PROJECT_ROOT")" "$(basename "$PROJECT_ROOT")"
+
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ 압축 실패 — 임시 파일 삭제"
+        sudo rm -f "$temp_path"
+        return
+    fi
+
+    # 2. 프로젝트 루트로 이동
+    sudo mv "$temp_path" "$dest_path"
+
+    # 3. 소유권 변경
+    sudo chown $USER:$USER "$dest_path"
+
     if [ $? -eq 0 ]; then
         echo ""
-        echo "✅ 압축 완료: $filename"
+        echo "✅ 압축 완료: $dest_path"
     else
         echo ""
-        echo "❌ 압축 실패"
+        echo "❌ 소유권 변경 실패"
     fi
 }
 

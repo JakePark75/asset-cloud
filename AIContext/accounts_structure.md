@@ -21,14 +21,15 @@ DB 조회 함수는 `accounts_DAL.py`로 분리됨.
 #### `fetch_accounts_summary()` (accounts_DAL.py)
 - 계좌 목록 + 총자산/현금/당일손익 집계
 - accounts LEFT JOIN positions LEFT JOIN tickers
-- 반환: `[(id, name, alias, total, cash, pnl), ...]`
+- 반환: `[(id, name, alias, total, cash, pnl, is_watch), ...]`
 - cash: KRW + USD×환율 원화 합산
 - pnl: 종목별 change_pct 기반, 미국주식 환율 반영
+- is_watch: True면 감시 계좌 (총자산 합계에서 제외)
 
 #### `fetch_account_details(account_id)` (accounts_DAL.py)
-- 계좌명/별명, 포지션 목록, USDKRW 환율 조회
+- 계좌명/별명/is_watch, 포지션 목록, USDKRW 환율 조회
 - 반환: `(acc, positions, usd_rate)`
-  - `acc`: `(name, alias)`
+  - `acc`: `(name, alias, is_watch)`
   - `positions`: `[(id, ticker, quantity, name, current_price, change_pct, market, leverage), ...]`
   - `usd_rate`: float (Decimal → float 변환 적용)
 - 정렬: 종목 먼저/현금 하단 → 시장별(KR→미국→CRYPTO→나머지) → 레버리지 내림차순 → 평가액 내림차순 → 티커 알파벳순
@@ -44,8 +45,9 @@ DB 조회 함수는 `accounts_DAL.py`로 분리됨.
 - `price_signal.get()` 호출로 시세 갱신 시 자동 재실행
 - `selected_account()`가 None이면 계좌 목록, 값 있으면 계좌 상세
 - **계좌 목록**: `fetch_accounts_summary()` → `render_asset_card()` 반복, onclick으로 `selected_id` input 세팅
-  - 카드 목록 상단: 전체 총자산/일간손익 요약 (total-summary), Python에서 accounts rows 합산
+  - 카드 목록 상단: 전체 총자산/일간손익 요약 (total-summary), **감시 계좌 제외**하고 합산
   - 일간손익 표시: ▲/▼ + 금액 + 수익률(%), 투자금(총자산-현금) 대비
+  - **일반 계좌 섹션** + **"감시 계좌" 섹션** 분리 표시 (감시 계좌 있을 때만 섹션 노출)
 - **계좌 상세**: `fetch_account_details()` → `render_ticker_row()` 반복, 현금/종목 분기 렌더
   - 상단 타이틀바: ‹ 아이콘(좌측, `btn_back`) + 계좌명(중앙), `detail-titlebar` 클래스
   - 타이틀바 아래: 해당 계좌 총자산/일간손익 요약 (`total-summary`), positions 루프 돌며 Python에서 합산
@@ -59,7 +61,7 @@ DB 조회 함수는 `accounts_DAL.py`로 분리됨.
 #### `modal_add_account`
 - `show_modal()` True일 때 렌더
 - `modal_add_account_ui(ns)` 호출 (accounts_modals.py)
-- input: `new_account_name`, `new_account_alias`
+- input: `new_account_name`, `new_account_alias`, `new_account_is_watch` (체크박스: "감시 계좌 (내 자산 아님)")
 - 닫기: `modal_close`
 
 #### `modal_add_position`
@@ -100,7 +102,7 @@ DB 조회 함수는 `accounts_DAL.py`로 분리됨.
 | `handle_card_click` | `input.selected_id` | `selected_account` 세팅 |
 | `open_modal` | `btn_add_account` | `show_modal = True` |
 | `close_modal` | `modal_close` | `show_modal = False` |
-| `add_account` | `btn_confirm_add` | accounts INSERT, 모달 닫기, refresh |
+| `add_account` | `btn_confirm_add` | accounts INSERT (name/alias/is_watch), 모달 닫기, refresh |
 | `go_back` | `btn_back` | `selected_account = None`, refresh |
 | `open_modal_position` | `btn_add_position` | `show_modal_position = True` |
 | `close_modal_position` | `modal_position_close` | `show_modal_position = False` |

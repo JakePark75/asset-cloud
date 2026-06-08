@@ -21,11 +21,13 @@
 | `kis_app_key` | KIS API 앱키 | |
 | `kis_app_secret` | KIS API 시크릿 | |
 | `db_password` | PostgreSQL 비밀번호 | |
-| `interval` | 시세 수집 주기 (분) | `5` |
-| `kr_holiday_api_key` | 한국 공휴일 API 키 | |
-| `us_holiday_api_key` | 미국 공휴일 API 키 | |
-| `retirement_date` | 은퇴 목표일 | `"2035-01-01"` |
-| `daily_insert_time` | 일간 누적 삽입 실행 시각 (HH:MM, KST) | `"07:30"` |
+| `interval` | 시세 수집 주기 (분). `0` = 웹소켓 실시간, `>0` = REST 폴링 | `1` |
+| `data_go_kr_key` | 한국 공휴일 API 키 (공공데이터포털) | |
+| `finnhub_api_key` | 미국 공휴일 API 키 (Finnhub) | |
+| `retirement_date` | 은퇴 목표일 (YYYYMMDD) | `"20351231"` |
+| `daily_insert_time` | 일간 누적 삽입 실행 시각 (HH:MM, KST) | `"07:10"` |
+| `login_id` | 앱 로그인 ID | |
+| `jwt_secret` | JWT 토큰 서명용 시크릿 | |
 
 ---
 

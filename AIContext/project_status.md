@@ -231,6 +231,7 @@
 | id | SERIAL PK | |
 | name | TEXT | 계좌이름 |
 | alias | TEXT | 계좌별명 |
+| is_watch | BOOLEAN | 감시 계좌 여부 (내 자산 아님, 총자산 합계 제외) |
 
 ### positions
 
@@ -329,6 +330,9 @@
 ### 구현 현황
 - 하단 탭바 네비게이션 (5개 탭)
 - 계좌 목록 화면: 카드형, 계좌 추가/삭제 (삭제 시 JS confirm)
+- 계좌 추가 모달에 "감시 계좌" 체크박스 추가 (`is_watch` 컬럼)
+- 계좌 목록에서 일반 계좌 / 감시 계좌 섹션 분리 표시
+- 총자산 합계 계산 시 감시 계좌 제외
 - 계좌 상세 화면: 종목/현금 목록, 종목 추가/수정/삭제, 현금 추가/수정/삭제 (삭제 시 JS confirm)
 - 평가액 계산 시 USD 종목 환율(USDKRW=X) 변환 적용
 - 종목 추가 시 tickers 미존재 종목은 자동 등록 (market/leverage 반영, is_manual=false)
@@ -384,4 +388,5 @@
 | ✅ 완료 | 미국주식 Yahoo로 대체 (daily_snapshot.py) |
 | ✅ 완료 | daily_inserter.py threading.Timer 구조로 개편 + 누락 날짜 자동추가 로직 추가 |
 | ✅ 완료 | 대시보드 화면 (Bloomberg 스타일 전면 재작성 — SVG 라인차트/도넛, Exposure 통합카드, JetBrains Mono 폰트, dashboard.css 분리) |
+| ✅ 완료 | 계좌 목록 화면 감시 계좌 기능 추가 (is_watch 컬럼, 섹션 분리, 총자산 합계 제외) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |
