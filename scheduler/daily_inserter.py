@@ -23,7 +23,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from app.db import get_db, get_config
 from app.utils.daily_snapshot import get_daily_snapshot
-from scheduler.price_updater import get_market_status
+from scheduler.price_updater_common import get_market_status
 import app.utils.snap as snap
 
 # ---------------------------------------------------------------------------
