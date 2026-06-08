@@ -367,7 +367,9 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
                 mkt_str = (mkt or "").upper()
                 if t == "KRW":
                     acc_total += qty_f
-                elif t == "USD" or mkt_str in ("NAS", "AMS", "ARC"):
+                elif t == "USD":
+                    acc_total += qty_f * usd_krw
+                elif mkt_str in ("NAS", "AMS", "ARC"):
                     acc_total += qty_f * price_f * usd_krw
                 else:
                     acc_total += qty_f * price_f

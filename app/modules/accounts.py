@@ -47,11 +47,12 @@ def accounts_server(input, output, session):
         # 1. 메인 계좌 목록 화면 (acc_id가 없을 때)
         # ---------------------------------------------------------
         if acc_id is None:
-            accounts, yesterday_total = fetch_accounts_summary()
+            accounts = fetch_accounts_summary()
             
             # 합계 계산 (감시계좌 제외)
-            total_sum = sum(acc[3] for acc in accounts if not acc[6])
-            cash_sum = sum(acc[4] for acc in accounts if not acc[6])
+            total_sum = sum(acc[3] for acc in accounts if not acc[5])
+            cash_sum = sum(acc[4] for acc in accounts if not acc[5])
+            yesterday_total = sum(acc[6] for acc in accounts if not acc[5])
             pnl_sum = total_sum - yesterday_total
             
             pnl_pct_sum = (pnl_sum / yesterday_total * 100) if yesterday_total > 0 else 0
@@ -67,9 +68,9 @@ def accounts_server(input, output, session):
                         usd_chg=usd_chg,
                     ),
                     ui.h4("계좌 목록", class_="section-heading"),
-                    ui.div(*[render_asset_card(acc, ns) for acc in accounts if not acc[6]]) if any(not acc[6] for acc in accounts) else ui.p("등록된 계좌가 없습니다.", style="color:#888; padding:16px 0;"),
-                    ui.h4("감시 계좌", class_="section-heading") if any(acc[6] for acc in accounts) else ui.span(),
-                    ui.div(*[render_asset_card(acc, ns) for acc in accounts if acc[6]]) if any(acc[6] for acc in accounts) else ui.span(),
+                    ui.div(*[render_asset_card(acc, ns) for acc in accounts if not acc[5]]) if any(not acc[5] for acc in accounts) else ui.p("등록된 계좌가 없습니다.", style="color:#888; padding:16px 0;"),
+                    ui.h4("감시 계좌", class_="section-heading") if any(acc[5] for acc in accounts) else ui.span(),
+                    ui.div(*[render_asset_card(acc, ns) for acc in accounts if acc[5]]) if any(acc[5] for acc in accounts) else ui.span(),
                     ui.input_action_button("btn_add_account", "+ 계좌 추가", class_="btn-add"),
                     class_="page-inner",
                 )
@@ -80,19 +81,18 @@ def accounts_server(input, output, session):
         # ---------------------------------------------------------
         else:
             acc, positions, usd_rate = fetch_account_details(acc_id)
-            
+            prev_total = float(acc[3])  # accounts.prev_total_asset
+
             # 상세 계산 로직
             total_sum = 0
-            pnl_sum = 0
             for pos in positions:
                 ticker, qty, price, t_market = pos[1], float(pos[2] or 0), float(pos[4] or 0), pos[6]
                 rate = usd_rate if (t_market in ('NAS', 'AMS', 'ARC') or ticker == "USD") else 1
                 amt = qty * (price if ticker not in ('KRW', 'USD') else 1) * rate
                 total_sum += amt
-                if ticker not in ('KRW', 'USD'):
-                    pnl_sum += amt * float(pos[5] or 0) / 100
 
-            pnl_pct_sum = (pnl_sum / total_sum * 100) if total_sum > 0 else 0
+            pnl_sum = total_sum - prev_total
+            pnl_pct_sum = (pnl_sum / prev_total * 100) if prev_total > 0 else 0
             acc_usd_rate, acc_usd_chg = get_usd_krw()
 
             return ui.div(

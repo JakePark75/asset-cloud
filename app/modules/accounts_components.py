@@ -5,9 +5,9 @@ from scheduler.price_updater_common import get_market_status
 
 def render_asset_card(acc, ns):
     """메인 화면의 각 계좌 카드 UI"""
-    a_id, name, alias, total, cash, pnl, is_watch = acc
-    invest = total - cash
-    pnl_pct = (pnl / invest * 100) if invest > 0 else 0
+    a_id, name, alias, total, cash, is_watch, prev_total = acc
+    pnl = total - prev_total
+    pnl_pct = (pnl / prev_total * 100) if prev_total > 0 else 0
     pnl_text, pnl_class = fmt_pnl(pnl, pnl_pct)
 
     return ui.div(
