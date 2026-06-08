@@ -219,15 +219,15 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
 # DB 헬퍼
 # ---------------------------------------------------------------------------
 def _fetch_positions() -> list:
-    """(ticker, quantity, leverage, market) 목록"""
+    """(ticker, quantity, leverage, market, account_id, is_watch) 목록"""
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT p.ticker, p.quantity, t.leverage, t.market
+                SELECT p.ticker, p.quantity, t.leverage, t.market,
+                       p.account_id, a.is_watch
                 FROM positions p
                 LEFT JOIN tickers t ON p.ticker = t.ticker
                 LEFT JOIN accounts a ON p.account_id = a.id
-                WHERE a.is_watch = false
             """)
             return cur.fetchall()
 
@@ -245,7 +245,7 @@ def _fetch_prev_summary(date: datetime.date) -> tuple | None:
 # ---------------------------------------------------------------------------
 # 공개 API
 # ---------------------------------------------------------------------------
-def get_daily_snapshot(target_date: datetime.date) -> dict:
+def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = False) -> dict:
     """
     target_date 기준 가장 최근 종가로 daily_summary 1행분 데이터를 계산한다.
     cash_flow / cash_flow_note 는 포함하지 않는다.
@@ -266,8 +266,10 @@ def get_daily_snapshot(target_date: datetime.date) -> dict:
 
     # 포지션별 시세 조회
     position_rows = _fetch_positions()
-    db_rows = []
-    for ticker, qty, leverage, market in position_rows:
+    db_rows = []          # is_watch=false 전체 (total_asset 계산용)
+    account_rows = {}     # {account_id: [(ticker, qty, price, leverage, market), ...]}
+
+    for ticker, qty, leverage, market, account_id, is_watch in position_rows:
         market_str = (market or "KR").upper()
 
         if ticker == "KRW":
@@ -284,7 +286,14 @@ def get_daily_snapshot(target_date: datetime.date) -> dict:
             print(f"⚠️ [{ticker}] 알 수 없는 market: {market_str} — 0 처리")
             price = 0.0
 
-        db_rows.append((ticker, qty, price, leverage, market))
+        # is_watch=false만 전체 합산용에 추가
+        if not is_watch:
+            db_rows.append((ticker, qty, price, leverage, market))
+
+        # 계좌별은 전체 추가
+        if account_id not in account_rows:
+            account_rows[account_id] = []
+        account_rows[account_id].append((ticker, qty, price, leverage, market))
 
     ratios = calculate_exposure_and_ratios(db_rows, usd_krw)
     total_asset = ratios["total_asset"]
@@ -328,6 +337,23 @@ def get_daily_snapshot(target_date: datetime.date) -> dict:
         # inserter가 INSERT 후 cash_flow 가 입력되면 history 화면의 twr 재계산 로직이 보정
         twr_asset = prev_twr * ((total_asset / prev_total) if prev_total else 1.0)
 
+    # 계좌별 총자산 계산 (감시 계좌 포함) — 필요할 때만 수행
+    account_totals = {}
+    if calc_account_totals:
+        for acc_id, rows in account_rows.items():
+            acc_total = 0.0
+            for t, q, p, lev, mkt in rows:
+                qty_f   = to_f(q)
+                price_f = to_f(p)
+                mkt_str = (mkt or "").upper()
+                if t == "KRW":
+                    acc_total += qty_f
+                elif t == "USD" or mkt_str in ("NAS", "AMS", "ARC"):
+                    acc_total += qty_f * price_f * usd_krw
+                else:
+                    acc_total += qty_f * price_f
+            account_totals[acc_id] = acc_total
+
     return {
         "date":        target_date,
         "total_asset": total_asset,
@@ -339,4 +365,5 @@ def get_daily_snapshot(target_date: datetime.date) -> dict:
         "x2_ratio":    ratios["x2_ratio"],
         "x3_ratio":    ratios["x3_ratio"],
         "twr_asset":   twr_asset,
+        "account_totals": account_totals,
     }

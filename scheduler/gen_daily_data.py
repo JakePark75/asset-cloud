@@ -15,6 +15,16 @@ sys.path.insert(0, PROJECT_ROOT)
 from app.db import get_db
 from app.utils.daily_snapshot import get_daily_snapshot, _KR_CACHE, _US_CACHE, _YAHOO_CACHE, _get_token
 
+def _update_account_prev_totals(account_totals: dict) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for acc_id, total in account_totals.items():
+                cur.execute(
+                    "UPDATE accounts SET prev_total_asset = %s WHERE id = %s",
+                    (int(total), acc_id)
+                )
+        conn.commit()
+
 def upsert(snapshot: dict) -> None:
     sql = """
         INSERT INTO daily_summary
@@ -72,17 +82,35 @@ def main():
     days = date_range(start, end)
     print(f"📅 {start} ~ {end} | 총 {len(days)}일 채우기 시작...\n")
 
+    # daily_summary 최신 날짜 조회 (계좌별 업데이트 기준)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(date) FROM daily_summary")
+            row = cur.fetchone()
+            max_date = row[0] if row and row[0] else None
+
     # KIS 토큰 1회만 발급
     _get_token()
 
+    need_account = max_date is None or end >= max_date
+
+    last_snapshot = None
     for target_date in days:
         print(f"  ⏳ {target_date} 계산 중...", end=" ", flush=True)
         try:
-            snapshot = get_daily_snapshot(target_date)
+            is_last = (target_date == end)
+            snapshot = get_daily_snapshot(target_date, calc_account_totals=(is_last and need_account))
             upsert(snapshot)
             print(f"✅ 총자산: {snapshot['total_asset']:,.0f} 원  |  환율: {snapshot['usd_krw']:,.2f}")
+            if is_last:
+                last_snapshot = snapshot
         except Exception as e:
             print(f"❌ 오류: {e}")
+
+    # 마지막 날이 daily_summary 최신 날짜 이상이면 계좌별 업데이트
+    if last_snapshot and need_account:
+        _update_account_prev_totals(last_snapshot["account_totals"])
+        print(f"\n✅ 계좌별 prev_total_asset 업데이트 완료 ({end})")
 
     print(f"\n🎉 완료!")
 

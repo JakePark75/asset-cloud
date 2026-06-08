@@ -27,6 +27,19 @@ from scheduler.price_updater import get_market_status
 import app.utils.snap as snap
 
 # ---------------------------------------------------------------------------
+# 계좌별 prev_total_asset 업데이트
+# ---------------------------------------------------------------------------
+def _update_account_prev_totals(account_totals: dict) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for acc_id, total in account_totals.items():
+                cur.execute(
+                    "UPDATE accounts SET prev_total_asset = %s WHERE id = %s",
+                    (int(total), acc_id)
+                )
+        conn.commit()
+
+# ---------------------------------------------------------------------------
 # DB UPSERT
 # ---------------------------------------------------------------------------
 def _upsert(snapshot: dict) -> None:
@@ -142,6 +155,18 @@ def _backfill(start_date: datetime.date, end_date: datetime.date) -> None:
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"✅ 누락 스냅샷 보정 완료", flush=True)
 
+    # 보정 마지막 날짜 기준 계좌별 prev_total_asset 업데이트
+    try:
+        snapshot = get_daily_snapshot(end_date, calc_account_totals=True)
+        _update_account_prev_totals(snapshot["account_totals"])
+        now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+              f"✅ 계좌별 prev_total_asset 업데이트 완료 ({end_date})", flush=True)
+    except Exception as e:
+        now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+              f"❌ 계좌별 prev_total_asset 업데이트 실패: {e}", flush=True)
+
 # ---------------------------------------------------------------------------
 # 타이머 스케줄링
 # ---------------------------------------------------------------------------
@@ -204,8 +229,9 @@ def _on_trigger() -> None:
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
               f"⏳ {yesterday} 스냅샷 계산 시작...", flush=True)
         try:
-            snapshot = get_daily_snapshot(yesterday)
+            snapshot = get_daily_snapshot(yesterday, calc_account_totals=True)
             _upsert(snapshot)
+            _update_account_prev_totals(snapshot["account_totals"])
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"✅ {yesterday} INSERT 완료 "
                   f"| 총자산: {snapshot['total_asset']:,.0f} 원", flush=True)
