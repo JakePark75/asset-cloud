@@ -1,9 +1,107 @@
 import json
+import datetime
 from shiny import ui, reactive, module, render
 from app.price_signal import price_signal
 from app.db import get_db
+from app.utils.metrics import calculate_exposure_and_ratios, to_f
 from .history_DAL import load_history, save_cash_flow
 from .history_charts import make_chart_asset, make_chart_twr
+
+
+# ── Today row 계산 + Redis 저장 ───────────────────────────────────────────────
+
+def _calc_and_store_today_row():
+    """
+    tickers/positions 현재가로 오늘치 일간실적 row를 계산해 Redis에 저장.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        from app.redis_client import get_redis
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            # 포지션 + 현재가 (is_watch=false 계좌만)
+            cur.execute("""
+                SELECT p.ticker, p.quantity, t.current_price, t.leverage, t.market
+                FROM positions p
+                LEFT JOIN tickers t ON p.ticker = t.ticker
+                LEFT JOIN accounts a ON p.account_id = a.id
+                WHERE (a.is_watch = false OR a.is_watch IS NULL)
+            """)
+            position_rows = cur.fetchall()
+
+            # usd_krw, ndx100
+            cur.execute("""
+                SELECT ticker, current_price FROM tickers
+                WHERE ticker IN ('USDKRW=X', '^NDX')
+            """)
+            price_map = {row[0]: to_f(row[1]) for row in cur.fetchall()}
+
+            # 전일 (total_asset, twr_asset)
+            cur.execute("""
+                SELECT total_asset, twr_asset FROM daily_summary
+                ORDER BY date DESC LIMIT 1
+            """)
+            prev = cur.fetchone()
+            cur.close()
+
+        usd_krw = price_map.get("USDKRW=X") or 1350.0
+        ndx100  = price_map.get("^NDX") or 0.0
+
+        # KRW/USD cash price 보정
+        db_rows = []
+        for ticker, qty, price, leverage, market in position_rows:
+            if ticker == "KRW":
+                p = 1.0
+            elif ticker == "USD":
+                p = usd_krw
+            else:
+                p = to_f(price)
+            db_rows.append((ticker, qty, p, leverage, market))
+
+        ratios = calculate_exposure_and_ratios(db_rows, usd_krw)
+        total_asset = ratios["total_asset"]
+
+        # Redis에서 오늘 입출금 읽기
+        r = get_redis()
+        cash_flow = 0
+        cash_flow_note = None
+        if r:
+            try:
+                cash_flow = int(r.get("today_cash_flow") or 0)
+                cash_flow_note = r.get("today_cash_flow_note")
+            except Exception:
+                pass
+
+        # twr_asset 계산
+        if prev is None:
+            twr_asset = total_asset
+        else:
+            prev_total = to_f(prev[0])
+            prev_twr   = to_f(prev[1])
+            denom = prev_total
+            twr_asset = prev_twr * ((total_asset - cash_flow) / denom) if denom else prev_twr
+
+        today_row = {
+            "date":           str(datetime.date.today()),
+            "total_asset":    total_asset,
+            "twr_asset":      twr_asset,
+            "ndx100":         ndx100,
+            "cash_flow":      cash_flow,
+            "cash_flow_note": cash_flow_note,
+            "exposure":       ratios["exposure"],
+            "cash_ratio":     ratios["cash_ratio"],
+            "x1_ratio":       ratios["x1_ratio"],
+            "x2_ratio":       ratios["x2_ratio"],
+            "x3_ratio":       ratios["x3_ratio"],
+            "usd_krw":        usd_krw,
+        }
+
+        if r:
+            r.set("today_row", json.dumps(today_row))
+
+    except Exception as e:
+        print(f"[history] today_row 계산 실패 (무시): {e}")
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -224,9 +322,13 @@ def history_ui():
 @module.server
 def history_server(input, output, session):
 
+    today_cf_trigger = reactive.value(0)  # 오늘 입출금 저장 시 강제 갱신용
+
     @reactive.calc
     def history_data():
         price_signal.get()
+        today_cf_trigger.get()
+        _calc_and_store_today_row()
         return load_history()
 
     @render.ui
@@ -283,13 +385,30 @@ def history_server(input, output, session):
         date_str = input.selected_date()
         if not date_str:
             return
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT cash_flow, cash_flow_note FROM daily_summary WHERE date = %s", (date_str,))
-            row = cur.fetchone()
-            cur.close()
-        cf = int(row[0]) if row and row[0] else 0
-        note = row[1] if row and row[1] else ""
+
+        today_str = str(datetime.date.today())
+        is_today = (date_str == today_str)
+
+        if is_today:
+            # 오늘 날짜 → Redis에서 읽기
+            cf, note = 0, ""
+            try:
+                from app.redis_client import get_redis
+                r = get_redis()
+                if r:
+                    cf   = int(r.get("today_cash_flow") or 0)
+                    note = r.get("today_cash_flow_note") or ""
+            except Exception:
+                pass
+        else:
+            # 과거 날짜 → DB에서 읽기
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT cash_flow, cash_flow_note FROM daily_summary WHERE date = %s", (date_str,))
+                row = cur.fetchone()
+                cur.close()
+            cf   = int(row[0]) if row and row[0] else 0
+            note = row[1] if row and row[1] else ""
 
         m = ui.modal(
             ui.div(
@@ -316,8 +435,25 @@ def history_server(input, output, session):
     @reactive.event(input.edit_save)
     def _save_cash_flow():
         date_str = input.selected_date()
-        cf = input.edit_cf() or 0
+        cf   = input.edit_cf() or 0
         note = input.edit_note() or ""
-        save_cash_flow(date_str, cf, note)
+
+        today_str = str(datetime.date.today())
+        if date_str == today_str:
+            # 오늘 날짜 → Redis에만 저장 + today_row 재계산
+            try:
+                from app.redis_client import get_redis
+                r = get_redis()
+                if r:
+                    r.set("today_cash_flow", int(cf))
+                    r.set("today_cash_flow_note", note)
+            except Exception as e:
+                print(f"[history] today_cash_flow Redis 저장 실패: {e}")
+            _calc_and_store_today_row()
+            today_cf_trigger.set(today_cf_trigger.get() + 1)
+        else:
+            # 과거 날짜 → DB에 저장 (기존 로직)
+            save_cash_flow(date_str, cf, note)
+
         ui.modal_remove()
         ui.notification_show("저장됐습니다.", type="message", duration=2)

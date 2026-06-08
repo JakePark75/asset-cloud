@@ -43,6 +43,18 @@ def _update_account_prev_totals(account_totals: dict) -> None:
 # DB UPSERT
 # ---------------------------------------------------------------------------
 def _upsert(snapshot: dict) -> None:
+    # Redis에서 오늘 입출금 읽기 — 실패해도 0으로 진행
+    cash_flow = 0
+    cash_flow_note = None
+    try:
+        from app.redis_client import get_redis
+        r = get_redis()
+        if r:
+            cash_flow      = int(r.get("today_cash_flow") or 0)
+            cash_flow_note = r.get("today_cash_flow_note")
+    except Exception as e:
+        print(f"[daily_inserter] Redis cash_flow 읽기 실패 (0으로 진행): {e}")
+
     sql = """
         INSERT INTO daily_summary
             (date, total_asset, usd_krw, ndx100,
@@ -51,7 +63,7 @@ def _upsert(snapshot: dict) -> None:
         VALUES
             (%(date)s, %(total_asset)s, %(usd_krw)s, %(ndx100)s,
              %(exposure)s, %(cash_ratio)s, %(x1_ratio)s, %(x2_ratio)s, %(x3_ratio)s,
-             %(twr_asset)s, 0, NULL)
+             %(twr_asset)s, %(cash_flow)s, %(cash_flow_note)s)
         ON CONFLICT (date) DO UPDATE SET
             total_asset = EXCLUDED.total_asset,
             usd_krw     = EXCLUDED.usd_krw,
@@ -64,10 +76,21 @@ def _upsert(snapshot: dict) -> None:
             twr_asset   = EXCLUDED.twr_asset
         -- cash_flow / cash_flow_note 는 사용자 입력값이므로 덮어쓰지 않는다
     """
+    snapshot_with_cf = {**snapshot, "cash_flow": cash_flow, "cash_flow_note": cash_flow_note}
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, snapshot)
+            cur.execute(sql, snapshot_with_cf)
         conn.commit()
+
+    # INSERT 완료 후 Redis cash_flow 리셋
+    try:
+        from app.redis_client import get_redis
+        r = get_redis()
+        if r:
+            r.set("today_cash_flow", 0)
+            r.delete("today_cash_flow_note")
+    except Exception as e:
+        print(f"[daily_inserter] Redis cash_flow 리셋 실패 (무시): {e}")
 
 # ---------------------------------------------------------------------------
 # DB 헬퍼

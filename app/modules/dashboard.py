@@ -114,12 +114,24 @@ def _load_summary_data() -> dict:
     asset_delta_pct = (asset_delta / prev_asset) if prev_asset else 0.0
     daily_profit    = calculate_daily_profit(total_asset, prev_asset)
 
+    # 오늘 입출금 — Redis에서 읽기 (실패 시 0으로 진행)
+    today_cash_flow = 0
+    try:
+        from app.redis_client import get_redis
+        r = get_redis()
+        if r:
+            today_cash_flow = int(r.get("today_cash_flow") or 0)
+    except Exception:
+        pass
+
     denom    = prev_asset
-    live_twr = prev_twr * (total_asset / denom) if denom != 0 else prev_twr
+    live_twr = prev_twr * ((total_asset - today_cash_flow) / denom) if denom != 0 else prev_twr
     live_ndx = live_ndx100 if live_ndx100 else prev_ndx100
 
     cash_flows  = [(rows[0][0], -to_f(rows[0][1]))]
     cash_flows += [(r[0], -to_f(r[2])) for r in rows[1:] if to_f(r[2]) != 0]
+    if today_cash_flow != 0:
+        cash_flows.append((today, -today_cash_flow))
     cash_flows.append((today, total_asset))
 
     annual_irr   = calculate_xirr(cash_flows)

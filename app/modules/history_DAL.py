@@ -1,3 +1,5 @@
+import json
+import datetime
 from app.db import get_db
 
 
@@ -12,6 +14,36 @@ def load_history():
         """)
         rows = cur.fetchall()
         cur.close()
+
+    # Redis today row 붙이기 — 실패해도 기존 rows 그대로 반환
+    try:
+        from app.redis_client import get_redis
+        r = get_redis()
+        if r:
+            raw = r.get("today_row")
+            if raw:
+                t = json.loads(raw)
+                today = datetime.date.today()
+                # DB 마지막 날짜가 오늘이면 중복이므로 스킵
+                if not rows or rows[-1][0] < today:
+                    today_row = (
+                        today,
+                        t.get("total_asset"),
+                        t.get("twr_asset"),
+                        t.get("ndx100"),
+                        t.get("cash_flow", 0),
+                        t.get("cash_flow_note"),
+                        t.get("exposure"),
+                        t.get("cash_ratio"),
+                        t.get("x1_ratio"),
+                        t.get("x2_ratio"),
+                        t.get("x3_ratio"),
+                        t.get("usd_krw"),
+                    )
+                    rows = list(rows) + [today_row]
+    except Exception as e:
+        print(f"[history_DAL] Redis today_row 조회 실패 (무시): {e}")
+
     return rows
 
 def calc_twr_pct(rows):
