@@ -161,8 +161,10 @@ def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float
     
     if ticker not in _YAHOO_CACHE:
         try:
-            start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d")
-            end_dt = datetime.datetime.strptime(_GLOBAL_END_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d")
+            # [수정] Naive 객체에 명확한 UTC 타임존 정보를 강제 주입하여 실행 환경(KST/UTC)에 따른 타임스탬프 틀어짐 원천 차단
+            start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d").replace(tzinfo=datetime.timezone.utc)
+            end_dt = datetime.datetime.strptime(_GLOBAL_END_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d").replace(tzinfo=datetime.timezone.utc)
+            
             start_ts = int(start_dt.timestamp()) - (86400 * 10)
             end_ts = int(end_dt.timestamp()) + (86400 * 10)
             
@@ -170,7 +172,6 @@ def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float
             res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False).json()
             result = res.get("chart", {}).get("result")
             
-            # 딕셔너리 대신 타임스탬프와 종가의 튜플 리스트로 캐싱
             cache_list = []
             if result and result[0].get("indicators", {}).get("quote"):
                 ts_list = result[0].get("timestamp", [])
@@ -183,11 +184,16 @@ def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float
             print(f"⚠️ [{ticker}] 지수/환율 조회 실패: {e}")
             _YAHOO_CACHE[ticker] = []
 
-    # 캐시된 리스트를 가져옴
     cache_list = _YAHOO_CACHE.get(ticker, [])
     
     target_str = target_date.strftime("%Y-%m-%d")
-    matched = [(ts, c) for ts, c in cache_list if datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d") <= target_str]
+    
+    # [수정] 리스트 컴프리헨션 내부의 fromtimestamp에 tz=datetime.timezone.utc를 명시하여 야후 날짜 경계선 뒤틀림 완벽 방지
+    matched = [
+        (ts, c) for ts, c in cache_list 
+        if datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime("%Y-%m-%d") <= target_str
+    ]
+    
     if matched:
         return matched[-1][1]
     return 0.0
@@ -199,7 +205,7 @@ def date_range(start: datetime.date, end: datetime.date) -> list:
     days = []
     cur = start
     while cur <= end:
-        if cur.weekday() < 5:
+        if cur.weekday() < 7:
             days.append(cur)
         cur += datetime.timedelta(days=1)
     return days

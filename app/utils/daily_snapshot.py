@@ -173,13 +173,22 @@ def _get_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> f
 # ---------------------------------------------------------------------------
 # Yahoo Finance 과거 종가 (FX/INDEX/CRYPTO, fallback: 가장 최근 종가)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Yahoo Finance 과거 종가 (FX/INDEX/CRYPTO, fallback: 가장 최근 종가)
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Yahoo Finance 과거 종가 (FX/INDEX/CRYPTO, fallback: 가장 최근 종가)
+# ---------------------------------------------------------------------------
 def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
+    from datetime import datetime as dt_cls, timezone, timedelta
+
     if ticker not in _YAHOO_CACHE:
         try:
-            end_dt = target_date
-            start_dt = end_dt - datetime.timedelta(days=10)
-            start_ts = calendar.timegm(start_dt.timetuple())
-            end_ts   = calendar.timegm(end_dt.timetuple()) + 86400 * 5
+            end_dt = dt_cls(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
+            start_dt = end_dt - timedelta(days=15)
+
+            start_ts = int(start_dt.timestamp())
+            end_ts   = int(end_dt.timestamp()) + 86400 * 5
 
             url = (
                 f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
@@ -197,21 +206,31 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
                 for ts, c in zip(ts_list, closes):
                     if c is not None:
                         cache_list.append((ts, float(c)))
+                        
+            cache_list.sort(key=lambda x: x[0])
             _YAHOO_CACHE[ticker] = cache_list
         except Exception as e:
             print(f"⚠️ [{ticker}] Yahoo 시세 조회 실패: {e}")
             _YAHOO_CACHE[ticker] = []
 
     cache_list = _YAHOO_CACHE[ticker]
-    target_ts  = calendar.timegm(target_date.timetuple())
-
-    # target_date 이전 가장 최근값 반환 (로컬 타임 기준 비교)
     target_str = target_date.strftime("%Y-%m-%d")
-    matched = [(ts, c) for ts, c in cache_list if datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d") <= target_str]
+
+    matched = []
+    for ts, c in cache_list:
+        dt_utc = dt_cls.fromtimestamp(ts, tz=timezone.utc)
+        dt_utc_str = dt_utc.strftime("%Y-%m-%d")
+        
+        if dt_utc_str <= target_str:
+            # 로그 출력을 위해 날짜와 시각 문자열을 모두 보관
+            dt_full_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+            matched.append((dt_utc_str, dt_full_str, c))
+
     if matched:
-        matched_date = datetime.datetime.fromtimestamp(matched[-1][0]).strftime("%Y-%m-%d")
-        print(f"  [{ticker}] Yahoo → {matched_date} 가격: {matched[-1][1]}")
-        return matched[-1][1]
+        # 로그에 [YYYY-MM-DD HH:MM:SS UTC] 형태로 상세 출력하도록 변경
+        print(f"  [{ticker}] Yahoo(UTC 매칭) → {matched[-1][1]} UTC | 가격: {matched[-1][2]}")
+        return matched[-1][2]
+        
     print(f"  [{ticker}] Yahoo → 매칭 없음")
     return 0.0
 

@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from logging.handlers import RotatingFileHandler
 
 import psycopg2
@@ -248,20 +248,32 @@ def get_access_token():
         log.info("KIS 토큰 발급 완료")
         return access_token
 
-
 # ---------------------------------------------------------------------------
 # Yahoo Finance 시세 (FX / INDEX / CRYPTO 공통)
 # ---------------------------------------------------------------------------
 def get_yahoo_price(ticker):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-    res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False).json()
-    meta = res["chart"]["result"][0]["meta"]
-    price = float(meta.get("regularMarketPrice", 0))
-    prev_close = float(meta.get("previousClose", 0) or meta.get("chartPreviousClose", 0))
-    change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
-    data_time = datetime.fromtimestamp(meta.get("regularMarketTime", 0))
-    return price, change_pct, data_time
-
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, verify=False).json()
+        
+        # 야후 응답 결과 데이터가 비어있는지 안전 검사
+        result = res.get("chart", {}).get("result")
+        if not result or not result[0]:
+            log.warning(f"⚠️ [{ticker}] 야후 파이낸스에 해당 티커 데이터가 존재하지 않습니다.")
+            return 0.0, 0.0, datetime.now(timezone.utc)
+            
+        meta = result[0]["meta"]
+        price = float(meta.get("regularMarketPrice", 0))
+        prev_close = float(meta.get("previousClose", 0) or meta.get("chartPreviousClose", 0))
+        change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
+        
+        # [핵심] 앞의 datetime. 을 떼고 상단에서 가져온 timezone.utc를 바로 사용합니다.
+        data_time = datetime.fromtimestamp(meta.get("regularMarketTime", 0), tz=timezone.utc)
+        return price, change_pct, data_time
+        
+    except Exception as e:
+        log.error(f"❌ [{ticker}] 야후 시세 파싱 중 예외 발생: {e}")
+        return 0.0, 0.0, datetime.now(timezone.utc)
 
 # ---------------------------------------------------------------------------
 # DB 업데이트
