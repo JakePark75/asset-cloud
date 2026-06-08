@@ -100,7 +100,7 @@ def settings_server(input, output, session):
 
         items = []
         for ticker, name, market, leverage, is_manual, current_price, change_pct in rows:
-            currency = "USD" if market in ("NAS", "AMS", "ARC") else "KRW"
+            currency = "USD" if market in ("NAS", "AMS", "ARC", "INDEX") else "KRW"
             price_str, chg_str, chg_css = fmt_change(float(current_price or 0), float(change_pct or 0), currency=currency)
             status = get_market_status(market)
             if status == "open":
