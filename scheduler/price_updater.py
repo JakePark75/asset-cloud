@@ -45,5 +45,9 @@ if __name__ == "__main__":
         load_config()
         log.info("강제 업데이트 실행 (--force)")
         run_update_cycle(force=True)
+    elif args.force and realtime:
+        # ws 모드에서 --force는 의미없음 — 좀비 프로세스 방지를 위해 즉시 종료
+        print("[launcher] ws 모드에서 --force 무시 — 이미 실시간 업데이트 중", file=sys.stderr)
+        sys.exit(0)
     else:
         main()

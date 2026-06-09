@@ -126,10 +126,16 @@ def portfolio_server(input, output, session):
             pos = (None, ticker, qty, name, price, chg_pct, market, leverage)
             ticker_rows.append(render_ticker_row(pos, usd_rate))
 
+        cfg = get_config()
+        is_realtime = int(cfg.get("interval", 1)) == 0
+        force_btn = [] if is_realtime else [
+            ui.input_action_button("force_update", "↺", class_="force-update-btn")
+        ]
+
         return ui.div(
             ui.div(
                 summary,
-                ui.input_action_button("force_update", "↺", class_="force-update-btn"),
+                *force_btn,
                 ui.div(*ticker_rows, class_="ticker-list"),
                 class_="page-inner",
                 style="position:relative;",
