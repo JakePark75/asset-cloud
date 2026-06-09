@@ -123,14 +123,17 @@ def update_worker(row):
     market    = row["market"]
     data_time = None
     try:
-        if market == "KR":
+        market_info = common.config.get("market_map", {}).get(market, {})
+        market_time = market_info.get("market_time", "24h")
+
+        if market_time == "KR":
             price, change_pct = get_kr_price(ticker)
-        elif market in ("NAS", "NYS", "AMS", "ARC"):
+        elif market_time == "US":
             price, change_pct = get_us_price(ticker, market)
-        elif market in ("FX", "INDEX", "CRYPTO"):
+        elif market_time == "24h":
             price, change_pct, data_time = get_yahoo_price(ticker)
         else:
-            log.warning(f"[{ticker}] 알 수 없는 market: {market}")
+            log.warning(f"[{ticker}] 알 수 없는 market_time: {market_time}")
             return
 
         if price == 0:
@@ -141,7 +144,7 @@ def update_worker(row):
         try:
             update_ticker_in_db(
                 conn, ticker, price, change_pct,
-                data_time if market in ("FX", "INDEX", "CRYPTO") else None
+                data_time if market_time == "24h" else None
             )
             log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
         finally:

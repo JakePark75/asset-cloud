@@ -1,4 +1,5 @@
 from shiny import ui
+from app.db import get_market_map, get_market_label
 
 def modal_add_account_ui(ns):
     return ui.div(
@@ -31,11 +32,10 @@ def modal_add_position_ui(ns):
             ),
             ui.input_text(ns("new_position_name"), "종목명", placeholder="예) 애플"),
             ui.input_text(ns("new_position_ticker"), "티커", placeholder="예) AAPL"),
-            ui.input_select(ns("new_position_market"), "시장", {
-                "KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)",
-                "ARC": "ARC (NYSE Arca)", "FX": "FX (환율)", "INDEX": "INDEX (지수)",
-                "CRYPTO": "CRYPTO (암호화폐)"
-            }),
+            ui.input_select(ns("new_position_market"), "시장",
+                # market_map에 정의된 마켓 목록을 동적으로 생성 (새 마켓 추가 시 config.json만 수정)
+                {m: f"{m} ({get_market_label(m)})" for m in get_market_map()}
+            ),
             ui.input_select(ns("new_position_leverage"), "레버리지", {"1": "x1", "2": "x2", "3": "x3"}),
             ui.input_numeric(ns("new_position_qty"), "수량", value=None, min=0),
             ui.input_action_button(ns("btn_confirm_add_position"), "추가", class_="btn-add"),
@@ -76,11 +76,11 @@ def modal_edit_position_ui(ns, ticker, name, market, leverage, qty):
             ),
             ui.p(ticker, class_="ticker-readonly"),
             ui.input_text(ns("edit_position_name"), "종목명", value=name or ""),
-            ui.input_select(ns("edit_position_market"), "시장", {
-                "KR": "KR (한국)", "NAS": "NAS (나스닥)", "AMS": "AMS (아멕스)",
-                "ARC": "ARC (NYSE Arca)", "FX": "FX (환율)", "INDEX": "INDEX (지수)",
-                "CRYPTO": "CRYPTO (암호화폐)"
-            }, selected=market or "KR"),
+            ui.input_select(ns("edit_position_market"), "시장",
+                # market_map에 정의된 마켓 목록을 동적으로 생성 (새 마켓 추가 시 config.json만 수정)
+                {m: f"{m} ({get_market_label(m)})" for m in get_market_map()},
+                selected=market or "KR"
+            ),
             ui.input_select(ns("edit_position_leverage"), "레버리지", {"1": "x1", "2": "x2", "3": "x3"}, selected=str(leverage or 1)),
             ui.input_numeric(ns("edit_position_qty"), "수량", value=float(qty or 0), min=0),
             ui.input_action_button(ns("btn_confirm_edit_position"), "저장", class_="btn-add"),

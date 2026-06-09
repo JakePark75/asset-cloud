@@ -18,7 +18,7 @@ from pathlib import Path
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from app.db import get_db, get_config
+from app.db import get_db, get_config, get_market_currency
 from app.utils.metrics import calculate_exposure_and_ratios, to_f
 
 # ---------------------------------------------------------------------------
@@ -297,13 +297,8 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
             price = usd_krw
         elif market_str == "KR":
             price = _get_kr_price(ticker, date_str, token)
-        elif market_str in ("NAS", "AMS", "ARC"):
-            price = _get_yahoo_price(ticker, target_date)
-        elif market_str in ("FX", "INDEX", "CRYPTO"):
-            price = _get_yahoo_price(ticker, target_date)
         else:
-            print(f"⚠️ [{ticker}] 알 수 없는 market: {market_str} — 0 처리")
-            price = 0.0
+            price = _get_yahoo_price(ticker, target_date)
 
         # is_watch=false만 전체 합산용에 추가
         if not is_watch:
@@ -335,8 +330,7 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
             continue
         qty_f = to_f(qty)
         price_f = to_f(price)
-        mkt_str = (mkt or "").upper()
-        if mkt_str in ("NAS", "AMS", "ARC"):
+        if get_market_currency(mkt_str) == "USD":
             eval_krw = qty_f * price_f * usd_krw
         else:
             eval_krw = qty_f * price_f
@@ -369,7 +363,7 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
                     acc_total += qty_f
                 elif t == "USD":
                     acc_total += qty_f * usd_krw
-                elif mkt_str in ("NAS", "AMS", "ARC"):
+                elif get_market_currency(mkt_str) == "USD":
                     acc_total += qty_f * price_f * usd_krw
                 else:
                     acc_total += qty_f * price_f

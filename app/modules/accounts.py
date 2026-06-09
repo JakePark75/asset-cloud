@@ -6,7 +6,7 @@ from app.modules.accounts_components import render_asset_card, render_ticker_row
 from app.modules.accounts_modals import modal_add_account_ui, modal_add_position_ui, modal_add_cash_ui, modal_edit_position_ui, modal_edit_cash_ui
 
 # app 폴더에 직접 위치한 파일들은 app. 으로 시작
-from app.db import get_connection, get_usd_krw, get_config
+from app.db import get_connection, get_usd_krw, get_config, get_market_currency
 from app.modules.components import render_summary_header
 from app.price_signal import price_signal, start_signal_listener
 
@@ -87,7 +87,7 @@ def accounts_server(input, output, session):
             total_sum = 0
             for pos in positions:
                 ticker, qty, price, t_market = pos[1], float(pos[2] or 0), float(pos[4] or 0), pos[6]
-                rate = usd_rate if (t_market in ('NAS', 'AMS', 'ARC') or ticker == "USD") else 1
+                rate = usd_rate if (get_market_currency(t_market) == "USD" or ticker == "USD") else 1
                 amt = qty * (price if ticker not in ('KRW', 'USD') else 1) * rate
                 total_sum += amt
 

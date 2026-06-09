@@ -2,15 +2,13 @@ from shiny import ui, render, reactive, module
 import subprocess
 import sys
 import psycopg2
-import json
-from app.db import get_usd_krw
+from app.db import get_usd_krw, get_config, get_market_currency
 from app.price_signal import price_signal
 from app.modules.components import render_summary_header
 from app.modules.accounts_components import render_ticker_row
 
 def load_portfolio():
-    with open("scheduler/config.json") as f:
-        cfg = json.load(f)
+    cfg = get_config()
     conn = psycopg2.connect(
         dbname="assetdb", user="jake", password=cfg["db_password"], host="localhost"
     )
@@ -95,7 +93,7 @@ def portfolio_server(input, output, session):
             price_f = float(price or 0)
             if ticker == "KRW": amount = qty_f
             elif ticker == "USD": amount = qty_f * usd_rate
-            elif market in ("NAS", "AMS", "ARC"): amount = qty_f * price_f * usd_rate
+            elif get_market_currency(market) == "USD": amount = qty_f * price_f * usd_rate
             else: amount = qty_f * price_f
             total_asset += amount
 
@@ -104,7 +102,7 @@ def portfolio_server(input, output, session):
         def calc_amount(ticker, qty_f, price_f, market):
             if ticker == "KRW": return qty_f
             elif ticker == "USD": return qty_f * usd_rate
-            elif market in ("NAS", "AMS", "ARC"): return qty_f * price_f * usd_rate
+            elif get_market_currency(market) == "USD": return qty_f * price_f * usd_rate
             else: return qty_f * price_f
 
         rows_sorted = sorted(

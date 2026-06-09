@@ -3,7 +3,7 @@ import json
 import math
 from shiny import module, ui, render, reactive
 
-from app.db import get_db
+from app.db import get_db, get_market_currency
 from app.price_signal import price_signal as _price_signal
 from app.utils.metrics import (
     to_f, calculate_xirr, calculate_monthly_irr,
@@ -214,7 +214,7 @@ def _load_position_data() -> list[dict]:
         market = (market or "").upper()
         if ticker == "KRW":
             eval_krw = qty
-        elif market in ("NAS", "AMS", "ARC"):
+        elif get_market_currency(market) == "USD":
             eval_krw = qty * price * usd_krw
         else:
             eval_krw = qty * price

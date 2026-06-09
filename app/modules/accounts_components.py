@@ -1,5 +1,6 @@
 from shiny import ui
 from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
+from app.db import get_market_currency
 from scheduler.price_updater_common import get_market_status
 
 
@@ -72,8 +73,8 @@ def render_ticker_row(pos, usd_rate):
         chg_css = ""
 
     else:
-        rate = usd_rate if t_market in ('NAS', 'AMS', 'ARC') else 1
-        currency = "USD" if t_market in ('NAS', 'AMS', 'ARC') else "KRW"
+        currency = get_market_currency(t_market)
+        rate = usd_rate if currency == "USD" else 1
         amount_str = fmt_krw(qty_f * price_f * rate)
         qty_str = f"{qty_f:g}주"
         display_name = tname or ticker

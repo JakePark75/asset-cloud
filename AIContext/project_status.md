@@ -79,6 +79,8 @@
 │   │                    # verify_login() / create_token() / verify_token()
 │   ├── db.py            # DB 연결 공통
 │   │                    # get_db() / get_config() / get_usd_krw() / save_config()
+│   │                    # get_market_map() / get_market_currency() / get_market_label()
+│   │                    # is_us_market() / get_supported_markets()
 │   ├── context_api.py   # AI 컨텍스트 MD 서빙 API
 │   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
 │   │                    # price_signal.get() 호출로 렌더러에 의존성 등록
@@ -99,7 +101,7 @@
 │   └── modules/
 │       ├── components.py            # 공통 포맷 유틸 + 공통 UI 컴포넌트
 │       │                            # fmt_krw() / fmt_usd() / fmt_pct() / fmt_pnl() / fmt_change()
-│       │                            # render_summary_header() / render_ticker_row()
+│       │                            # render_summary_header()
 │       ├── dashboard.py             # 대시보드 UI/server (Bloomberg 스타일 재작성) → dashboard_structure.md
 │       ├── portfolio.py             # 포트폴리오 UI/server → portfolio_structure.md
 │       ├── accounts.py              # 계좌 UI/server 진입점 → accounts_structure.md
@@ -139,6 +141,10 @@
     │                            # kis_app_key / kis_app_secret / db_password / interval
     │                            # data_go_kr_key / finnhub_api_key
     │                            # retirement_date / daily_insert_time
+    │                            # market_map: 마켓별 currency / label / market_time 정의
+    │                            #   currency: KRW / USD / NUM(지수)
+    │                            #   label: 화면 표시용 마켓명
+    │                            #   market_time: KR / US / 24h (시장 운영시간 그룹)
     ├── price_updater.service    # systemd 서비스 파일 원본
     ├── daily_inserter.service   # systemd 서비스 파일 원본
     └── myassets.service         # systemd 서비스 파일 원본
@@ -216,7 +222,7 @@
 |------|------|------|
 | ticker | TEXT PK | 종목 티커 |
 | name | TEXT | 종목명 |
-| market | TEXT | 구분 (KR, NAS, AMS, ARC, FX, INDEX, CRYPTO) |
+| market | TEXT | 구분 (KR, NAS, NYS, AMS, ARC, FX, INDEX, CRYPTO, COM) |
 | leverage | INT | 레버리지 배수 (1, 2, 3) |
 | current_price | NUMERIC | 현재가 (환율 포함) |
 | change_pct | NUMERIC | 등락률 |
@@ -273,6 +279,11 @@
 | `get_usd_krw()` | `(float, float)` or `(None, None)` | USDKRW=X의 current_price, change_pct 반환. 환율 표시가 필요한 모든 화면에서 사용 |
 | `save_config(data)` | `None` | 설정값을 config.json에 저장 |
 | `get_db()` | | 컨텍스트 매니저, DB 커넥션 안전 반환. 모든 DAL에서 get_connection() 대신 사용 |
+| `get_market_map()` | `dict` | config.json market_map 전체 반환 |
+| `get_market_currency(market)` | `str` | 마켓 코드 → 통화 코드 (미정의 마켓은 "KRW" 기본값) |
+| `get_market_label(market)` | `str` | 마켓 코드 → 표시 레이블 (미정의 마켓은 코드 그대로) |
+| `is_us_market(market)` | `bool` | USD 통화 마켓 여부 |
+| `get_supported_markets()` | `list[str]` | market_map에 정의된 전체 마켓 코드 목록 |
 ---
 
 ## 8. 시세 수집 스케줄러
@@ -292,7 +303,7 @@
 - `interval > 0`: REST 폴링 모드 — N분 주기로 전 종목 REST API 조회
 - 설정 변경 시 `systemctl restart price_updater` → 런처가 새 interval로 모드 재분기
 - 시장별 개장 시간 기반 필터링 (get_market_status) — 불필요한 API 호출 차단
-- FX / CRYPTO / INDEX: 24시간 조회
+- FX / CRYPTO / INDEX / COM: 24시간 조회
 - 국내/미국 주식: 현지 장 시간 기반 (pre/open/after/closing/closed)
 - 공휴일 캐싱: HolidayCache 클래스, 매일 08:00 KST 1회 갱신
   - 한국: 공공데이터포털 특일 API (`data_go_kr_key`)
@@ -369,7 +380,7 @@
 | ✅ 완료 | 계좌 화면 환율 표시 (USD/KRW, 등락률, 색상) |
 | ✅ 완료 | 설정 화면 구현 (시세조회 간격, 수동 티커 관리, 로그아웃) | → 티커 정렬, 레버리지 뱃지, 수동/자동 구분 표시 포함 |
 | ✅ 완료 | 설정 화면 — 스케줄러 interval 조절 |
-| ✅ 완료 | 설정 화면 — 티커 정렬 방식 추가 (레버리지순, 평가액순 등) |
+| ✅ 완료 | 설정 화면 — 티커 정렬 방식 (수동/자동 → 마켓순(KR→US→CRYPTO→COM→FX/INDEX) → 레버리지 높은순 → 알파벳순) |
 | ✅ 완료 | 포트폴리오 화면 (전체 종목 통합 뷰) |
 | ✅ 완료 | 기존 일일자산누적 데이터 DB 일괄 이전 (2025-06-19~) |
 | ✅ 완료 | 과거 입출금내역 변경하도록 개선 → 입출금기록 변경시 twr_asset 업데이트됨 |
@@ -389,4 +400,5 @@
 | ✅ 완료 | daily_inserter.py threading.Timer 구조로 개편 + 누락 날짜 자동추가 로직 추가 |
 | ✅ 완료 | 대시보드 화면 (Bloomberg 스타일 전면 재작성 — SVG 라인차트/도넛, Exposure 통합카드, JetBrains Mono 폰트, dashboard.css 분리) |
 | ✅ 완료 | 계좌 목록 화면 감시 계좌 기능 추가 (is_watch 컬럼, 섹션 분리, 총자산 합계 제외) |
+| ✅ 완료 | market_map 리팩토링 — 하드코딩 마켓 목록 제거, config.json market_map 중앙화 (currency/label/market_time 필드 추가, 전 파일 적용) |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

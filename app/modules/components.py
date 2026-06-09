@@ -24,7 +24,12 @@ def fmt_pnl(amount: float, pct: float, currency: str = "KRW") -> tuple[str, str]
     return text, css
 
 def fmt_change(price: float, chg_pct: float, currency: str = "KRW") -> tuple[str, str, str]:
-    price_str = fmt_krw(price) if currency == "KRW" else fmt_usd(price)
+    if currency == "KRW":
+        price_str = fmt_krw(price)
+    elif currency == "NUM":
+        price_str = f"{price:,.2f}"
+    else:
+        price_str = fmt_usd(price)
     chg_str = fmt_pct(chg_pct)
     css = "positive" if chg_pct >= 0 else "negative"
     return price_str, chg_str, css

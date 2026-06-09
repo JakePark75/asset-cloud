@@ -211,13 +211,16 @@ def get_subscribe_targets():
         market = r["market"]
         status = get_market_status(market)
 
-        if market == "KR":
+        market_info = common.config.get("market_map", {}).get(market, {})
+        market_time = market_info.get("market_time", "24h")
+
+        if market_time == "KR":
             if status in ("open", "pre", "after", "closing"):
                 kr_tickers.append(r["ticker"])
-        elif market in ("NAS", "NYS", "AMS", "ARC"):
+        elif market_time == "US":
             if status in ("open", "pre", "after"):
                 us_rows.append(r)
-        elif market in ("FX", "INDEX", "CRYPTO"):
+        else:  # 24h
             yahoo_rows.append(r)
 
     return kr_tickers, us_rows, yahoo_rows

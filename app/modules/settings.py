@@ -1,5 +1,5 @@
 from shiny import ui, render, module, reactive
-from app.db import get_connection, get_config, save_config
+from app.db import get_connection, get_config, save_config, get_market_currency
 from app.modules.components import fmt_change
 from scheduler.price_updater_common import get_market_status
 from datetime import datetime, time
@@ -84,23 +84,34 @@ def settings_server(input, output, session):
         cur = conn.cursor()
         cur.execute("""
             SELECT ticker, name, market, leverage, is_manual, current_price, change_pct FROM tickers
-            ORDER BY
-                is_manual DESC,
-                CASE WHEN market IN ('FX', 'INDEX', 'CRYPTO') THEN 1 ELSE 0 END,
-                CASE WHEN market = 'KR' THEN 0 WHEN market IN ('NAS', 'AMS', 'ARC') THEN 1 WHEN market = 'CRYPTO' THEN 2 ELSE 3 END,
-                leverage DESC NULLS LAST,
-                ticker
         """)
         rows = cur.fetchall()
         cur.close()
         conn.close()
+
+        _MARKET_ORDER = {
+            "KR": 0,
+            "NAS": 1, "NYS": 1, "AMS": 1, "ARC": 1,
+            "CRYPTO": 2,
+            "COM": 3,
+            "FX": 4, "INDEX": 4,
+        }
+        def _sort_key(r):
+            ticker, _, market, leverage, is_manual, _, _ = r
+            return (
+                0 if is_manual else 1,
+                _MARKET_ORDER.get(market, 99),
+                -(leverage or 1),
+                ticker,
+            )
+        rows = sorted(rows, key=_sort_key)
 
         if not rows:
             return ui.p("등록된 티커가 없습니다.", style="color:#888; padding: 8px 0;")
 
         items = []
         for ticker, name, market, leverage, is_manual, current_price, change_pct in rows:
-            currency = "USD" if market in ("NAS", "AMS", "ARC", "INDEX") else "KRW"
+            currency = get_market_currency(market)
             price_str, chg_str, chg_css = fmt_change(float(current_price or 0), float(change_pct or 0), currency=currency)
             status = get_market_status(market)
             if status == "open":
@@ -185,7 +196,7 @@ def settings_server(input, output, session):
                 ),
                 ui.input_text("new_ticker", "티커", placeholder="예) USDKRW=X"),
                 ui.input_text("new_ticker_name", "종목명", placeholder="예) 달러/원 환율"),
-                ui.input_select("new_ticker_market", "시장", choices=["KR", "NAS", "AMS", "ARC", "FX", "INDEX", "CRYPTO"]),
+                ui.input_select("new_ticker_market", "시장", choices=list(get_market_map().keys())),
                 ui.input_numeric("new_ticker_leverage", "레버리지", value=1, min=1, max=3),
                 ui.input_action_button("btn_confirm_add_ticker", "추가", class_="btn-add"),
                 class_="modal-box",

@@ -44,3 +44,24 @@ def get_usd_krw():
 def save_config(data):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+# ── 마켓 헬퍼 ──────────────────────────────────────────────
+def get_market_map() -> dict:
+    """config.json market_map 반환. 없으면 빈 dict."""
+    return get_config().get("market_map", {})
+
+def get_market_currency(market: str) -> str:
+    """마켓 코드 -> 통화 코드. 정의 안 된 마켓은 'KRW' 기본값."""
+    return get_market_map().get(market, {}).get("currency", "KRW")
+
+def get_market_label(market: str) -> str:
+    """마켓 코드 -> 표시 레이블. 정의 안 된 마켓은 마켓 코드 그대로 반환."""
+    return get_market_map().get(market, {}).get("label", market)
+
+def is_us_market(market: str) -> bool:
+    """USD 통화 마켓 여부."""
+    return get_market_currency(market) == "USD"
+
+def get_supported_markets() -> list[str]:
+    """market_map에 정의된 전체 마켓 코드 목록."""
+    return list(get_market_map().keys())

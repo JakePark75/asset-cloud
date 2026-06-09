@@ -178,12 +178,15 @@ holiday_cache = HolidayCache()
 # 반환값: "open" | "pre" | "closing" | "after" | "closed"
 # ---------------------------------------------------------------------------
 def get_market_status(market: str) -> str:
-    if market in ("FX", "CRYPTO", "INDEX"):
+    market_info = config.get("market_map", {}).get(market, {})
+    market_time = market_info.get("market_time", "24h")
+
+    if market_time == "24h":
         return "open"
 
     buf = config.get("interval", 1)
 
-    if market == "KR":
+    if market_time == "KR":
         tz = pytz.timezone("Asia/Seoul")
         now_local   = datetime.now(tz)
         today_local = now_local.date()
@@ -200,7 +203,7 @@ def get_market_status(market: str) -> str:
             return "closing"
         return "closed"
 
-    if market in ("NAS", "NYS", "AMS", "ARC"):
+    if market_time == "US":
         tz = pytz.timezone("America/New_York")
         now_local   = datetime.now(tz)
         today_local = now_local.date()

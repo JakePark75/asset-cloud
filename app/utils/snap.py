@@ -32,7 +32,6 @@ MAX_QUERY_DAYS = 1000  # 조회 가능한 최대 날짜 범위 (일). 이 값을
 _GLOBAL_START_DATE_STR = None
 _GLOBAL_END_DATE_STR = None
 _KR_CACHE = {}
-_US_CACHE = {}
 _YAHOO_CACHE = {}
 
 # ---------------------------------------------------------------------------
@@ -114,46 +113,7 @@ def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> fl
             return float(row.get("stck_clpr", 0))
     return 0.0
 
-def get_historical_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> float:
-    """KIS 해외주식 기간별시세"""
-    global _US_CACHE, _GLOBAL_END_DATE_STR
-    
-    if ticker not in _US_CACHE:
-        _US_CACHE[ticker] = []
-        url = "https://openapi.koreainvestment.com:9443/uapi/overseas-price/v1/quotations/dailyprice"
-        headers = {
-            "authorization": f"Bearer {token}",
-            "appkey":        config_data["kis_app_key"],
-            "appsecret":     config_data["kis_app_secret"],
-            "tr_id":         "HHDFS76240000",
-            "custtype":      "P",
-        }
-        current_end = _GLOBAL_END_DATE_STR or target_date_str
-        
-        # 해외 주식은 한 번에 100일씩 주므로, 넉넉히 3번(약 1년치)을 긁어와 캐시에 저장
-        for _ in range(3):
-            params = {"AUTH": "", "EXCD": excd, "SYMB": ticker, "GUBN": "0", "BYMD": current_end, "MODP": "1"}
-            try:
-                res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-                rows = res.json().get("output2", [])
-                if not rows: break
-                _US_CACHE[ticker].extend(rows)
-                # 다음 루프를 위해 가장 오래된 날짜 기준 하루 전으로 설정
-                dt = datetime.datetime.strptime(rows[-1].get("xymd"), "%Y%m%d") - datetime.timedelta(days=1)
-                current_end = dt.strftime("%Y%m%d")
-            except:
-                break
 
-    rows = _US_CACHE[ticker]
-    
-    # --- [사용자님 원본 로직 유지 구역] ---
-    for row in rows:
-        if row.get("xymd") == target_date_str:
-            return float(row.get("clos", 0))
-    for row in rows:
-        if row.get("xymd", "") <= target_date_str:
-            return float(row.get("clos", 0))
-    return 0.0
 
 def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float:
     """FX/INDEX/CRYPTO 야후 파이낸스 과거 종가"""
@@ -237,13 +197,8 @@ def fetch_snapshot(target_date: datetime.date, position_rows: list, token: str):
             if past_price == 0.0:
                 is_holiday = True
                 break
-        elif market_str in ("NAS", "AMS", "ARC"):
-            past_price = get_historical_us_price(ticker, market_str, date_str, token)
-        elif market_str in ("FX", "INDEX", "CRYPTO"):
-            past_price = get_historical_yahoo_index(ticker, target_date)
         else:
-            print(f"⚠️ [{ticker}] 알 수 없는 market 값: {market_str} — 시세 0으로 처리")
-            past_price = 0.0
+            past_price = get_historical_yahoo_index(ticker, target_date)
 
         final_db_rows.append((ticker, qty, past_price, leverage, market))
 
