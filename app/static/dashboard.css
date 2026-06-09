@@ -74,9 +74,10 @@
 .db-exposure-val { font-size: 30px; font-weight: 700; line-height: 1.1; }
 .db-exposure-sub { font-size: 12px; color: var(--db-text-muted); margin-top: 3px; }
 .db-exposure-right { display: flex; gap: 16px; }
-.db-ratio-item { text-align: center; }
+.db-ratio-item { text-align: left; }
+.db-ratio-label { font-size: 11px; color: var(--db-text-muted); margin-bottom: 2px; }
 .db-ratio-val { font-size: 17px; font-weight: 700; color: var(--db-text); }
-.db-ratio-label { font-size: 11px; color: var(--db-text-muted); margin-top: 3px; }
+.db-ratio-sub { font-size: 11px; color: var(--db-text-muted); margin-top: 2px; }
 
 /*     */
 .db-lev-bar-track { display: flex; height: 18px; border-radius: 4px; overflow: hidden; gap: 2px; margin-bottom: 10px; }

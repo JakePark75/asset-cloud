@@ -47,13 +47,14 @@ def calculate_exposure_and_ratios(db_rows: list[tuple], usd_krw: float) -> dict:
     if total_asset == 0:
         return {
             "total_asset": 0.0, "exposure": 0.0, "cash_ratio": 0.0,
-            "x1_ratio": 0.0, "x2_ratio": 0.0, "x3_ratio": 0.0
+            "cash_eval": 0.0, "x1_ratio": 0.0, "x2_ratio": 0.0, "x3_ratio": 0.0
         }
 
     return {
         "total_asset": total_asset,
         "exposure": weighted_exposure / total_asset,
         "cash_ratio": (total_asset - stock_eval) / total_asset,
+        "cash_eval": cash_eval,
         "x1_ratio": x1_eval / total_asset,
         "x2_ratio": x2_eval / total_asset,
         "x3_ratio": x3_eval / total_asset

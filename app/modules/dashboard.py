@@ -73,9 +73,9 @@ def _load_summary_data() -> dict:
         pos_rows = []
         for ticker, qty, price, leverage, market in raw_rows:
             if ticker == "KRW":
-                pos_rows.append((ticker, qty, 1.0, 1, "CASH"))
+                pos_rows.append((ticker, qty, 1.0, 1, market))
             elif ticker == "USD":
-                pos_rows.append((ticker, qty, usd_krw, 1, "CASH"))
+                pos_rows.append((ticker, qty, usd_krw, 1, market))
             else:
                 pos_rows.append((ticker, qty, price, leverage, market))
 
@@ -100,6 +100,7 @@ def _load_summary_data() -> dict:
     total_asset  = rt["total_asset"]
     exposure     = rt["exposure"]
     cash_ratio   = rt["cash_ratio"]
+    cash_eval    = rt["cash_eval"]
     invest_ratio = 1.0 - cash_ratio
     x1_ratio     = rt["x1_ratio"]
     x2_ratio     = rt["x2_ratio"]
@@ -174,6 +175,7 @@ def _load_summary_data() -> dict:
         "daily_profit":     daily_profit,
         "exposure":         exposure,
         "cash_ratio":       cash_ratio,
+        "cash_eval":        cash_eval,
         "invest_ratio":     invest_ratio,
         "x1_ratio":         x1_ratio,
         "x2_ratio":         x2_ratio,
@@ -214,6 +216,8 @@ def _load_position_data() -> list[dict]:
         market = (market or "").upper()
         if ticker == "KRW":
             eval_krw = qty
+        elif ticker == "USD":
+            eval_krw = qty * usd_krw
         elif get_market_currency(market) == "USD":
             eval_krw = qty * price * usd_krw
         else:
@@ -457,9 +461,9 @@ def dashboard_server(input, output, session):
         if not d:
             return ui.div({"class": "db-exposure-card"}, ui.span("–"))
 
-        exposure     = d["exposure"]
-        cash_ratio   = d["cash_ratio"]
-        invest_ratio = d["invest_ratio"]
+        exposure   = d["exposure"]
+        cash_ratio = d["cash_ratio"]
+        cash_eval  = d["cash_eval"]
         x1 = d["x1_ratio"] * 100
         x2 = d["x2_ratio"] * 100
         x3 = d["x3_ratio"] * 100
@@ -507,13 +511,9 @@ def dashboard_server(input, output, session):
                     {"class": "db-exposure-right"},
                     ui.div(
                         {"class": "db-ratio-item"},
-                        ui.div(_fmt_pct_plain(cash_ratio), class_="db-ratio-val"),
                         ui.div("현금", class_="db-ratio-label"),
-                    ),
-                    ui.div(
-                        {"class": "db-ratio-item"},
-                        ui.div(_fmt_pct_plain(invest_ratio), class_="db-ratio-val"),
-                        ui.div("투자", class_="db-ratio-label"),
+                        ui.div(_fmt_pct_plain(cash_ratio), class_="db-ratio-val"),
+                        ui.div(fmt_krw(cash_eval), class_="db-ratio-sub"),
                     ),
                 ),
             ),
