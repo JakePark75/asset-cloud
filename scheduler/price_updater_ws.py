@@ -298,22 +298,21 @@ async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
                     if raw_msg.startswith("{"):
                         try:
                             j = json.loads(raw_msg)
-                            rt_cd = j.get("header", {}).get("tr_id", "")
-                            body  = j.get("body", {})
-                            msg1  = body.get("msg1", "")
+                            msg1 = j.get("body", {}).get("msg1", "")
                             if msg1:
-                                log.info(f"WS 응답 [{rt_cd}]: {msg1}")
+                                log.info(f"WS 응답 [{j.get('header', {}).get('tr_id', '')}]: {msg1}")
                         except Exception:
                             pass
                         continue
 
                     # 실시간 데이터: |로 구분된 문자열
                     # 형식: tr_id|tr_key_cnt|data_cnt|data1^data2^...
+                    # 실시간 데이터: |로 구분된 문자열
                     parts = raw_msg.split("|")
                     if len(parts) < 4:
                         continue
 
-                    tr_id    = parts[0]
+                    tr_id    = parts[1]
                     data_str = parts[3]
 
                     if tr_id == "H0STCNT0":

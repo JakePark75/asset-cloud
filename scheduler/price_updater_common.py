@@ -178,13 +178,22 @@ holiday_cache = HolidayCache()
 # 반환값: "open" | "pre" | "closing" | "after" | "closed"
 # ---------------------------------------------------------------------------
 def get_market_status(market: str) -> str:
-    market_info = config.get("market_map", {}).get(market, {})
+    _config = config if config else {}
+    if not _config.get("market_map"):
+        # Shiny 앱 등 load_config()가 호출되지 않은 환경에서는 직접 읽음
+        try:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
+                _config = json.load(f)
+        except Exception:
+            _config = {}
+
+    market_info = _config.get("market_map", {}).get(market, {})
     market_time = market_info.get("market_time", "24h")
 
     if market_time == "24h":
         return "open"
 
-    buf = config.get("interval", 1)
+    buf = _config.get("interval", 1)
 
     if market_time == "KR":
         tz = pytz.timezone("Asia/Seoul")

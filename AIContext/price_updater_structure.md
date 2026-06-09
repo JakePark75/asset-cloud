@@ -199,11 +199,11 @@ kis_ws_task(approval_key, kr_tickers, us_rows)
        └─ async for raw_msg:
             ├─ "PINGPONG" → 응답 전송
             ├─ JSON → 구독 결과 로그
-            └─ "|" 구분 데이터:
+            └─ "|" 구분 데이터: 형식 = 0|tr_id|data_cnt|data (parts[1]=tr_id, parts[3]=데이터)
                  ├─ H0STCNT0 → parse_kr() → _save_price()
                  └─ HDFSCNT0 → parse_us() → tr_key_map 역매핑 → _save_price()
             일정 주기(60초)마다 _notify()
-       연결 끊기면 WS_RECONNECT_DELAY 후 재연결
+      연결 끊기면 WS_RECONNECT_DELAY 후 재연결
 ```
 
 ```
