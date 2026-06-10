@@ -38,6 +38,13 @@ def _notify_price_updated():
         # NOTIFY 실패는 비치명적 — 계좌 화면은 refresh 로 이미 갱신됨
         print(f"[accounts] NOTIFY price_updated 실패 (무시): {e}")
 
+    # Redis: today_row 재계산 (휘발성 실적 데이터 — Step 6 완료 후 각 화면이 Redis에서만 읽음)
+    try:
+        from common.redis_store import recalc_today_row
+        recalc_today_row()
+    except Exception as e:
+        print(f"[accounts] recalc_today_row 실패 (무시): {e}")
+
 
 @module.ui
 def accounts_ui():

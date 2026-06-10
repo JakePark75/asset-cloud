@@ -27,7 +27,33 @@ def get_db():
     finally:
         conn.close()
 
+# ---------------------------------------------------------------------------
+# 환율 조회 — Step 6-1: DB(tickers) → Redis 전환
+#   Redis `usd_krw` key : write_price()가 USDKRW=X 수신 시 자동 갱신
+#   Redis `prices` hash : {ticker: {"price": float, "change_pct": float}}
+#   Redis 미연결·키 없음 → None, None 반환 (호출처에서 fallback 처리)
+# ---------------------------------------------------------------------------
 def get_usd_krw():
+    try:
+        from common.redis_store import get_redis
+        r = get_redis()
+        if r:
+            raw_price  = r.get("usd_krw")
+            raw_chg    = None
+            # change_pct는 prices hash에서 가져옴
+            raw_prices = r.hget("prices", "USDKRW=X")
+            if raw_prices:
+                import json as _json
+                data = _json.loads(raw_prices)
+                raw_chg = data.get("change_pct")
+            if raw_price is not None:
+                price  = float(raw_price)
+                change = float(raw_chg) if raw_chg is not None else 0.0
+                return price, change
+    except Exception as e:
+        print(f"[db] get_usd_krw Redis 조회 실패 (DB fallback): {e}")
+
+    # Redis 실패 시 DB fallback (기존 로직 유지)
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""

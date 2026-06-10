@@ -1,10 +1,16 @@
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from datetime import datetime, date, timezone
 from logging.handlers import RotatingFileHandler
+
+# common/ 패키지 접근을 위해 PROJECT_ROOT를 sys.path에 추가
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import psycopg2
 import requests
@@ -291,6 +297,8 @@ def get_yahoo_price(ticker):
 # DB 업데이트
 # ---------------------------------------------------------------------------
 def update_ticker_in_db(conn, ticker, price, change_pct, data_time=None):
+    # TODO: Redis 전환 완료(Step 6) 후 current_price, change_pct DB write 제거 대상.
+    #       updated_at, data_time 은 메타데이터이므로 유지.
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -304,6 +312,13 @@ def update_ticker_in_db(conn, ticker, price, change_pct, data_time=None):
             (price, change_pct, datetime.now(), data_time, ticker),
         )
     conn.commit()
+
+    # Redis write (휘발성 시세 데이터 — 각 화면은 Step 6 이후 Redis에서만 읽음)
+    try:
+        from common.redis_store import write_price
+        write_price(ticker, float(price), float(change_pct))
+    except Exception as e:
+        log.warning(f"[redis] write_price 실패 ({ticker}): {e}")
 
 
 # ---------------------------------------------------------------------------

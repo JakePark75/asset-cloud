@@ -1,11 +1,10 @@
 from shiny import ui, render, module, reactive
-from app.db import get_connection, get_config, save_config, get_market_currency, get_market_map
+from app.db import get_db, get_config, save_config, get_market_currency, get_market_map
 from app.modules.components import fmt_change
 from app.price_signal import price_signal
 from scheduler.price_updater_common import get_market_status
-from datetime import datetime, time
 import subprocess
-import pytz
+
 
 def _notify_price_updated():
     """
@@ -21,12 +20,11 @@ def _notify_price_updated():
       - 실패해도 설정 화면 자체의 갱신(refresh)에는 영향 없으므로 예외를 삼킨다.
     """
     try:
-        conn = get_connection()
-        conn.autocommit = True
-        cur = conn.cursor()
-        cur.execute("NOTIFY price_updated")
-        cur.close()
-        conn.close()
+        with get_db() as conn:
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute("NOTIFY price_updated")
+            cur.close()
     except Exception as e:
         # NOTIFY 실패는 비치명적 — 설정 화면은 refresh 로 이미 갱신됨
         print(f"[settings] NOTIFY price_updated 실패 (무시): {e}")
@@ -65,12 +63,14 @@ def settings_ui():
         ui.output_ui("modal_add_ticker"),
     )
 
+
 @module.server
 def settings_server(input, output, session):
     refresh = reactive.value(0)
     show_modal_ticker = reactive.value(False)
 
-    # 시세조회 간격 버튼 렌더링
+    # ── 시세조회 간격 ─────────────────────────────────────────────────────────
+
     @render.ui
     def interval_buttons():
         current = get_config().get("interval", 1)
@@ -87,7 +87,6 @@ def settings_server(input, output, session):
             )
         return ui.div(*buttons, style="display:flex; gap:8px;")
 
-    # 시세조회 간격 저장
     @reactive.effect
     @reactive.event(input.btn_save_interval)
     def _():
@@ -99,9 +98,17 @@ def settings_server(input, output, session):
         save_config(config)
         subprocess.Popen(["sudo", "systemctl", "restart", "price_updater"])
 
-    # 수동 티커 목록
+    # ── 티커 목록 ─────────────────────────────────────────────────────────────
+
     @render.ui
     def ticker_list():
+        # ---------------------------------------------------------------------------
+        # Step 6-5: current_price / change_pct 조회를 DB → Redis 전환
+        #   - 시세(current_price, change_pct) : Redis get_all_prices() 매핑
+        #   - 메타데이터(ticker, name, market, leverage, is_manual) : DB 유지
+        # ---------------------------------------------------------------------------
+        from common.redis_store import get_all_prices
+
         refresh()
         # price_signal 구독 — 계좌에서 종목 추가 시 tickers 테이블이 변경되므로
         # NOTIFY 를 받아 티커 목록을 즉시 갱신한다
@@ -110,14 +117,18 @@ def settings_server(input, output, session):
         # price_signal 과 별개로 시장 상태는 시세와 무관하게 시간에 따라 바뀌므로 유지
         reactive.invalidate_later(60)
 
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT ticker, name, market, leverage, is_manual, current_price, change_pct FROM tickers
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        # Redis 전체 시세 로드 (실패 시 빈 dict → 가격 0 처리)
+        prices = get_all_prices()
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            # current_price / change_pct 제거 — Redis에서 매핑
+            # 메타데이터만 조회
+            cur.execute("""
+                SELECT ticker, name, market, leverage, is_manual FROM tickers
+            """)
+            rows = cur.fetchall()
+            cur.close()
 
         _MARKET_ORDER = {
             "KR": 0,
@@ -127,7 +138,7 @@ def settings_server(input, output, session):
             "FX": 4, "INDEX": 4,
         }
         def _sort_key(r):
-            ticker, _, market, leverage, is_manual, _, _ = r
+            ticker, _, market, leverage, is_manual = r
             return (
                 0 if is_manual else 1,
                 _MARKET_ORDER.get(market, 99),
@@ -140,9 +151,14 @@ def settings_server(input, output, session):
             return ui.p("등록된 티커가 없습니다.", style="color:#888; padding: 8px 0;")
 
         items = []
-        for ticker, name, market, leverage, is_manual, current_price, change_pct in rows:
+        for ticker, name, market, leverage, is_manual in rows:
+            # Redis 시세 매핑 (없으면 0으로 폴백)
+            p_data     = prices.get(ticker)
+            price      = float(p_data["price"])      if p_data else 0.0
+            change_pct = float(p_data["change_pct"]) if p_data else 0.0
+
             currency = get_market_currency(market)
-            price_str, chg_str, chg_css = fmt_change(float(current_price or 0), float(change_pct or 0), currency=currency)
+            price_str, chg_str, chg_css = fmt_change(price, change_pct, currency=currency)
             status = get_market_status(market)
             if status == "open":
                 status_dot, status_text, status_class = "●", "Open", "status-open"
@@ -185,30 +201,30 @@ def settings_server(input, output, session):
             )
         return ui.div(*items)
 
-    # 티커 삭제
+    # ── 티커 삭제 ─────────────────────────────────────────────────────────────
+
     @reactive.effect
     @reactive.event(input.confirm_delete_ticker)
     def _():
         ticker = input.confirm_delete_ticker()
         if not ticker:
             return
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM tickers WHERE ticker = %s AND is_manual = true", (ticker,))
-        conn.commit()
-        cur.close()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM tickers WHERE ticker = %s AND is_manual = true", (ticker,))
+            conn.commit()
+            cur.close()
         refresh.set(refresh() + 1)
         # 수동 티커 삭제 → 다른 화면에 갱신 신호 전송
         _notify_price_updated()
 
-    # 티커 추가 모달 열기
+    # ── 티커 추가 모달 ────────────────────────────────────────────────────────
+
     @reactive.effect
     @reactive.event(input.btn_add_ticker)
     def _():
         show_modal_ticker.set(True)
 
-    # 티커 추가 모달 닫기
     @reactive.effect
     @reactive.event(input.modal_ticker_close)
     def _():
@@ -238,7 +254,6 @@ def settings_server(input, output, session):
             onclick=f"Shiny.setInputValue('{session.ns('modal_ticker_close')}', Math.random(), {{priority: 'event'}});",
         )
 
-    # 티커 추가 확인
     @reactive.effect
     @reactive.event(input.btn_confirm_add_ticker)
     def _():
@@ -250,20 +265,19 @@ def settings_server(input, output, session):
         if not ticker or not name:
             return
 
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO tickers (ticker, name, market, leverage, is_manual, sort_order)
-            VALUES (%s, %s, %s, %s, true, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM tickers WHERE is_manual = true))
-            ON CONFLICT (ticker) DO UPDATE SET
-                name = EXCLUDED.name,
-                market = EXCLUDED.market,
-                leverage = EXCLUDED.leverage,
-                is_manual = true
-        """, (ticker, name, market, leverage))
-        conn.commit()
-        cur.close()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO tickers (ticker, name, market, leverage, is_manual, sort_order)
+                VALUES (%s, %s, %s, %s, true, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM tickers WHERE is_manual = true))
+                ON CONFLICT (ticker) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    market = EXCLUDED.market,
+                    leverage = EXCLUDED.leverage,
+                    is_manual = true
+            """, (ticker, name, market, leverage))
+            conn.commit()
+            cur.close()
         show_modal_ticker.set(False)
         refresh.set(refresh() + 1)
         # 수동 티커 추가 → 다른 화면에 갱신 신호 전송

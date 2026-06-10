@@ -47,7 +47,7 @@ def _upsert(snapshot: dict) -> None:
     cash_flow = 0
     cash_flow_note = None
     try:
-        from app.redis_client import get_redis
+        from common.redis_store import get_redis
         r = get_redis()
         if r:
             cash_flow      = int(r.get("today_cash_flow") or 0)
@@ -84,7 +84,7 @@ def _upsert(snapshot: dict) -> None:
 
     # INSERT 완료 후 Redis cash_flow 리셋
     try:
-        from app.redis_client import get_redis
+        from common.redis_store import get_redis
         r = get_redis()
         if r:
             r.set("today_cash_flow", 0)
@@ -247,7 +247,7 @@ def _on_trigger() -> None:
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"📡 시장 상태: {status}", flush=True)
 
-    if status == "closed":
+    if status == "closed" or status == "after":
         yesterday = now_kst.date() - datetime.timedelta(days=1)
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
               f"⏳ {yesterday} 스냅샷 계산 시작...", flush=True)
@@ -263,8 +263,10 @@ def _on_trigger() -> None:
                   f"❌ 오류 발생: {e}", flush=True)
         _schedule_next()
 
-    elif status == "after":
-        _schedule_retry()
+    # 일단 막아두고, 야후종가 획득 가능한 시간 테스트 확정되면 그때 로직 수정하자.
+    # after 마켓 중일 때는 종가 확정이 안 됐을 수 있으므로 1시간 후 재시도
+    # elif status == "after":
+    #     _schedule_retry()
 
     else:
         # open / pre / 기타 → 예상치 못한 상태, 다음날 타이머 등록

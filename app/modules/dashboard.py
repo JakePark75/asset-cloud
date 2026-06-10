@@ -46,9 +46,30 @@ def _fmt_krw_short(val: float) -> str:
 # ── DAL ──────────────────────────────────────────────────────
 
 def _load_summary_data() -> dict:
+    # ---------------------------------------------------------------------------
+    # Step 6-2: 시세(current_price) 조회를 DB → Redis 전환
+    #   - usd_krw  : Redis get_price('USDKRW=X') → fallback 1300.0
+    #   - ndx100   : Redis get_price('^NDX')      → fallback None
+    #   - positions current_price : Redis get_all_prices() 매핑
+    #   메타데이터(ticker, quantity, leverage, market)는 DB 유지
+    # ---------------------------------------------------------------------------
+    from common.redis_store import get_all_prices, get_price
+
+    # Redis에서 시세 전체 로드 (실패 시 빈 dict → 가격 0 처리)
+    prices = get_all_prices()
+
+    # usd_krw: prices hash 우선, 없으면 fallback
+    fx_data = prices.get("USDKRW=X")
+    usd_krw = float(fx_data["price"]) if fx_data else 1300.0
+
+    # ^NDX: prices hash 우선, 없으면 None (live_ndx100 = None → prev 사용)
+    ndx_data    = prices.get("^NDX")
+    live_ndx100 = float(ndx_data["price"]) if ndx_data else None
+
     with get_db() as conn:
         cur = conn.cursor()
 
+        # daily_summary 전체 이력 — DB 유지
         cur.execute("""
             SELECT date, total_asset, cash_flow, ndx100,
                    exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
@@ -57,33 +78,31 @@ def _load_summary_data() -> dict:
         """)
         rows = cur.fetchall()
 
-        cur.execute("SELECT current_price FROM tickers WHERE ticker = 'USDKRW=X'")
-        fx = cur.fetchone()
-        usd_krw = to_f(fx[0]) if fx else 1300.0
-
+        # positions + 메타데이터(leverage, market) — DB 유지
+        # current_price는 SELECT하지 않고 Redis prices에서 매핑
         cur.execute("""
-            SELECT p.ticker, p.quantity, t.current_price, t.leverage, t.market
+            SELECT p.ticker, p.quantity, t.leverage, t.market
             FROM positions p
             LEFT JOIN tickers t ON p.ticker = t.ticker
             LEFT JOIN accounts a ON p.account_id = a.id
             WHERE a.is_watch = false
         """)
         raw_rows = cur.fetchall()
+        cur.close()
 
-        pos_rows = []
-        for ticker, qty, price, leverage, market in raw_rows:
-            if ticker == "KRW":
-                pos_rows.append((ticker, qty, 1.0, 1, market))
-            elif ticker == "USD":
-                pos_rows.append((ticker, qty, usd_krw, 1, market))
-            else:
-                pos_rows.append((ticker, qty, price, leverage, market))
+    # positions에 Redis 시세 매핑
+    pos_rows = []
+    for ticker, qty, leverage, market in raw_rows:
+        if ticker == "KRW":
+            pos_rows.append((ticker, qty, 1.0, 1, market))
+        elif ticker == "USD":
+            pos_rows.append((ticker, qty, usd_krw, 1, market))
+        else:
+            p_data = prices.get(ticker)
+            price  = float(p_data["price"]) if p_data else 0.0
+            pos_rows.append((ticker, qty, price, leverage, market))
 
-        cur.execute("SELECT current_price FROM tickers WHERE ticker = '^NDX'")
-        ndx_row = cur.fetchone()
-        live_ndx100 = to_f(ndx_row[0]) if ndx_row else None
-
-        today = datetime.date.today()
+    today = datetime.date.today()
 
     if not rows:
         return {}
@@ -118,7 +137,7 @@ def _load_summary_data() -> dict:
     # 오늘 입출금 — Redis에서 읽기 (실패 시 0으로 진행)
     today_cash_flow = 0
     try:
-        from app.redis_client import get_redis
+        from common.redis_store import get_redis
         r = get_redis()
         if r:
             today_cash_flow = int(r.get("today_cash_flow") or 0)
@@ -194,10 +213,23 @@ def _load_summary_data() -> dict:
 
 
 def _load_position_data() -> list[dict]:
+    # ---------------------------------------------------------------------------
+    # Step 6-2: current_price DB JOIN → Redis get_all_prices() 매핑
+    #   메타데이터(name, market, leverage)는 DB 유지
+    # ---------------------------------------------------------------------------
+    from common.redis_store import get_all_prices
+
+    prices = get_all_prices()
+
+    # usd_krw: prices hash에서 직접 읽음
+    fx_data = prices.get("USDKRW=X")
+    usd_krw = float(fx_data["price"]) if fx_data else 1300.0
+
     with get_db() as conn:
         cur = conn.cursor()
+        # current_price 제거 — Redis에서 매핑
         cur.execute("""
-            SELECT p.ticker, t.name, t.market, t.leverage, p.quantity, t.current_price
+            SELECT p.ticker, t.name, t.market, t.leverage, p.quantity
             FROM positions p
             LEFT JOIN tickers t ON p.ticker = t.ticker
             LEFT JOIN accounts a ON p.account_id = a.id
@@ -205,23 +237,23 @@ def _load_position_data() -> list[dict]:
             ORDER BY p.ticker
         """)
         rows = cur.fetchall()
-        cur.execute("SELECT current_price FROM tickers WHERE ticker = 'USDKRW=X'")
-        fx = cur.fetchone()
-        usd_krw = to_f(fx[0]) if fx else 1300.0
+        cur.close()
 
     result = []
-    for ticker, name, market, leverage, qty, price in rows:
+    for ticker, name, market, leverage, qty in rows:
         qty    = to_f(qty)
-        price  = to_f(price)
         market = (market or "").upper()
         if ticker == "KRW":
             eval_krw = qty
         elif ticker == "USD":
             eval_krw = qty * usd_krw
-        elif get_market_currency(market) == "USD":
-            eval_krw = qty * price * usd_krw
         else:
-            eval_krw = qty * price
+            p_data = prices.get(ticker)
+            price  = float(p_data["price"]) if p_data else 0.0
+            if get_market_currency(market) == "USD":
+                eval_krw = qty * price * usd_krw
+            else:
+                eval_krw = qty * price
         result.append({
             "ticker":   ticker,
             "name":     name or ticker,

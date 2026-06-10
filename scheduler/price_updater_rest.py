@@ -246,6 +246,14 @@ def run_update_cycle(force=False):
 
     log.info("업데이트 완료")
 
+    # Redis: today_row 재계산 (휘발성 실적 데이터 — Step 6 완료 후 각 화면이 Redis에서만 읽음)
+    try:
+        from common.redis_store import recalc_today_row
+        recalc_today_row()
+        log.info("today_row 재계산 완료")
+    except Exception as e:
+        log.error(f"recalc_today_row 실패: {e}")
+
     try:
         conn = get_db_conn()
         conn.autocommit = True

@@ -17,7 +17,7 @@ def load_history():
 
     # Redis today row 붙이기 — 실패해도 기존 rows 그대로 반환
     try:
-        from app.redis_client import get_redis
+        from common.redis_store import get_redis
         r = get_redis()
         if r:
             raw = r.get("today_row")
