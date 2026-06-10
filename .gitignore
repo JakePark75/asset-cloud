@@ -6,3 +6,4 @@ config.json
 test.py
 app/utils/*.txt*.tar.gz
 yahoo_test.py
+해야할 작업.txt
