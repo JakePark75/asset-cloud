@@ -330,7 +330,7 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
             continue
         qty_f = to_f(qty)
         price_f = to_f(price)
-        if get_market_currency(mkt_str) == "USD":
+        if get_market_currency((mkt or "").upper()) == "USD":
             eval_krw = qty_f * price_f * usd_krw
         else:
             eval_krw = qty_f * price_f
