@@ -26,7 +26,7 @@
 | DB | PostgreSQL (VM에 직접 설치) |
 | 프레임워크 | Shiny for Python 1.6.2 |
 | 리포지토리 | https://github.com/JakePark75/asset-cloud |
-| CSS | app/static/style.css | 다크테마 공통 스타일, 인라인 style 지양하고 클래스로 관리 |
+| CSS | app/static/ (분리됨) | base.css / dashboard.css / portfolio.css / accounts.css / history.css |
 
 ### 주요 패키지 버전
 | 패키지 | 버전 | 용도 |
@@ -72,21 +72,28 @@
 │   ├── scheduler_structure.md
 │   └── price_updater_structure.md
 ├── README.md
+├── common/                  # ★ 신규 — app/scheduler 공용 모듈
+│   └── redis_store.py       # Redis 연결, 시세 R/W, recalc_today_row()
+│                            # → 상세: redis_migration_context.md
 ├── app/
 │   ├── app.py           # 진입점 (Shiny App + Starlette 라우팅, 하단 탭바, 로그인)
 │   │                    # → 상세: app_structure.md
 │   ├── auth.py          # 로그인 인증
 │   │                    # verify_login() / create_token() / verify_token()
 │   ├── db.py            # DB 연결 공통
-│   │                    # get_db() / get_config() / get_usd_krw() / save_config()
+│   │                    # get_db() / get_config() / save_config()
+│   │                    # get_usd_krw() → ★ Redis 읽음 (DB 아님)
 │   │                    # get_market_map() / get_market_currency() / get_market_label()
 │   │                    # is_us_market() / get_supported_markets()
 │   ├── context_api.py   # AI 컨텍스트 MD 서빙 API
 │   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
 │   │                    # price_signal.get() 호출로 렌더러에 의존성 등록
-│   ├── static/
-│   │   ├── style.css    # 공통 스타일 (다크테마, 인라인 style 지양)
-│   │   └── dashboard.css  # 대시보드 전용 스타일 (Bloomberg 다크테마, JetBrains Mono 폰트)
+│   ├── static/          # CSS 화면별 분리 완료 (style.css는 레거시, 실제 적재 안 함)
+│   │   ├── base.css           # 공통 기반 (다크테마, 타이포, 공통 컴포넌트)
+│   │   ├── dashboard.css      # 대시보드 전용 (Bloomberg 스타일, JetBrains Mono)
+│   │   ├── portfolio.css      # 포트폴리오 전용
+│   │   ├── accounts.css       # 계좌 화면 전용
+│   │   └── history.css        # 실적 히스토리 전용
 │   ├── utils/           # ★ 순수 유틸 — DB/화면 의존 없음. 상세: utils_structure.md
 │   │   ├── metrics.py         # 순수 계산 함수
 │   │   │                      # to_f() / calculate_exposure_and_ratios()
@@ -105,8 +112,9 @@
 │       ├── dashboard.py             # 대시보드 UI/server (Bloomberg 스타일 재작성) → dashboard_structure.md
 │       ├── portfolio.py             # 포트폴리오 UI/server → portfolio_structure.md
 │       ├── accounts.py              # 계좌 UI/server 진입점 → accounts_structure.md
-│       ├── accounts_DAL.py          # 계좌 DB 조회
+│       ├── accounts_DAL.py          # 계좌 DB 조회 — 시세는 Redis에서 매핑
 │       │                            # fetch_accounts_summary() / fetch_account_details()
+│       │                            # ※ SQL 서브쿼리 제거 → Python에서 prices 매핑으로 재작성
 │       ├── accounts_components.py   # 계좌 카드/행 렌더링
 │       │                            # render_asset_card() / render_ticker_row()
 │       ├── accounts_modals.py       # 계좌 모달 UI (추가/수정)
@@ -276,7 +284,7 @@
 ### 공통 조회 함수 (db.py)
 | 함수 | 반환 | 설명 |
 |------|------|------|
-| `get_usd_krw()` | `(float, float)` or `(None, None)` | USDKRW=X의 current_price, change_pct 반환. 환율 표시가 필요한 모든 화면에서 사용 |
+| `get_usd_krw()` | `(float, float)` or raises | Redis `usd_krw` key + `prices['USDKRW=X']` 읽기. Redis 미연결 또는 키 없으면 RuntimeError. 환율 표시가 필요한 모든 화면에서 사용 |
 | `save_config(data)` | `None` | 설정값을 config.json에 저장 |
 | `get_db()` | | 컨텍스트 매니저, DB 커넥션 안전 반환. 모든 DAL에서 get_connection() 대신 사용 |
 | `get_market_map()` | `dict` | config.json market_map 전체 반환 |
@@ -401,4 +409,8 @@
 | ✅ 완료 | 대시보드 화면 (Bloomberg 스타일 전면 재작성 — SVG 라인차트/도넛, Exposure 통합카드, JetBrains Mono 폰트, dashboard.css 분리) |
 | ✅ 완료 | 계좌 목록 화면 감시 계좌 기능 추가 (is_watch 컬럼, 섹션 분리, 총자산 합계 제외) |
 | ✅ 완료 | market_map 리팩토링 — 하드코딩 마켓 목록 제거, config.json market_map 중앙화 (currency/label/market_time 필드 추가, 전 파일 적용) |
+| ✅ 완료 | CSS 화면별 분리 — style.css → base.css / dashboard.css / portfolio.css / accounts.css / history.css. page-inner이 좌우 패딩 단일 기준 |
+| ✅ 완료 | Redis 전환 (Phase 1) — common/redis_store.py 신규, 시세 R/W Redis화, recalc_today_row() 도입, 각 화면 시세 조회 DB→Redis 전환 완료. 상세: redis_migration_context.md |
+| ⬜ 대기 | WS 모드 recalc_today_row() 미연결 (yahoo_poll_task에 추가 필요) |
+| ⬜ 대기 | Redis Phase 2 — history 탭 렌더링 최적화, 중복 계산 제거, settings invalidate_later 개선 |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

@@ -29,9 +29,8 @@ Oracle Cloud Ubuntu VM에서 운영 중인 개인 자산관리 시스템.
 ```
 /home/ubuntu/asset-cloud/
 ├── app/
-│   ├── app.py                   # Shiny 진입점
-│   ├── db.py                    # DB 연결, 마켓 헬퍼
-│   ├── redis_client.py          # Redis 연결 (현재 app/ 전용 → 삭제 예정)
+│   ├── app.py
+│   ├── db.py                    # get_usd_krw() → Redis 읽음 (DB 아님)
 │   ├── price_signal.py          # asyncpg LISTEN/NOTIFY → reactive.Value
 │   ├── auth.py
 │   ├── context_api.py
@@ -42,9 +41,9 @@ Oracle Cloud Ubuntu VM에서 운영 중인 개인 자산관리 시스템.
 │   │   ├── accounts.css
 │   │   └── history.css
 │   ├── utils/
-│   │   ├── metrics.py           # 순수 계산 함수 (XIRR, TWR, alpha, beta 등)
-│   │   ├── daily_snapshot.py    # 단일 날짜 스냅샷 계산 (daily_inserter 전용)
-│   │   └── snap.py              # 날짜범위 스냅샷 (누락 보정용 standalone)
+│   │   ├── metrics.py
+│   │   ├── daily_snapshot.py    # daily_inserter 전용 — KIS/Yahoo API 직접 호출
+│   │   └── snap.py              # 누락 보정용 standalone (_backfill에서 사용)
 │   └── modules/
 │       ├── dashboard.py
 │       ├── portfolio.py
@@ -54,19 +53,21 @@ Oracle Cloud Ubuntu VM에서 운영 중인 개인 자산관리 시스템.
 │       ├── accounts_modals.py
 │       ├── components.py
 │       ├── history.py
-│       ├── history_DAL.py
+│       ├── history_DAL.py       # load_history()에서 today_row Redis 읽어 append
 │       ├── history_charts.py
 │       ├── history_table.py
 │       ├── history_utils.py
 │       └── settings.py
+├── common/                      # ★ 신규 — app/scheduler 공용 모듈
+│   └── redis_store.py
 └── scheduler/
-    ├── price_updater.py         # 런처 (interval=0 → WS모드, >0 → REST모드)
-    ├── price_updater_common.py  # 공통 (설정/DB/시장상태/Yahoo/공휴일)
-    ├── price_updater_rest.py    # REST 폴링 모드
-    ├── price_updater_ws.py      # WebSocket 실시간 모드
-    ├── daily_inserter.py        # 일간 스냅샷 자동 삽입
-    ├── gen_daily_data.py        # 수동 보정용 standalone
-    └── config.json              # 공통 설정
+    ├── price_updater.py
+    ├── price_updater_common.py  # update_ticker_in_db() → DB write 주석처리, Redis write만 실행
+    ├── price_updater_rest.py    # 사이클 완료 후 recalc_today_row() → NOTIFY 순서
+    ├── price_updater_ws.py      # yahoo_poll_task() — recalc 미호출 (미완)
+    ├── daily_inserter.py        # common.redis_store import, API 직접 호출로 스냅샷 계산
+    ├── gen_daily_data.py
+    └── config.json
 ```
 
 ---
@@ -80,212 +81,35 @@ Oracle Cloud Ubuntu VM에서 운영 중인 개인 자산관리 시스템.
 | name | TEXT | 종목명 |
 | market | TEXT | KR / NAS / NYS / AMS / ARC / FX / INDEX / CRYPTO / COM |
 | leverage | INT | 1 / 2 / 3 |
-| current_price | NUMERIC | 현재가 |
-| change_pct | NUMERIC | 등락률 |
-| updated_at | TIMESTAMP | 마지막 업데이트 |
+| current_price | NUMERIC | **price_updater의 DB write가 주석처리되어 있어 갱신되지 않음. 시세는 Redis에서만 읽는다.** |
+| change_pct | NUMERIC | 동일 — DB 갱신 안 됨 |
+| updated_at | TIMESTAMP | 마지막 업데이트 (DB write 주석처리로 갱신 안 됨) |
 | is_manual | BOOLEAN | 수동 추가 여부 |
-| data_time | TIMESTAMP | 실제 데이터 시각 (Yahoo만 해당) |
+| data_time | TIMESTAMP | 실제 데이터 시각 (DB write 주석처리로 갱신 안 됨) |
 
-### accounts
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| id | SERIAL PK | |
-| name | TEXT | 계좌이름 |
-| alias | TEXT | 계좌별명 |
-| is_watch | BOOLEAN | 감시계좌 여부 (총자산 합계 제외) |
-| prev_total_asset | NUMERIC | 전일 총자산 (일간손익 계산용) |
+> **주의**: `update_ticker_in_db()`의 UPDATE 쿼리는 통째로 주석처리(TODO 주석)되어 있다.
+> tickers 테이블에서 current_price 등을 직접 읽는 코드가 있다면 stale 값을 읽게 된다.
+> 시세는 반드시 Redis `prices` hash에서 읽어야 한다.
 
-### positions
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| id | SERIAL PK | |
-| account_id | INT FK → accounts.id CASCADE DELETE | |
-| ticker | TEXT | 종목 티커 또는 "KRW" / "USD" |
-| quantity | NUMERIC | 수량 (현금인 경우 금액) |
-
-### daily_summary
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| date | DATE PK | |
-| total_asset | NUMERIC | 총자산 (원화) |
-| cash_flow | BIGINT | 입출금 합산 (+입금 / -출금) |
-| cash_flow_note | TEXT | 입출금 사유 |
-| ndx100 | NUMERIC | NDX100 지수 절대값 |
-| exposure | NUMERIC | 익스포저 비중 (0~1) |
-| cash_ratio | NUMERIC | 현금비중 (0~1) |
-| x1_ratio | NUMERIC | x1 비중 (0~1) |
-| x2_ratio | NUMERIC | x2 비중 (0~1) |
-| x3_ratio | NUMERIC | x3 비중 (0~1) |
-| twr_asset | NUMERIC | TWR 계산용 보조값 |
-| usd_krw | NUMERIC(10,2) | 해당일 USD/KRW 환율 |
+> **daily_snapshot.py는 tickers를 읽지 않는다.** KIS/Yahoo API를 직접 호출하여
+> 종가를 조회하므로 Redis와 무관하다. daily_inserter와 gen_daily_data.py 전용 모듈이다.
 
 ---
 
-## 4. 현재 시세 수집 구조
-
-### 모드 분기
-`config.json`의 `interval` 값으로 분기:
-- `interval = 0` → WebSocket 모드 (`price_updater_ws.py`)
-- `interval > 0` → REST 폴링 모드 (`price_updater_rest.py`), N분 주기
-
-**Redis 전환 작업은 REST 모드 기준으로 진행한다. WS 모드는 REST 완료 후 별도 작업.**
-
-### REST 모드 흐름
-```
-price_updater_rest.py
-  run_update_cycle()
-    ├── DB에서 tickers 전체 조회
-    ├── 시장 상태별 필터링 (get_market_status)
-    ├── 종목별 스레드로 update_worker() 병렬 실행
-    │     └── KIS REST API or Yahoo Finance
-    │           └── update_ticker_in_db() → tickers 테이블 UPDATE
-    └── 전체 완료 후 NOTIFY price_updated
-```
-
-### WebSocket 모드 흐름 (참고용)
-```
-price_updater_ws.py
-  kis_ws_task()         ← KR/US 실시간 push → _save_price() → update_ticker_in_db()
-  yahoo_poll_task()     ← FX/INDEX/CRYPTO 60초 폴링 → update_ticker_in_db()
-  ※ NOTIFY는 60초마다 1회 (YAHOO_POLL_INTERVAL 기준)
-```
-
-### 공통
-- `update_ticker_in_db()` — tickers 테이블 UPDATE (`price_updater_common.py`)
-- 업데이트 완료 후 PostgreSQL `NOTIFY price_updated` 발송
-- `price_signal.py`가 asyncpg로 LISTEN 대기 → reactive.Value 카운터 증가 → 화면 갱신
-
----
-
-## 5. 현재 화면 갱신 구조
-
-```
-price_updater → NOTIFY price_updated
-  → price_signal.py (asyncpg LISTEN)
-  → reactive.Value(_counter) 증가
-  → 구독 중인 화면 자동 재렌더링 → 각 화면이 DB 재조회
-```
-
-| 화면 | 트리거 | 메커니즘 |
-|------|--------|---------|
-| 포트폴리오 | price_signal | `price_signal.get()` 구독 → `portfolio_content` 전체 재실행 |
-| 대시보드 | price_signal | `data()`, `position_data()` calc 구독 → 하위 렌더러 재실행 |
-| 실적(history) | price_signal + today_cf_trigger | `history_data()` calc → `_calc_and_store_today_row()` + `load_history()` |
-| 설정 | reactive.invalidate_later(60) | price_signal 무관, 60초 자체 타이머 |
-| 계좌관리 | 사용자 액션 전용 | `refresh = reactive.value(0)`, CRUD 시 refresh.set() |
-
----
-
-## 6. 현재 DB Read/Write 전체 현황
-
-### 6-1. tickers 테이블
-
-#### WRITE
-| 파일 | 함수 | 내용 |
-|------|------|------|
-| `price_updater_common.py` | `update_ticker_in_db()` | current_price, change_pct, updated_at, data_time UPDATE |
-| `accounts.py` | `add_position()` | 신규 종목 INSERT (tickers에 없을 경우) |
-| `accounts.py` | `edit_position()` | name, market, leverage UPDATE |
-| `settings.py` | `btn_confirm_add_ticker` | 수동 티커 INSERT (ON CONFLICT DO UPDATE) |
-| `settings.py` | `confirm_delete_ticker` | 수동 티커 DELETE |
-
-#### READ (current_price, change_pct 포함 — Redis 전환 대상)
-| 파일 | 함수 | 읽는 컬럼 | 전환 방향 |
-|------|------|---------|---------|
-| `price_updater_rest.py` | `run_update_cycle()` | ticker, market | DB 유지 (메타데이터) |
-| `price_updater_ws.py` | `get_subscribe_targets()` | ticker, market | DB 유지 (메타데이터) |
-| `dashboard.py` | `_load_summary_data()` | current_price (USDKRW=X, ^NDX) | **Redis 전환** |
-| `dashboard.py` | `_load_position_data()` | current_price, market, leverage | **Redis 전환** (current_price만) |
-| `portfolio.py` | `load_portfolio()` | current_price, change_pct, market, leverage | **Redis 전환** (시세만) |
-| `accounts_DAL.py` | `fetch_accounts_summary()` | current_price (SQL 내 서브쿼리 포함) | **Redis 전환** |
-| `accounts_DAL.py` | `fetch_account_details()` | current_price, change_pct, market, leverage | **Redis 전환** (시세만) |
-| `settings.py` | `ticker_list` render | current_price, change_pct | **Redis 전환** |
-| `history.py` | `_calc_and_store_today_row()` | current_price (USDKRW=X, ^NDX, 전종목) | **Redis 전환** |
-| `db.py` | `get_usd_krw()` | current_price, change_pct (USDKRW=X) | **Redis 전환** |
-
-#### READ (메타데이터만 — DB 유지)
-| 파일 | 함수 | 읽는 컬럼 |
-|------|------|---------|
-| `price_updater_rest.py` | `run_update_cycle()` | ticker, market |
-| `price_updater_ws.py` | `get_subscribe_targets()` | ticker, market |
-| `settings.py` | `ticker_list` render | ticker, name, market, leverage, is_manual |
-| `accounts_DAL.py` | `fetch_account_details()` | name, market, leverage |
-
-### 6-2. positions 테이블
-
-#### WRITE
-| 파일 | 함수 | 내용 |
-|------|------|------|
-| `accounts.py` | `add_position()` | INSERT |
-| `accounts.py` | `add_cash()` | INSERT |
-| `accounts.py` | `edit_position()` | quantity UPDATE |
-| `accounts.py` | `edit_cash()` | ticker, quantity UPDATE |
-| `accounts.py` | `delete_position()` | DELETE |
-| `accounts.py` | `delete_cash()` | DELETE |
-
-#### READ
-| 파일 | 함수 | 내용 | 전환 방향 |
-|------|------|------|---------|
-| `dashboard.py` | `_load_summary_data()` | ticker, quantity, leverage, market JOIN tickers | DB 유지 |
-| `dashboard.py` | `_load_position_data()` | ticker, quantity, leverage, market JOIN tickers | DB 유지 |
-| `portfolio.py` | `load_portfolio()` | ticker, quantity JOIN tickers | DB 유지 |
-| `accounts_DAL.py` | `fetch_accounts_summary()` | quantity JOIN tickers | DB 유지 |
-| `accounts_DAL.py` | `fetch_account_details()` | id, ticker, quantity JOIN tickers | DB 유지 |
-| `history.py` | `_calc_and_store_today_row()` | ticker, quantity, market, leverage | DB 유지 |
-| `daily_snapshot.py` | `_fetch_positions()` | ticker, quantity, leverage, market | DB 유지 |
-
-### 6-3. accounts 테이블
-
-#### WRITE
-| 파일 | 함수 | 내용 |
-|------|------|------|
-| `accounts.py` | `add_account()` | INSERT |
-| `accounts.py` | `delete_account()` | DELETE (CASCADE → positions 자동 삭제) |
-| `daily_inserter.py` | `_update_account_prev_totals()` | prev_total_asset UPDATE |
-
-#### READ
-| 파일 | 함수 | 내용 | 전환 방향 |
-|------|------|------|---------|
-| `accounts_DAL.py` | `fetch_accounts_summary()` | id, name, alias, is_watch, prev_total_asset | DB 유지 |
-| `accounts_DAL.py` | `fetch_account_details()` | name, alias, is_watch, prev_total_asset | DB 유지 |
-| `dashboard.py` | `_load_summary_data()` | is_watch (JOIN 필터) | DB 유지 |
-| `portfolio.py` | `load_portfolio()` | is_watch (JOIN 필터) | DB 유지 |
-| `history.py` | `_calc_and_store_today_row()` | is_watch (JOIN 필터) | DB 유지 |
-
-### 6-4. daily_summary 테이블
-
-#### WRITE
-| 파일 | 함수 | 내용 |
-|------|------|------|
-| `daily_inserter.py` | `_upsert()` | 전일 스냅샷 INSERT (ON CONFLICT DO UPDATE) |
-| `history_DAL.py` | `save_cash_flow()` | cash_flow, cash_flow_note UPDATE + twr_asset 재계산 UPDATE |
-
-#### READ
-| 파일 | 함수 | 내용 | 전환 방향 |
-|------|------|------|---------|
-| `dashboard.py` | `_load_summary_data()` | 전체 이력 (date, total_asset, cash_flow 등) | DB 유지 |
-| `history_DAL.py` | `load_history()` | 전체 이력 | DB 유지 |
-| `history_DAL.py` | `save_cash_flow()` | 특정 날짜 이후 rows (TWR 재계산용) | DB 유지 |
-| `history.py` | `_calc_and_store_today_row()` | 마지막 row (prev total_asset, twr_asset) | DB 유지 |
-| `portfolio.py` | `load_portfolio()` | 마지막 row (yesterday_total) | DB 유지 |
-| `daily_snapshot.py` | `_fetch_prev_summary()` | 전날 total_asset, twr_asset | DB 유지 |
-| `daily_inserter.py` | `_fetch_last_snapshot_date()` | MAX(date) | DB 유지 |
-| `daily_inserter.py` | `_fetch_prev_summary()` | 전날 total_asset, twr_asset | DB 유지 |
-
----
-
-## 7. 현재 Redis 사용 현황
-
-### 연결 파일
-`app/redis_client.py` — 싱글턴 패턴, ping으로 연결 확인, 실패 시 None 반환.
-
-### 현재 저장 중인 Key
+## 4. Redis Key 전체 현황
 
 | Key | 타입 | 내용 | 쓰는 곳 | 읽는 곳 |
 |-----|------|------|---------|--------|
-| `today_cash_flow` | string (int) | 오늘 입출금액 | `history.py` `_save_cash_flow()` | `history.py`, `dashboard.py`, `daily_inserter.py` |
-| `today_cash_flow_note` | string | 오늘 입출금 사유 | `history.py` `_save_cash_flow()` | `history.py`, `daily_inserter.py` |
-| `today_row` | string (JSON) | 오늘치 실적 스냅샷 | `history.py` `_calc_and_store_today_row()` | `history_DAL.py` `load_history()` |
+| `prices` | hash | `ticker → json{price, change_pct}` | `price_updater_common.py` `update_ticker_in_db()` 내 `write_price()` | 각 화면 모듈 `get_all_prices()` |
+| `usd_krw` | string (float) | 현재 환율 — USDKRW=X 수신 시 자동 갱신 | `write_price()` 내부, ticker==USDKRW=X 조건 | `db.py` `get_usd_krw()` |
+| `today_cash_flow` | string (int) | 오늘 입출금액 | `history.py` `_save_cash_flow()` | `history.py`, `dashboard.py`, `daily_inserter.py` `_upsert()` |
+| `today_cash_flow_note` | string | 오늘 입출금 사유 | `history.py` `_save_cash_flow()` | `history.py`, `daily_inserter.py` `_upsert()` |
+| `today_row` | string (JSON) | 오늘치 실적 스냅샷 | `common/redis_store.py` `recalc_today_row()` | `history_DAL.py` `load_history()` |
+
+### daily_inserter와 today_cash_flow 관계
+`_upsert()` 실행 시 Redis에서 `today_cash_flow`를 읽어 DB INSERT에 포함한다.
+INSERT 완료 후 Redis의 `today_cash_flow`를 0으로 리셋하고 `today_cash_flow_note`를 삭제한다.
+즉 오늘 입출금은 Redis에만 존재하다가 daily_inserter가 실행되는 시점에 DB로 확정 저장된다.
 
 ### today_row JSON 구조
 ```json
@@ -307,186 +131,94 @@ price_updater → NOTIFY price_updated
 
 ---
 
-## 8. 현재 구조의 문제점
-
-1. ~~계좌 CRUD 후 NOTIFY 안 날림~~ → **완료**: accounts.py, settings.py에 `_notify_price_updated()` 추가됨
-
-2. **`_send_history_table`이 `@reactive.effect`** — 실적 탭이 숨겨져 있어도 실행됨 → 불필요한 DB 조회 + 계산 (Phase 2에서 해결)
-
-3. **대시보드/history가 동일한 값을 독립적으로 중복 계산** — positions + tickers를 각각 별도 DB 조회 (Phase 2에서 해결)
-
-4. **settings.py `invalidate_later(60)` 부작용** — 예측 불가한 타이밍에 화면 갱신 유발 (Phase 2에서 해결)
-
-5. **price_updater가 시세를 DB에만 기록** — 각 화면이 매번 DB 직접 조회. Redis 캐시 없음. → **Phase 1에서 해결**
-
-6. **today_row 재계산 트리거 불완전** — accounts에서 positions 변경 시 today_row가 즉시 재계산되지 않음. → **Phase 1에서 해결**
-
----
-
-## 9. Redis 전환 설계 (확정)
-
-### 9-1. 핵심 원칙
-
-- **수시로 변하는 값, DB에 확정 저장할 필요 없는 값은 Redis에 존재**
-- **Redis read는 어디서든 자유롭게**
-- **today_row 재계산은 명시적 함수 호출로만** — `recalc_today_row()`
-- **price_updater는 시세만 Redis에 기록**, today_row 재계산은 사이클 완료 후 1회 호출
-- **동시 호출 보호**: `recalc_today_row()` 내부에 `threading.Lock` — `acquire(blocking=False)`로 이미 실행 중이면 스킵
-
-### 9-2. Redis에 추가할 Key
-
-| Key | 타입 | 내용 | 쓰는 곳 |
-|-----|------|------|---------|
-| `prices` | hash | `ticker → json{price, change_pct}` | `redis_store.py` `write_price()` |
-| `usd_krw` | string (float) | 현재 환율 (USDKRW=X 별도 편의 key) | `redis_store.py` `write_price()` 내부에서 자동 갱신 |
-
-기존 key (`today_cash_flow`, `today_cash_flow_note`, `today_row`) 유지.
-
-### 9-3. 공용 모듈 신규 생성
-
-**`{공용폴더}/redis_store.py`** (폴더명 미결정)
-
-루트(`/home/ubuntu/asset-cloud/`) 하위 폴더에 생성.
-
-포함 내용:
-```
-get_redis()                          # 연결 (기존 redis_client.py와 동일)
-write_price(ticker, price, change_pct)  # prices hash + usd_krw 갱신
-get_price(ticker) → dict             # prices hash에서 단일 조회
-get_all_prices() → dict              # prices hash 전체 조회
-recalc_today_row()                   # today_row 재계산 + Redis 저장 (Lock 보호)
-```
-
-**`scheduler/price_updater_common.py`** 상단에 추가:
-```python
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
-```
-(daily_inserter.py에는 이미 동일 패턴 존재)
-
-### 9-4. recalc_today_row() 상세
+## 5. common/redis_store.py 공개 API
 
 ```python
-_recalc_lock = threading.Lock()
-
-def recalc_today_row():
-    if not _recalc_lock.acquire(blocking=False):
-        return  # 이미 계산 중이면 스킵
-    try:
-        # 1. DB: positions + accounts(is_watch 필터) 조회
-        # 2. DB: daily_summary 마지막 row (prev total_asset, twr_asset)
-        # 3. Redis: get_all_prices() → 종목별 현재가
-        # 4. Redis: get('usd_krw') → 환율
-        # 5. Redis: get('today_cash_flow') → 오늘 입출금
-        # 6. calculate_exposure_and_ratios() 로 total_asset, 비중 계산
-        # 7. twr_asset 계산
-        # 8. Redis: set('today_row', json.dumps(result))
-    finally:
-        _recalc_lock.release()
+get_redis()                            # Redis 연결 싱글턴 (실패 시 None)
+write_price(ticker, price, change_pct) # prices hash 기록 + USDKRW=X면 usd_krw도 갱신
+get_price(ticker) → dict | None        # {price, change_pct} 또는 None
+get_all_prices() → dict                # {ticker: {price, change_pct}, ...} — 실패 시 빈 dict
+recalc_today_row()                     # today_row 계산 + Redis 저장 (threading.Lock 보호)
 ```
 
-### 9-5. recalc_today_row() 호출 시점
+### recalc_today_row() 계산 흐름
+1. `get_all_prices()` — Redis `prices` hash 전체 조회
+2. `usd_krw` — `prices['USDKRW=X']['price']` 우선, 없으면 Redis `usd_krw` key, 최종 fallback 1350.0
+3. `ndx100` — `prices['^NDX']['price']`, 없으면 0.0
+4. DB: `positions` + `accounts(is_watch=false 또는 NULL)` JOIN 조회
+5. DB: `daily_summary` 마지막 행 (prev total_asset, twr_asset)
+6. Redis: `today_cash_flow`
+7. `calculate_exposure_and_ratios()` → total_asset, 비중
+8. `twr_asset = prev_twr × (total_asset - cash_flow) / prev_total`
+9. `today_row` JSON → Redis `set('today_row', ...)`
 
-| 호출 위치 | 트리거 | 비고 |
-|----------|--------|------|
-| `price_updater_rest.py` `run_update_cycle()` | 전체 사이클 완료 후 NOTIFY 직전 1회 | 종목별 스레드 완료 후 |
-| `price_updater_ws.py` `yahoo_poll_task()` | Yahoo 폴링 완료 후 NOTIFY 직전 | kis_ws_task에서는 호출 안 함 |
-| `accounts.py` | 종목/현금 추가·수정·삭제 완료 후 | `_notify_price_updated()` 호출과 같은 위치 |
-| `history.py` `_save_cash_flow()` | 오늘 입출금 Redis 저장 직후 | 현재 `_calc_and_store_today_row()` 호출 위치 교체 |
+`threading.Lock(blocking=False)` 보호 — 이미 실행 중이면 스킵.
+실패해도 예외를 밖으로 내보내지 않음.
 
-### 9-6. 각 화면의 시세 읽기 전환
+### recalc_today_row() 호출 시점
 
-**전환 대상: current_price, change_pct 만. 메타데이터(name, market, leverage 등)는 DB 유지.**
-
-| 파일 | 현재 | 전환 후 |
-|------|------|--------|
-| `dashboard.py` `_load_summary_data()` | DB tickers에서 USDKRW=X, ^NDX 조회 | Redis `get_price('USDKRW=X')` 등 |
-| `dashboard.py` `_load_position_data()` | DB tickers JOIN으로 current_price 조회 | Redis `get_all_prices()` 후 매핑 |
-| `portfolio.py` `load_portfolio()` | DB tickers JOIN으로 current_price, change_pct | Redis `get_all_prices()` 후 매핑 |
-| `accounts_DAL.py` `fetch_accounts_summary()` | SQL 내 서브쿼리로 current_price 조회 | Python에서 Redis 읽어 계산으로 변경 |
-| `accounts_DAL.py` `fetch_account_details()` | DB tickers JOIN으로 current_price, change_pct | Redis `get_all_prices()` 후 매핑 |
-| `settings.py` `ticker_list` | DB tickers에서 current_price, change_pct | Redis `get_all_prices()` 후 매핑 |
-| `db.py` `get_usd_krw()` | DB tickers WHERE ticker='USDKRW=X' | Redis `get('usd_krw')` |
-| `history.py` `_calc_and_store_today_row()` | DB tickers에서 현재가 조회 | recalc_today_row()로 완전 대체 |
-
-**DB 유지 대상:**
-- tickers: ticker, name, market, leverage, is_manual (메타데이터 전체)
-- positions, accounts, daily_summary: 전부 DB 유지
+| 호출 위치 | 트리거 |
+|----------|--------|
+| `price_updater_rest.py` `run_update_cycle()` | 전체 종목 스레드 join 완료 → recalc → NOTIFY 순서 |
+| `accounts.py` `_notify_price_updated()` | CRUD(계좌/포지션/현금 추가·수정·삭제) 완료 후 NOTIFY와 함께 호출 |
+| `history.py` `_save_cash_flow()` | 오늘 날짜 입출금을 Redis에 저장한 직후 |
+| `price_updater_ws.py` `yahoo_poll_task()` | **미구현** — NOTIFY만 있고 recalc 없음 |
 
 ---
 
-## 10. 작업 순서 (Phase 1)
+## 6. 각 화면의 시세 읽기 현황 (전환 완료)
 
-**원칙: 기존 DB 기반 동작은 건드리지 않고 Redis write를 추가. 각 단계별로 검증 후 진행.**
+**원칙: current_price, change_pct만 Redis로. name/market/leverage 등 메타데이터는 DB 유지.**
 
-### Step 1. `{공용폴더}/redis_store.py` 신규 생성
-- 서비스 무중단. 파일만 생성.
-- `get_redis()`, `write_price()`, `get_all_prices()`, `recalc_today_row()` 구현
+| 파일 | 변경 내용 |
+|------|---------|
+| `db.py` `get_usd_krw()` | Redis `usd_krw` key + `prices['USDKRW=X']` 읽기. Redis 미연결 또는 키 없으면 `RuntimeError` 발생 |
+| `dashboard.py` `_load_summary_data()` | `get_all_prices()` → usd_krw, ndx100, 종목별 price 매핑. DB는 positions/accounts/daily_summary 메타/이력만 조회 |
+| `dashboard.py` `_load_position_data()` | `get_all_prices()` → price 매핑. DB는 ticker/name/market/leverage/quantity만 조회 |
+| `portfolio.py` `load_portfolio()` | `get_all_prices()` → price, change_pct 매핑. DB는 메타+수량. `get_usd_krw()`로 환율 |
+| `accounts_DAL.py` `fetch_accounts_summary()` | SQL 서브쿼리 제거 → Python에서 prices 매핑 후 평가액 직접 계산. `get_usd_krw()` 경유 |
+| `accounts_DAL.py` `fetch_account_details()` | prices 매핑 + Python 정렬 (SQL ORDER BY 대체). 평가액 기준 정렬 로직 Python으로 재구현 |
+| `settings.py` `ticker_list` | `get_all_prices()` → price, change_pct 매핑. 메타데이터는 DB |
+| `history_DAL.py` `load_history()` | DB에서 daily_summary 전체 조회 후, Redis `today_row`를 마지막 행으로 append. DB 마지막 날짜가 오늘이면 중복 방지로 스킵 |
+| `history.py` `_save_cash_flow()` | 오늘 날짜: Redis에만 저장 후 `recalc_today_row()`. 과거 날짜: DB UPDATE 후 TWR 재계산 (기존 로직) |
 
-### Step 2. `price_updater_common.py` 수정
-- 상단 sys.path 추가
-- `update_ticker_in_db()` 내부에 Redis write 추가 (try/except로 감싸서 실패해도 DB write 영향 없음)
-- **price_updater 서비스 재시작 1회**
-- 검증: Redis `prices` hash에 값이 쌓이는지 확인
-  ```bash
-  redis-cli hgetall prices
-  redis-cli get usd_krw
+---
+
+## 7. import 경로 규칙
+
+`common/` 폴더는 프로젝트 루트에 위치.
+
+- `app/` 진입: Shiny가 `/home/ubuntu/asset-cloud/`에서 실행되므로 `common.redis_store` 자동 접근 가능
+- `scheduler/` 진입: `price_updater_common.py` 상단에 sys.path 패치 적용
+  ```python
+  _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  if _PROJECT_ROOT not in sys.path:
+      sys.path.insert(0, _PROJECT_ROOT)
   ```
+- `common/redis_store.py` 자체에도 동일 패치 적용 — `recalc_today_row()` 내부에서 `from app.db import ...`, `from app.utils.metrics import ...` 호출 시 필요
+- `daily_inserter.py`도 동일 패턴 (PROJECT_ROOT → sys.path)
 
-### Step 3. `price_updater_rest.py` 수정
-- `run_update_cycle()` 완료 후 NOTIFY 직전 `recalc_today_row()` 호출
-- **price_updater 서비스 재시작 1회**
-- 검증: Redis `today_row` 값이 갱신되는지 확인
-  ```bash
-  redis-cli get today_row
-  ```
-
-### Step 4. `accounts.py` 수정
-- 종목/현금 추가·수정·삭제 완료 후 `recalc_today_row()` 호출 추가
-- **myassets 서비스 재시작 1회**
-- 검증: 계좌에서 수량 변경 후 `today_row` 즉시 갱신 확인
-
-### Step 5. `history.py` 수정
-- `_save_cash_flow()`에서 `_calc_and_store_today_row()` 호출 부분을 `recalc_today_row()`로 교체
-- `history_data()` calc에서 `_calc_and_store_today_row()` 호출 제거 (recalc는 이미 다른 트리거에서 호출되므로)
-- `_calc_and_store_today_row()` 함수 삭제
-- **myassets 서비스 재시작 1회**
-
-### Step 6. 각 화면 시세 읽기 전환 (DB → Redis)
-- `db.py` `get_usd_krw()` → Redis 읽기로 교체
-- `dashboard.py`, `portfolio.py`, `accounts_DAL.py`, `settings.py` → `get_all_prices()` 읽기로 교체
-- **myassets 서비스 재시작 1회**
-- 검증: 각 화면 정상 동작 확인
-
-### Step 7. 정리
-- `app/redis_client.py` 삭제
-- 기존 `from app.redis_client import get_redis` import 경로 전부 교체
-- `daily_inserter.py` import 경로 수정
-- **전체 서비스 재시작**
+**새 scheduler 파일에서 common을 import할 경우 동일한 sys.path 패치가 필요하다.**
 
 ---
 
-## 11. 변경 영향 범위 요약
+## 8. 미완료 / 후속 작업
 
-| 파일 | 변경 내용 | 단계 |
-|------|---------|------|
-| `{공용폴더}/redis_store.py` | **신규 생성** | Step 1 |
-| `scheduler/price_updater_common.py` | sys.path 추가, update_ticker_in_db에 Redis write 추가 | Step 2 |
-| `scheduler/price_updater_rest.py` | run_update_cycle 끝에 recalc_today_row 호출 | Step 3 |
-| `app/modules/accounts.py` | CRUD 완료 시 recalc_today_row 호출 추가 | Step 4 |
-| `app/modules/history.py` | _calc_and_store_today_row → recalc_today_row 교체 후 삭제 | Step 5 |
-| `app/db.py` | get_usd_krw() Redis 읽기로 교체 | Step 6 |
-| `app/modules/dashboard.py` | 시세 조회 Redis로 교체 | Step 6 |
-| `app/modules/portfolio.py` | 시세 조회 Redis로 교체 | Step 6 |
-| `app/modules/accounts_DAL.py` | 시세 조회 Redis로 교체 (SQL→Python 재작성) | Step 6 |
-| `app/modules/settings.py` | 시세 조회 Redis로 교체 | Step 6 |
-| `app/modules/history_DAL.py` | import 경로 수정 | Step 7 |
-| `scheduler/daily_inserter.py` | import 경로 수정 | Step 7 |
-| `app/redis_client.py` | **삭제** | Step 7 |
+### WS 모드 recalc 미호출
+`price_updater_ws.py`의 `yahoo_poll_task()`는 `_notify()` 호출만 있고 `recalc_today_row()`가 없다.
+WS 모드에서는 `today_row`가 갱신되지 않아 히스토리 화면의 오늘 행이 stale해진다.
+REST 모드 안정화 후 별도 작업 예정.
 
----
+추가 위치: `yahoo_poll_task()` 내 `_notify()` 직전
+```python
+try:
+    from common.redis_store import recalc_today_row
+    recalc_today_row()
+except Exception as e:
+    log.warning(f"recalc_today_row 실패 (무시): {e}")
+```
 
-## 12. 미결 사항
-
-- 공용 폴더명 미결정
-- Phase 2 (DOM 패치 구조 재설계) 상세 설계 미완
+### Phase 2 (미착수)
+- `_send_history_table`이 `@reactive.effect`로 탭 숨겨져도 실행됨 → `@reactive.event` 전환 검토
+- 대시보드/history가 동일한 positions 데이터를 독립적으로 중복 조회 → 공유 reactive.calc 구조 검토
+- `settings.py` `invalidate_later(60)` — 예측 불가한 타이밍의 화면 갱신 유발
