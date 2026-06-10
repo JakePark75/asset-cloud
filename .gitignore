@@ -5,3 +5,4 @@ config.json
 *.log.*
 test.py
 app/utils/*.txt*.tar.gz
+yahoo_test.py
