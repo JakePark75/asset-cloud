@@ -299,19 +299,19 @@ def get_yahoo_price(ticker):
 def update_ticker_in_db(conn, ticker, price, change_pct, data_time=None):
     # TODO: Redis 전환 완료(Step 6) 후 current_price, change_pct DB write 제거 대상.
     #       updated_at, data_time 은 메타데이터이므로 유지.
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE tickers
-               SET current_price = %s,
-                   change_pct    = %s,
-                   updated_at    = %s,
-                   data_time     = %s
-             WHERE ticker = %s
-            """,
-            (price, change_pct, datetime.now(), data_time, ticker),
-        )
-    conn.commit()
+    # with conn.cursor() as cur:
+    #     cur.execute(
+    #         """
+    #         UPDATE tickers
+    #            SET current_price = %s,
+    #                change_pct    = %s,
+    #                updated_at    = %s,
+    #                data_time     = %s
+    #          WHERE ticker = %s
+    #         """,
+    #         (price, change_pct, datetime.now(), data_time, ticker),
+    #     )
+    # conn.commit()
 
     # Redis write (휘발성 시세 데이터 — 각 화면은 Step 6 이후 Redis에서만 읽음)
     try:
