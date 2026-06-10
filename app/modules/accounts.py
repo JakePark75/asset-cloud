@@ -10,6 +10,35 @@ from app.db import get_connection, get_usd_krw, get_config, get_market_currency
 from app.modules.components import render_summary_header
 from app.price_signal import price_signal, start_signal_listener
 
+
+def _notify_price_updated():
+    """
+    포트폴리오 DB 변경(계좌/포지션/현금 CRUD) 후 다른 화면들에게 갱신 신호를 보낸다.
+
+    배경:
+      price_signal 은 price_updater 가 주기적으로 NOTIFY price_updated 를 발송할 때만
+      갱신 신호를 받는다. 따라서 계좌관리에서 DB 를 변경해도 다음 price_updater 주기
+      (REST 모드 기준 최대 수십 분)까지 포트폴리오/대시보드/실적 화면에 반영되지 않는다.
+
+      이 함수는 DB 변경이 완료된 직후 직접 NOTIFY 를 발송해 price_signal 을 즉시 트리거,
+      모든 화면이 변경된 포트폴리오를 바로 반영하도록 한다.
+
+    주의:
+      - price_updater 와 동일한 채널(price_updated)을 사용하므로 추가 리스너 불필요.
+      - 실패해도 계좌 화면 자체의 갱신(refresh)에는 영향 없으므로 예외를 삼킨다.
+    """
+    try:
+        conn = get_connection()
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("NOTIFY price_updated")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        # NOTIFY 실패는 비치명적 — 계좌 화면은 refresh 로 이미 갱신됨
+        print(f"[accounts] NOTIFY price_updated 실패 (무시): {e}")
+
+
 @module.ui
 def accounts_ui():
     return ui.div(
@@ -201,10 +230,13 @@ def accounts_server(input, output, session):
         conn.close()
         show_modal.set(False)
         refresh.set(refresh() + 1)
+        # 계좌 추가 → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()
 
     @reactive.effect
     @reactive.event(input.btn_back)
     def go_back():
+        # 단순 화면 이동 — DB 변경 없으므로 NOTIFY 불필요
         selected_account.set(None)
         refresh.set(refresh() + 1)
 
@@ -253,6 +285,8 @@ def accounts_server(input, output, session):
         conn.close()
         show_modal_position.set(False)
         refresh.set(refresh() + 1)
+        # 종목 추가 → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()
 
     @reactive.effect
     @reactive.event(input.btn_confirm_add_cash)
@@ -270,6 +304,8 @@ def accounts_server(input, output, session):
         conn.close()
         show_modal_cash.set(False)
         refresh.set(refresh() + 1)
+        # 현금 추가 → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()
 
     @reactive.effect
     @reactive.event(input.confirm_delete_account)
@@ -285,6 +321,8 @@ def accounts_server(input, output, session):
         conn.close()
         selected_account.set(None)
         refresh.set(refresh() + 1)
+        # 계좌 삭제 → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()
 
     @reactive.effect
     def handle_edit_pos_click():
@@ -333,6 +371,8 @@ def accounts_server(input, output, session):
         conn.close()
         show_modal_edit_position.set(False)
         refresh.set(refresh() + 1)
+        # 종목 수정(수량/시장/레버리지) → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()
 
     @reactive.effect
     @reactive.event(input.confirm_delete_position)
@@ -348,6 +388,8 @@ def accounts_server(input, output, session):
         conn.close()
         show_modal_edit_position.set(False)
         refresh.set(refresh() + 1)
+        # 종목 삭제 → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()
 
     @reactive.effect
     @reactive.event(input.modal_edit_cash_close)
@@ -370,6 +412,8 @@ def accounts_server(input, output, session):
         conn.close()
         show_modal_edit_cash.set(False)
         refresh.set(refresh() + 1)
+        # 현금 수정(금액/종류) → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()
 
     @reactive.effect
     @reactive.event(input.confirm_delete_cash)
@@ -385,3 +429,5 @@ def accounts_server(input, output, session):
         conn.close()
         show_modal_edit_cash.set(False)
         refresh.set(refresh() + 1)
+        # 현금 삭제 → 포트폴리오/대시보드/실적 화면에 갱신 신호 전송
+        _notify_price_updated()

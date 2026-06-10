@@ -1,10 +1,36 @@
 from shiny import ui, render, module, reactive
-from app.db import get_connection, get_config, save_config, get_market_currency
+from app.db import get_connection, get_config, save_config, get_market_currency, get_market_map
 from app.modules.components import fmt_change
+from app.price_signal import price_signal
 from scheduler.price_updater_common import get_market_status
 from datetime import datetime, time
 import subprocess
 import pytz
+
+def _notify_price_updated():
+    """
+    티커 추가/삭제 후 다른 화면들에게 갱신 신호를 보낸다.
+
+    배경:
+      티커가 추가/삭제되어도 price_updater 의 NOTIFY 가 오기 전까지
+      포트폴리오/대시보드 등 다른 화면은 변경을 인지하지 못한다.
+      티커 변경은 시세 변경과 독립적인 이벤트이므로 직접 NOTIFY 를 발송한다.
+
+    주의:
+      - price_updater 와 동일한 채널(price_updated)을 사용하므로 추가 리스너 불필요.
+      - 실패해도 설정 화면 자체의 갱신(refresh)에는 영향 없으므로 예외를 삼킨다.
+    """
+    try:
+        conn = get_connection()
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("NOTIFY price_updated")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        # NOTIFY 실패는 비치명적 — 설정 화면은 refresh 로 이미 갱신됨
+        print(f"[settings] NOTIFY price_updated 실패 (무시): {e}")
+
 
 @module.ui
 def settings_ui():
@@ -73,13 +99,17 @@ def settings_server(input, output, session):
         save_config(config)
         subprocess.Popen(["sudo", "systemctl", "restart", "price_updater"])
 
-    # 수동 티커 목록 (배지 로직 추가)
+    # 수동 티커 목록
     @render.ui
     def ticker_list():
         refresh()
-        # 60초마다 화면 자동 갱신 (시장 상태 반영용)
+        # price_signal 구독 — 계좌에서 종목 추가 시 tickers 테이블이 변경되므로
+        # NOTIFY 를 받아 티커 목록을 즉시 갱신한다
+        price_signal.get()
+        # 60초마다 화면 자동 갱신 (시장 open/closed 상태 표시 반영용)
+        # price_signal 과 별개로 시장 상태는 시세와 무관하게 시간에 따라 바뀌므로 유지
         reactive.invalidate_later(60)
-        
+
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
@@ -131,7 +161,6 @@ def settings_server(input, output, session):
                         ui.div(
                             ui.span(f"x{leverage}", class_=f"lev-badge lev-x{leverage}") if leverage > 1 else None,
                             ui.span(f"{name}", class_="ticker-name"),
-                            # 상태 배지 추가
                             ui.span(f"{status_dot} {status_text}", class_=f"ticker-status {status_class}"),
                             class_="lev-name-wrap",
                         ),
@@ -170,13 +199,16 @@ def settings_server(input, output, session):
         cur.close()
         conn.close()
         refresh.set(refresh() + 1)
+        # 수동 티커 삭제 → 다른 화면에 갱신 신호 전송
+        _notify_price_updated()
 
-    # 티커 추가 모달 관련 로직 (기존 그대로 유지)
+    # 티커 추가 모달 열기
     @reactive.effect
     @reactive.event(input.btn_add_ticker)
     def _():
         show_modal_ticker.set(True)
 
+    # 티커 추가 모달 닫기
     @reactive.effect
     @reactive.event(input.modal_ticker_close)
     def _():
@@ -206,6 +238,7 @@ def settings_server(input, output, session):
             onclick=f"Shiny.setInputValue('{session.ns('modal_ticker_close')}', Math.random(), {{priority: 'event'}});",
         )
 
+    # 티커 추가 확인
     @reactive.effect
     @reactive.event(input.btn_confirm_add_ticker)
     def _():
@@ -233,3 +266,5 @@ def settings_server(input, output, session):
         conn.close()
         show_modal_ticker.set(False)
         refresh.set(refresh() + 1)
+        # 수동 티커 추가 → 다른 화면에 갱신 신호 전송
+        _notify_price_updated()
