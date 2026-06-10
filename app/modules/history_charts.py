@@ -283,6 +283,9 @@ def _touch_script(chart_id: str) -> str:
     ].join(';');
     gd.appendChild(vline);
 
+    // 수평 보조선 (트레이스별, 동적으로 생성)
+    var hlines = [];
+
     // clientX → 가장 가까운 데이터 인덱스 반환
     function clientXToIndex(clientX) {{
       var rect  = gd.getBoundingClientRect();
@@ -401,11 +404,53 @@ def _touch_script(chart_id: str) -> str:
       }}
 
       vline.style.display = 'block';
+
+      // 수평 보조선 (트레이스별 y값 기준)
+      // 기존 hline 제거
+      hlines.forEach(function(hl) {{ if (hl.parentNode) hl.parentNode.removeChild(hl); }});
+      hlines = [];
+
+      if (plot) {{
+        var plotRect2 = plot.getBoundingClientRect();
+        var plotTop    = plotRect2.top  - gdRect.top;
+        var plotHeight = plotRect2.height;
+
+        for (var t = 0; t < gd.data.length; t++) {{
+          var trace = gd.data[t];
+          if (!trace.y || trace.mode === 'markers') continue;
+          var yVal2 = trace.y[idx];
+          if (yVal2 === undefined || yVal2 === null) continue;
+
+          var yRange  = gd.layout.yaxis.range;
+          var yMin    = yRange[0];
+          var yMax    = yRange[1];
+          var yRatio  = 1 - (yVal2 - yMin) / (yMax - yMin);
+          var yPx     = plotTop + yRatio * plotHeight;
+
+          var color = (trace.line && trace.line.color) || '#666';
+          var hl = document.createElement('div');
+          hl.style.cssText = [
+            'position:absolute',
+            'left:0',
+            'width:100%',
+            'height:1px',
+            'background:' + color,
+            'opacity:0.5',
+            'pointer-events:none',
+            'z-index:997',
+          ].join(';');
+          hl.style.top = yPx + 'px';
+          gd.appendChild(hl);
+          hlines.push(hl);
+        }}
+      }}
     }}
 
     function hidePopup() {{
       popup.style.display = 'none';
       vline.style.display = 'none';
+      hlines.forEach(function(hl) {{ if (hl.parentNode) hl.parentNode.removeChild(hl); }});
+      hlines = [];
     }}
 
     // ── 터치 이벤트 ──────────────────────────────────────────────────────────
