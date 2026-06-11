@@ -8,8 +8,7 @@ daily_summary 테이블에 UPSERT한다.
        - 빠진 날짜가 있으면 snap.py 로직으로 즉시 순서대로 채움
     2. 보정 완료 후 다음 daily_insert_time 까지 타이머 등록
     3. 타이머 도달 시 미국 시장 상태 확인
-       - closed : 전날 스냅샷 계산 후 INSERT → 다음날 타이머 등록
-       - after  : 아직 애프터마켓 중 → 1시간 후 재시도 타이머 등록
+       - after, closed : 전날 스냅샷 계산 후 INSERT → 다음날 타이머 등록       
     4. while 루프 없이 threading.Timer 로만 동작
 """
 
@@ -17,6 +16,9 @@ import datetime
 import threading
 import sys
 import os
+
+from zoneinfo import ZoneInfo
+KST = ZoneInfo("Asia/Seoul")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -121,7 +123,7 @@ def _backfill(start_date: datetime.date, end_date: datetime.date) -> None:
     start_date ~ end_date 범위의 빠진 스냅샷을 snap.py 로직으로 채운다.
     snap.py의 글로벌 캐시(_GLOBAL_START_DATE_STR 등)를 활용해 API 호출을 최소화한다.
     """
-    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    now_kst = datetime.datetime.now(KST)
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"🔄 누락 스냅샷 보정 시작: {start_date} ~ {end_date}", flush=True)
 
@@ -174,7 +176,7 @@ def _backfill(start_date: datetime.date, end_date: datetime.date) -> None:
         })
         print(f"✅ 총자산: {total_asset:,.0f} 원", flush=True)
 
-    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    now_kst = datetime.datetime.now(KST)
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"✅ 누락 스냅샷 보정 완료", flush=True)
 
@@ -182,11 +184,11 @@ def _backfill(start_date: datetime.date, end_date: datetime.date) -> None:
     try:
         snapshot = get_daily_snapshot(end_date, calc_account_totals=True)
         _update_account_prev_totals(snapshot["account_totals"])
-        now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        now_kst = datetime.datetime.now(KST)
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
               f"✅ 계좌별 prev_total_asset 업데이트 완료 ({end_date})", flush=True)
     except Exception as e:
-        now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+        now_kst = datetime.datetime.now(KST)
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
               f"❌ 계좌별 prev_total_asset 업데이트 실패: {e}", flush=True)
 
@@ -202,7 +204,7 @@ def _next_trigger_time() -> datetime.datetime:
     raw = config.get("daily_insert_time", "07:30")
     h, m = map(int, raw.split(":"))
 
-    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    now_kst = datetime.datetime.now(KST)
     trigger = now_kst.replace(hour=h, minute=m, second=0, microsecond=0)
 
     # 이미 지난 시각이면 내일로
@@ -214,7 +216,7 @@ def _next_trigger_time() -> datetime.datetime:
 def _schedule_next() -> None:
     """다음 daily_insert_time 까지 타이머 등록."""
     trigger = _next_trigger_time()
-    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    now_kst = datetime.datetime.now(KST)
     delay = (trigger - now_kst).total_seconds()
 
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
@@ -225,7 +227,7 @@ def _schedule_next() -> None:
 
 def _schedule_retry() -> None:
     """애프터마켓 중일 때 1시간 후 재시도 타이머 등록."""
-    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    now_kst = datetime.datetime.now(KST)
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"⏳ 애프터마켓 진행 중 → 1시간 후 재시도", flush=True)
 
@@ -241,7 +243,7 @@ def _on_trigger() -> None:
     - after  : 1시간 후 재시도 타이머 등록
     - 그 외  : 다음날 타이머 등록 (예상치 못한 상태)
     """
-    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    now_kst = datetime.datetime.now(KST)
     status = get_market_status("NAS")
 
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
@@ -291,7 +293,7 @@ def _on_trigger() -> None:
 # 진입점
 # ---------------------------------------------------------------------------
 def main():
-    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    now_kst = datetime.datetime.now(KST)
     print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
           f"📅 daily_inserter 시작", flush=True)
 
