@@ -160,6 +160,8 @@ def _save_price(ticker: str, price: float, change_pct: float):
 
 def _notify():
     try:
+        from common.redis_store import recalc_today_row
+        recalc_today_row()  # ← 추가
         conn = get_db_conn()
         conn.autocommit = True
         with conn.cursor() as cur:

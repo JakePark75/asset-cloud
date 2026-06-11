@@ -231,6 +231,7 @@ def history_server(input, output, session):
     def history_data():
         price_signal.get()
         today_cf_trigger.get()
+        #print(f"[history] history_data() 실행됨", flush=True)
         return load_history()
 
     @render.ui
@@ -247,6 +248,7 @@ def history_server(input, output, session):
         # 차트(output_ui)보다 테이블이 먼저 화면에 나타나는 증상이 있음.
         # send_custom_message가 Shiny WebSocket 렌더링 큐와 별개로 동작하기 때문.
         # 현재는 빠른 렌더링의 부작용으로 간주하고 그냥 둠.
+        #print(f"[history] _send_history_table() 실행됨", flush=True)
         rows = history_data()
         if not rows:
             return
@@ -278,6 +280,7 @@ def history_server(input, output, session):
 
         import asyncio
         async def _send():
+            #print(f"[history] sending {len(data)} rows", flush=True)
             await session.send_custom_message("history_data", data)
         asyncio.ensure_future(_send())
 
