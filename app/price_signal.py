@@ -1,5 +1,6 @@
 import asyncio
 import asyncpg
+import time
 from shiny import reactive
 
 price_signal = reactive.Value(0)
@@ -13,9 +14,13 @@ async def _listen_loop(db_password: str):
     async def on_notify(conn, pid, channel, payload):
         global _counter
         _counter += 1
+        t_recv = time.perf_counter()
         async with reactive.lock():
             price_signal.set(_counter)
             await reactive.flush()
+        t_flush = time.perf_counter()
+        elapsed_ms = (t_flush - t_recv) * 1000
+        print(f"[NOTIFY #{_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
 
     await conn.add_listener("price_updated", on_notify)
     while True:
