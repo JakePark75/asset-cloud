@@ -261,6 +261,19 @@ def _on_trigger() -> None:
         except Exception as e:
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"❌ 오류 발생: {e}", flush=True)
+
+        # INSERT 완료 후 오늘 행을 즉시 히스토리에 반영
+        # recalc_today_row()는 Redis prices(어제 종가)로 오늘 행을 계산해 today_row key에 저장
+        # → load_history()가 이를 append해 장 시작 전에도 오늘 날짜 행이 보임
+        try:
+            from common.redis_store import recalc_today_row
+            recalc_today_row()
+            print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+                  f"✅ today_row 갱신 완료", flush=True)
+        except Exception as e:
+            print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+                  f"⚠️ today_row 갱신 실패 (무시): {e}", flush=True)
+
         _schedule_next()
 
     # 일단 막아두고, 야후종가 획득 가능한 시간 테스트 확정되면 그때 로직 수정하자.
