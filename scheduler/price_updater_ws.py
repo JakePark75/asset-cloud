@@ -53,8 +53,8 @@ KR_IDX_PRICE      = 2
 KR_IDX_CHANGE_PCT = 5
 
 # HDFSCNT0 수신 필드 인덱스
-US_IDX_PRICE      = 10
-US_IDX_CHANGE_PCT = 13
+US_IDX_PRICE      = 11
+US_IDX_CHANGE_PCT = 14
 
 # Yahoo 폴링 주기 (초)
 YAHOO_POLL_INTERVAL = 60
@@ -125,20 +125,21 @@ def parse_kr(raw: str):
         return None
 
 
+US_IDX_KOR_TIME = 7  # 한국시간 (KHMS) 상수 추가 (선택사항)
+
 def parse_us(raw: str):
-    """HDFSCNT0 수신 데이터 → (ticker, price, change_pct)"""
+    """HDFSCNT0 수신 데이터 → (ticker, price, change_pct, kor_time)"""
     fields = raw.split("^")
     try:
-        # SYMB 필드에는 prefix 포함 (예: DNASTQQQ) → 순수 ticker 추출 불가
-        # DB 조회 시 prefix 제거해서 매칭하므로 SYMB 그대로 반환
         symb       = fields[0]
         price      = float(fields[US_IDX_PRICE])
         change_pct = float(fields[US_IDX_CHANGE_PCT])
-        return symb, price, change_pct
+        kor_time   = fields[7]  # ⭐ 한국 체결시각 (HHMMSS) 추가
+        
+        return symb, price, change_pct, kor_time
     except (IndexError, ValueError) as e:
         log.error(f"US 데이터 파싱 실패: {e} / raw={raw[:80]}")
         return None
-
 
 # ---------------------------------------------------------------------------
 # 웹소켓 수신 데이터 → DB 업데이트
@@ -325,16 +326,30 @@ async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
                             _save_price(ticker, price, change_pct)
 
                     elif tr_id == "HDFSCNT0":
+
+                        log.info(f"HDFSCNT0 RAW={data_str}")
+
                         result = parse_us(data_str)
                         if result:
-                            symb, price, change_pct = result
+                            # kor_time을 추가로 받습니다.
+                            symb, price, change_pct, kor_time = result
+                            
                             # SYMB → DB ticker 변환
                             db_ticker = tr_key_map.get(symb)
                             if db_ticker is None:
-                                # prefix 4자리 제거 후 재시도
                                 db_ticker = _us_tr_key_to_ticker(symb, us_ticker_set)
+                                
                             if db_ticker:
                                 _save_price(db_ticker, price, change_pct)
+                                
+                                # 가독성을 위해 HHMMSS -> HH:MM:SS 변환
+                                if len(kor_time) == 6:
+                                    formatted_time = f"{kor_time[0:2]}:{kor_time[2:4]}:{kor_time[4:6]}"
+                                else:
+                                    formatted_time = kor_time
+                                
+                                # ⭐ 실시간 KST 로그 출력
+                                log.info(f"[US] {db_ticker} 현재가: {price} ({change_pct}%) | 체결시각(KST): {formatted_time}")
                             else:
                                 log.warning(f"[US] 매핑 실패: {symb}")
 
