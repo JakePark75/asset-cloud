@@ -165,9 +165,9 @@ def _notify():
         with conn.cursor() as cur:
             cur.execute("NOTIFY price_updated")
         conn.close()
+        log.info("NOTIFY price_updated 전송")  # 추가
     except Exception as e:
         log.error(f"NOTIFY 실패: {e}")
-
 
 # ---------------------------------------------------------------------------
 # US tr_key → DB ticker 역매핑 테이블
@@ -251,7 +251,8 @@ async def yahoo_poll_task(yahoo_rows: list):
             except Exception as e:
                 log.error(f"[{ticker}] Yahoo 폴링 실패: {e}")
 
-        _notify()
+        # 실시간 웹소켓 모드에서 야후 Notify 는 필요없음
+        #_notify()
         await asyncio.sleep(YAHOO_POLL_INTERVAL)
 
 
@@ -337,7 +338,8 @@ async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
 
                     # 일정 주기마다 NOTIFY
                     now = time.time()
-                    if now - last_notify >= YAHOO_POLL_INTERVAL:
+                    # if now - last_notify >= YAHOO_POLL_INTERVAL:
+                    if now - last_notify >= 1:
                         _notify()
                         last_notify = now
 
