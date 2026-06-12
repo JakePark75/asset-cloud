@@ -4,7 +4,7 @@ import math
 from shiny import module, ui, render, reactive
 
 from app.db import get_db, get_market_currency
-from app.price_signal import price_signal as _price_signal
+from app.price_signal import price_signal as _price_signal, daily_insert_signal as _daily_insert_signal
 from app.utils.metrics import (
     to_f, calculate_xirr, calculate_monthly_irr,
     calculate_alpha, calculate_beta,
@@ -692,22 +692,39 @@ def dashboard_ui():
 # ── Server ───────────────────────────────────────────────────
 
 @module.server
-def dashboard_server(input, output, session):
+def dashboard_server(input, output, session, active_tab: reactive.value = None):
 
     _last_display: dict = {}
 
+    # ── 대시보드 요약 데이터 계산 ────────────────────────────────────────────
+    # price_signal 마다 Redis 시세를 새로 읽어 총자산·수익률 등 전체 지표를 재계산.
+    # daily_insert_signal 수신 시 daily_summary 에 새 행이 추가됐으므로
+    # DB를 새로 읽어야 IRR·알파·베타 등 이력 기반 지표가 정확해진다.
+    # @reactive.calc 로 캐싱: 같은 signal 값이면 재계산 없이 캐시 반환.
     @reactive.calc
     def data():
         _price_signal.get()
+        _daily_insert_signal.get()
         return _load_summary_data()
 
+    # ── 포지션 데이터 계산 ────────────────────────────────────────────────
+    # price_signal 마다 Redis 시세를 새로 읽어 종목별 평가액·비중을 재계산.
+    # 포지션 자체(수량·종목)는 자주 안 바뀌므로 DB 조회는 내부에서 캐싱 없이 매번 하되,
+    # 시세는 Redis에서 읽으므로 빠르다.
     @reactive.calc
     def position_data():
         _price_signal.get()
         return _load_position_data()
 
+    # ── 시세/daily insert 수신 시 대시보드 전체 갱신 ─────────────────────
+    # data(), position_data() 의존성을 통해 price_signal, daily_insert_signal 에 연결됨.
+    # diff_display 로 이전 화면과 비교해 변경된 필드만 JS로 전송 (DOM 전체 교체 아님).
+    # 탭 비활성 시 스킵: 보이지 않는 DOM을 패치하는 건 낭비이고,
+    # 탭 활성화 순간 active_tab 이 "dashboard"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_update():
+            if active_tab and active_tab.get() != "dashboard":
+                return
             d = data()
             positions = position_data()
             if not d:

@@ -351,7 +351,7 @@ def history_ui():
 # ── Server ────────────────────────────────────────────────────────────────────
 
 @module.server
-def history_server(input, output, session):
+def history_server(input, output, session, active_tab: reactive.value = None):
 
     today_cf_trigger = reactive.value(0)  # 오늘 입출금 저장 시 강제 갱신용
     _reload_trigger  = reactive.value(0)  # 입출금 수정(과거) 시 DB rows 재로드용
@@ -363,7 +363,10 @@ def history_server(input, output, session):
         daily_insert_signal.get()    # daily insert 완료 시 무효화
         return load_history()
 
-    # ── 차트: DB rows + today_row 합산 (페이지 로드 시 1회) ──────────────────
+    # ── 차트용 rows 계산 — DB rows + today_row 합산 ──────────────────────────
+    # @reactive.calc 로 캐싱: _db_rows(), load_today_row() 결과가 바뀔 때만 재계산.
+    # price_signal → recalc_today_row() → Redis today_row 갱신 → 이 함수 재실행 순서로
+    # 시세 업데이트마다 차트 데이터가 갱신된다.
     @reactive.calc
     def _all_rows_for_chart():
         rows = list(_db_rows())
@@ -387,17 +390,32 @@ def history_server(input, output, session):
                 ))
         return rows
 
+    # ── 차트 렌더링 ───────────────────────────────────────────────────────────
+    # render.ui 는 반환값을 Shiny가 받아서 output_ui DOM에 통째로 교체한다.
+    # _all_rows_for_chart() 의존성으로 인해 시세 업데이트마다 차트 전체가 재렌더링되므로,
+    # 탭 비활성 시 스킵해 불필요한 연산과 DOM 교체를 방지한다.
+    # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 한 번 실행된다.
     @render.ui
     def chart_asset():
+        if active_tab and active_tab.get() != "history":
+            return ui.HTML("")
         return ui.HTML(make_chart_asset(_all_rows_for_chart()))
 
     @render.ui
     def chart_twr():
+        if active_tab and active_tab.get() != "history":
+            return ui.HTML("")
         return ui.HTML(make_chart_twr(_all_rows_for_chart()))
 
-    # ── 초기 테이블 전송 — 페이지 로드 시 1회 ───────────────────────────────
+    # ── 초기 테이블 전송 ─────────────────────────────────────────────────────
+    # daily_insert_signal 수신 시 DB에 새 행이 추가됐으므로 전체 테이블을 다시 전송한다.
+    # JS는 수신한 데이터로 테이블을 전체 교체한다 (history_data 핸들러).
+    # 탭 비활성 시 스킵: 어차피 보이지 않는 DOM에 데이터를 쏘는 건 낭비이고,
+    # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_history_table():
+        if active_tab and active_tab.get() != "history":
+            return
         rows = list(_db_rows())
         t = load_today_row()
         today = datetime.date.today()
@@ -454,12 +472,20 @@ def history_server(input, output, session):
 
         await session.send_custom_message("history_data", data)
 
-    # ── NOTIFY 수신 시 today_row만 갱신 ─────────────────────────────────────
+    # ── 시세/daily insert/입출금 수정 시 today_row 갱신 ────────────────────
+    # price_signal 마다 recalc_today_row() 가 Redis today_row 를 갱신하므로
+    # 이 함수가 트리거되면 최신 today_row 를 읽어 JS 테이블 최상단 행만 교체한다.
+    # 테이블 전체를 다시 보내지 않고 오늘 행만 패치하므로 효율적이다.
+    # 탭 비활성 시 스킵: 보이지 않는 DOM을 패치하는 건 낭비이고,
+    # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_today_row_update():
-        price_signal.get()           # NOTIFY 의존성
+        price_signal.get()           # 시세 업데이트 시 갱신
         daily_insert_signal.get()    # daily insert 완료 시 갱신
         today_cf_trigger.get()       # 오늘 입출금 수정 시 갱신
+
+        if active_tab and active_tab.get() != "history":
+            return
 
         t = load_today_row()
         if not t:

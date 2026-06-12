@@ -94,6 +94,7 @@ app_ui = ui.page_fluid(
                 if(cb) cb();
             });
             btns[idx].classList.add('active');
+            Shiny.setInputValue('active_tab', saved, {priority: 'event'});
         }
                    
         function showMain() {
@@ -171,11 +172,11 @@ def server(input, output, session):
     def _sync_active_tab():
         active_tab.set(input.active_tab())
 
-    dashboard_server("dashboard")
-    portfolio_server("portfolio")
-    accounts_server("accounts")
+    dashboard_server("dashboard", active_tab=active_tab)
+    portfolio_server("portfolio", active_tab=active_tab)
+    accounts_server("accounts", active_tab=active_tab)
     history_server("history", active_tab=active_tab)
-    settings_server("settings")
+    settings_server("settings", active_tab=active_tab)
 
     # 페이지 로드 시 쿠키 토큰 검증
     @reactive.effect

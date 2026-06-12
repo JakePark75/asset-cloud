@@ -282,7 +282,7 @@ def portfolio_ui():
 # ── Server ────────────────────────────────────────────────────────────────────
 
 @module.server
-def portfolio_server(input, output, session):
+def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
     # 종목 구성 캐시 — ticker 목록이 바뀌면 pf_init 전송
     _last_tickers: list = []
@@ -326,10 +326,18 @@ def portfolio_server(input, output, session):
 
     # ── 포트폴리오 갱신 ───────────────────────────────────────────────────────
 
+    # ── 시세 수신 시 포트폴리오 갱신 ────────────────────────────────────────
+    # price_signal 마다 Redis 시세를 새로 읽어 종목별 평가액·등락률을 갱신.
+    # 종목 구성이 바뀌면 pf_init(골격 통째 교체), 아니면 pf_tick(변경 필드만 패치).
+    # 탭 비활성 시 스킵: 보이지 않는 DOM을 패치하는 건 낭비이고,
+    # 탭 활성화 순간 active_tab 이 "portfolio"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_update():
         nonlocal _last_tickers, _last_display
         price_signal.get()
+
+        if active_tab and active_tab.get() != "portfolio":
+            return
 
         rows, usd_rate, usd_chg, yesterday_total = load_portfolio()
 

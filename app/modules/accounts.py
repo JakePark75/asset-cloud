@@ -667,7 +667,7 @@ def accounts_ui():
 # ── Server ────────────────────────────────────────────────────────────────────
 
 @module.server
-def accounts_server(input, output, session):
+def accounts_server(input, output, session, active_tab: reactive.value = None):
     start_signal_listener(get_config()["db_password"])
 
     selected_account = reactive.value(None)
@@ -681,12 +681,22 @@ def accounts_server(input, output, session):
 
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 
+    # ── 시세/daily insert 수신 시 계좌 화면 갱신 ────────────────────────────
+    # price_signal 마다 Redis 시세를 새로 읽어 계좌별 평가액·등락률을 갱신.
+    # daily_insert_signal 수신 시 prev_total_asset 이 갱신됐으므로 DB를 새로 읽어야
+    # 전일대비 손익이 정확해진다.
+    # 계좌 목록/상세 구성이 바뀌면 init(골격 통째 교체), 아니면 tick(변경 필드만 패치).
+    # 탭 비활성 시 스킵: 보이지 않는 DOM을 패치하는 건 낭비이고,
+    # 탭 활성화 순간 active_tab 이 "accounts"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_update():
         nonlocal _last_accounts, _last_positions, _last_display
         price_signal.get()
         daily_insert_signal.get()
         refresh()
+
+        if active_tab and active_tab.get() != "accounts":
+            return
 
         usd_rate_val, usd_chg = get_usd_krw()
         acc_id = selected_account()

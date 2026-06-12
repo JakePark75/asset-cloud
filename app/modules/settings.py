@@ -292,7 +292,7 @@ def settings_ui():
 # ── Server ────────────────────────────────────────────────────────────────────
 
 @module.server
-def settings_server(input, output, session):
+def settings_server(input, output, session, active_tab: reactive.value = None):
     refresh = reactive.value(0)
 
     # 종목 구성 캐시 — ticker 목록이 바뀌면 st_init 전송
@@ -313,11 +313,20 @@ def settings_server(input, output, session):
         subprocess.Popen(["sudo", "systemctl", "restart", "price_updater"])
 
     # ── 티커 목록 갱신 ───────────────────────────────────────────────────────
+    # ── 시세/daily insert 수신 시 대시보드 전체 갱신 ─────────────────────
+    # price_signal 에 연결됨.
+    # diff_display 로 이전 화면과 비교해 변경된 필드만 JS로 전송 (DOM 전체 교체 아님).
+    # 탭 비활성 시 스킵: 보이지 않는 DOM을 패치하는 건 낭비이고,
+    # 탭 활성화 순간 active_tab 이 "settings"로 바뀌면서 자동으로 재실행된다.
 
     @reactive.effect
     async def _send_update():
         nonlocal _last_tickers, _last_display
         price_signal.get()
+
+        if active_tab and active_tab.get() != "settings":
+            return
+
         refresh()
         reactive.invalidate_later(60)
 
