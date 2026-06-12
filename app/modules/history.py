@@ -131,19 +131,19 @@ def history_ui():
           }
 
           function buildTr(r) {
-            var date    = r[0];
-            var total   = parseFloat(r[1]) || 0;
-            var twr     = parseFloat(r[2]) || 0;
-            var ndx     = parseFloat(r[3]) || 0;
-            var cf      = parseFloat(r[4]) || 0;
-            var cf_note = r[5] || '';
-            var exp     = parseFloat(r[6]) || 0;
-            var cash    = parseFloat(r[7]) || 0;
-            var x1      = parseFloat(r[8]) || 0;
-            var x2      = parseFloat(r[9]) || 0;
-            var x3      = parseFloat(r[10]) || 0;
-            var usd_krw = parseFloat(r[11]) || 0;
-            var prev    = r[12];
+            var date    = r.date;
+            var total   = parseFloat(r.total_asset) || 0;
+            var twr     = parseFloat(r.twr_asset) || 0;
+            var ndx     = parseFloat(r.ndx100) || 0;
+            var cf      = parseFloat(r.cash_flow) || 0;
+            var cf_note = r.cash_flow_note || '';
+            var exp     = parseFloat(r.exposure) || 0;
+            var cash    = parseFloat(r.cash_ratio) || 0;
+            var x1      = parseFloat(r.x1_ratio) || 0;
+            var x2      = parseFloat(r.x2_ratio) || 0;
+            var x3      = parseFloat(r.x3_ratio) || 0;
+            var usd_krw = parseFloat(r.usd_krw) || 0;
+            var prev    = r.prev_total;
 
             // 전일대비
             var diffCell = '<span style="color:#555">-</span>';
@@ -183,7 +183,14 @@ def history_ui():
               '<td style="text-align:right">' + (x2 * 100).toFixed(1) + '%</td>' +
               '<td style="text-align:right">' + (x1 * 100).toFixed(1) + '%</td>' +
               '<td style="text-align:right">' + fmtKrw(twr) + '</td>' +
-              '<td style="text-align:right">' + (ndx ? ndx.toFixed(2) : '-') + '</td>' +
+              '<td style="text-align:right">' + (function() {
+                if (!ndx) return '-';
+                var ndxChg = parseFloat(r.ndx_change_pct);
+                if (isNaN(ndxChg) || r.ndx_change_pct === '') return ndx.toFixed(2);
+                var sign = ndxChg >= 0 ? '+' : '';
+                var cls  = ndxChg >= 0 ? 'positive' : 'negative';
+                return ndx.toFixed(2) + '<br><span class="' + cls + '" style="font-size:11px">' + sign + ndxChg.toFixed(2) + '%</span>';
+              })() + '</td>' +
               '<td style="text-align:right">' + (usd_krw ? usd_krw.toFixed(2) : '-') + '</td>';
             tr.addEventListener('click', function() {
               Shiny.setInputValue('history-selected_date', date, {priority: 'event'});
@@ -223,7 +230,7 @@ def history_ui():
             var tbody = document.getElementById('history-tbody');
             if (tbody) {
               var newTr = buildTr(r);
-              var today = r[0];
+              var today = r.date;
               var existing = tbody.querySelector('tr[data-date="' + today + '"]');
               if (existing) {
                 tbody.replaceChild(newTr, existing);
@@ -237,10 +244,10 @@ def history_ui():
             // ── 2. chart-asset 끝단 업데이트 ─────────────────────────────
             var gdAsset = document.getElementById('chart-asset');
             if (gdAsset && gdAsset.data) {
-              var date      = r[0];
-              var total     = parseFloat(r[1]) || 0;
-              var cf        = parseFloat(r[4]) || 0;
-              var cf_note   = r[5] || '';
+              var date      = r.date;
+              var total     = parseFloat(r.total_asset) || 0;
+              var cf        = parseFloat(r.cash_flow) || 0;
+              var cf_note   = r.cash_flow_note || '';
 
               // trace 0 (총자산 라인) — x/y/customdata 끝단 교체
               var xs0  = gdAsset.data[0].x.slice();
@@ -293,9 +300,9 @@ def history_ui():
             // ── 3. chart-twr 끝단 업데이트 ───────────────────────────────
             var gdTwr = document.getElementById('chart-twr');
             if (gdTwr && gdTwr.data && gdTwr.data.length >= 2) {
-              var date    = r[0];
-              var twrRaw  = parseFloat(r[2]) || 0;
-              var ndxRaw  = parseFloat(r[3]) || 0;
+              var date    = r.date;
+              var twrRaw  = parseFloat(r.twr_asset) || 0;
+              var ndxRaw  = parseFloat(r.ndx100) || 0;
 
               // 기준값 (첫 번째 데이터 포인트) 으로 % 계산
               var twrBase = gdTwr.data[0].y[0];  // 이미 % 값
@@ -303,8 +310,8 @@ def history_ui():
 
               // twr_asset / ndx100 은 절대값이므로 최초 기준값 필요
               // → 서버에서 % 계산해서 넘겨줌 (r[13], r[14])
-              var twrPct = parseFloat(r[13]);
-              var ndxPct = parseFloat(r[14]);
+              var twrPct = parseFloat(r.twr_pct);
+              var ndxPct = parseFloat(r.ndx_pct);
 
               var xs1 = gdTwr.data[0].x.slice();
               var ys1 = gdTwr.data[0].y.slice();
@@ -414,26 +421,36 @@ def history_server(input, output, session):
         for r in rows_desc:
             # 전일 total: DB rows 기준으로 계산 (today_row의 전일은 DB 마지막 행)
             if r[0] == today:
-                prev = float(rows[-1][1] or 0) if rows else None
+                prev       = float(rows[-1][1] or 0) if rows else None
+                prev_ndx   = float(rows[-1][3] or 0) if rows else None
             else:
-                idx = index_map.get(r[0])
-                prev = float(rows[idx - 1][1] or 0) if idx is not None and idx > 0 else None
+                idx        = index_map.get(r[0])
+                prev       = float(rows[idx - 1][1] or 0) if idx is not None and idx > 0 else None
+                prev_ndx   = float(rows[idx - 1][3] or 0) if idx is not None and idx > 0 else None
 
-            data.append([
-                str(r[0]),
-                str(r[1]),
-                str(r[2]),
-                str(r[3]),
-                str(r[4]),
-                r[5] or '',
-                str(r[6]),
-                str(r[7]),
-                str(r[8]),
-                str(r[9]),
-                str(r[10]),
-                str(r[11]),
-                str(prev) if prev is not None else '',
-            ])
+            # ndx 등락률
+            cur_ndx = float(r[3] or 0)
+            if prev_ndx and cur_ndx:
+                ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100
+            else:
+                ndx_change_pct = None
+
+            data.append({
+                "date":           str(r[0]),
+                "total_asset":    str(r[1]),
+                "twr_asset":      str(r[2]),
+                "ndx100":         str(r[3]),
+                "cash_flow":      str(r[4]),
+                "cash_flow_note": r[5] or '',
+                "exposure":       str(r[6]),
+                "cash_ratio":     str(r[7]),
+                "x1_ratio":       str(r[8]),
+                "x2_ratio":       str(r[9]),
+                "x3_ratio":       str(r[10]),
+                "usd_krw":        str(r[11]),
+                "prev_total":     str(prev) if prev is not None else '',
+                "ndx_change_pct": str(ndx_change_pct) if ndx_change_pct is not None else '',
+            })
 
         await session.send_custom_message("history_data", data)
 
@@ -450,7 +467,8 @@ def history_server(input, output, session):
 
         rows = _db_rows()
         today = datetime.date.today()
-        prev = float(rows[-1][1] or 0) if rows else None
+        prev     = float(rows[-1][1] or 0) if rows else None
+        prev_ndx = float(rows[-1][3] or 0) if rows else None
 
         # twr_pct, ndx_pct 계산 (차트 끝단 업데이트용)
         # 기준: DB 첫 번째 행의 twr_asset, ndx100
@@ -464,23 +482,28 @@ def history_server(input, output, session):
             if base_ndx:
                 ndx_pct = (float(t.get("ndx100") or 0) / base_ndx - 1) * 100
 
-        row = [
-            str(t.get("date", str(today))),  # [0]
-            str(t.get("total_asset")),        # [1]
-            str(t.get("twr_asset")),          # [2]
-            str(t.get("ndx100")),             # [3]
-            str(t.get("cash_flow", 0)),       # [4]
-            t.get("cash_flow_note") or '',    # [5]
-            str(t.get("exposure")),           # [6]
-            str(t.get("cash_ratio")),         # [7]
-            str(t.get("x1_ratio")),           # [8]
-            str(t.get("x2_ratio")),           # [9]
-            str(t.get("x3_ratio")),           # [10]
-            str(t.get("usd_krw")),            # [11]
-            str(prev) if prev is not None else '',  # [12] 전일 total
-            str(twr_pct),                     # [13] twr %
-            str(ndx_pct),                     # [14] ndx %
-        ]
+        # ndx 전일 대비 등락률
+        cur_ndx = float(t.get("ndx100") or 0)
+        ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100 if prev_ndx and cur_ndx else None
+
+        row = {
+            "date":           str(t.get("date", str(today))),
+            "total_asset":    str(t.get("total_asset")),
+            "twr_asset":      str(t.get("twr_asset")),
+            "ndx100":         str(t.get("ndx100")),
+            "cash_flow":      str(t.get("cash_flow", 0)),
+            "cash_flow_note": t.get("cash_flow_note") or '',
+            "exposure":       str(t.get("exposure")),
+            "cash_ratio":     str(t.get("cash_ratio")),
+            "x1_ratio":       str(t.get("x1_ratio")),
+            "x2_ratio":       str(t.get("x2_ratio")),
+            "x3_ratio":       str(t.get("x3_ratio")),
+            "usd_krw":        str(t.get("usd_krw")),
+            "prev_total":     str(prev) if prev is not None else '',
+            "twr_pct":        str(twr_pct),
+            "ndx_pct":        str(ndx_pct),
+            "ndx_change_pct": str(ndx_change_pct) if ndx_change_pct is not None else '',
+        }
 
         await session.send_custom_message("today_row_update", row)
 
