@@ -72,6 +72,7 @@ app_ui = ui.page_fluid(
             });
             el.classList.add('active');
             localStorage.setItem('activeTab', name);
+            Shiny.setInputValue('active_tab', name, {priority: 'event'});
         }
         // 페이지 로드 시 탭 복원
         function restoreTab() {
@@ -163,10 +164,17 @@ app_ui = ui.page_fluid(
 )
 
 def server(input, output, session):
+    active_tab = reactive.value("dashboard")
+
+    @reactive.effect
+    @reactive.event(input.active_tab)
+    def _sync_active_tab():
+        active_tab.set(input.active_tab())
+
     dashboard_server("dashboard")
     portfolio_server("portfolio")
     accounts_server("accounts")
-    history_server("history")
+    history_server("history", active_tab=active_tab)
     settings_server("settings")
 
     # 페이지 로드 시 쿠키 토큰 검증
