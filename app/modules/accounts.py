@@ -3,7 +3,7 @@ from shiny import ui, module, reactive
 from app.modules.accounts_DAL import fetch_accounts_summary, fetch_account_details
 from app.db import get_connection, get_db, get_usd_krw, get_config, get_market_currency, get_market_map, get_market_label
 from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
-from app.price_signal import price_signal, start_signal_listener
+from app.price_signal import price_signal, start_signal_listener, daily_insert_signal
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
 
@@ -685,6 +685,7 @@ def accounts_server(input, output, session):
     async def _send_update():
         nonlocal _last_accounts, _last_positions, _last_display
         price_signal.get()
+        daily_insert_signal.get()
         refresh()
 
         usd_rate_val, usd_chg = get_usd_krw()

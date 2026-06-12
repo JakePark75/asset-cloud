@@ -234,6 +234,20 @@ def _schedule_retry() -> None:
     threading.Timer(3600, _on_trigger).start()
 
 # ---------------------------------------------------------------------------
+# NOTIFY 발송
+# ---------------------------------------------------------------------------
+def _notify_daily_inserted() -> None:
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("NOTIFY daily_inserted")
+            conn.commit()
+    except Exception as e:
+        now_kst = datetime.datetime.now(KST)
+        print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+              f"⚠️ NOTIFY daily_inserted 실패 (무시): {e}", flush=True)
+
+# ---------------------------------------------------------------------------
 # 트리거 핸들러
 # ---------------------------------------------------------------------------
 def _on_trigger() -> None:
@@ -257,9 +271,14 @@ def _on_trigger() -> None:
             snapshot = get_daily_snapshot(yesterday, calc_account_totals=True)
             _upsert(snapshot)
             _update_account_prev_totals(snapshot["account_totals"])
+            now_kst = datetime.datetime.now(KST)
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"✅ {yesterday} INSERT 완료 "
                   f"| 총자산: {snapshot['total_asset']:,.0f} 원", flush=True)
+
+            # Shiny 세션에 DB 갱신 알림
+            _notify_daily_inserted()
+
         except Exception as e:
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"❌ 오류 발생: {e}", flush=True)
@@ -270,9 +289,11 @@ def _on_trigger() -> None:
         try:
             from common.redis_store import recalc_today_row
             recalc_today_row()
+            now_kst = datetime.datetime.now(KST)
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"✅ today_row 갱신 완료", flush=True)
         except Exception as e:
+            now_kst = datetime.datetime.now(KST)
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"⚠️ today_row 갱신 실패 (무시): {e}", flush=True)
 
@@ -285,6 +306,7 @@ def _on_trigger() -> None:
 
     else:
         # open / pre / 기타 → 예상치 못한 상태, 다음날 타이머 등록
+        now_kst = datetime.datetime.now(KST)
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
               f"⚠️ 예상치 못한 시장 상태({status}) → 다음날 타이머 등록", flush=True)
         _schedule_next()

@@ -1,7 +1,7 @@
 import json
 import datetime
 from shiny import ui, reactive, module, render
-from app.price_signal import price_signal
+from app.price_signal import price_signal, daily_insert_signal
 from app.db import get_db
 from .history_DAL import load_history, load_today_row, save_cash_flow
 from .history_charts import make_chart_asset, make_chart_twr
@@ -352,7 +352,8 @@ def history_server(input, output, session):
     # ── 과거 DB rows 캐시 — 세션 시작 시 1회 로드, 입출금 수정 시 재로드 ──
     @reactive.calc
     def _db_rows():
-        _reload_trigger.get()  # 입출금 수정 시 무효화
+        _reload_trigger.get()        # 입출금 수정 시 무효화
+        daily_insert_signal.get()    # daily insert 완료 시 무효화
         return load_history()
 
     # ── 차트: DB rows + today_row 합산 (페이지 로드 시 1회) ──────────────────
@@ -439,8 +440,9 @@ def history_server(input, output, session):
     # ── NOTIFY 수신 시 today_row만 갱신 ─────────────────────────────────────
     @reactive.effect
     async def _send_today_row_update():
-        price_signal.get()       # NOTIFY 의존성
-        today_cf_trigger.get()   # 오늘 입출금 수정 시 갱신
+        price_signal.get()           # NOTIFY 의존성
+        daily_insert_signal.get()    # daily insert 완료 시 갱신
+        today_cf_trigger.get()       # 오늘 입출금 수정 시 갱신
 
         t = load_today_row()
         if not t:

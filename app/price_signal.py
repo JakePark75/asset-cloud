@@ -4,25 +4,41 @@ import time
 from shiny import reactive
 
 price_signal = reactive.Value(0)
+daily_insert_signal = reactive.Value(0)
+
 _task_started = False
-_counter = 0
+_price_counter = 0
+_insert_counter = 0
 
 async def _listen_loop(db_password: str):
     conn = await asyncpg.connect(
         host="localhost", database="assetdb", user="jake", password=db_password
     )
-    async def on_notify(conn, pid, channel, payload):
-        global _counter
-        _counter += 1
+
+    async def on_price_notify(conn, pid, channel, payload):
+        global _price_counter
+        _price_counter += 1
         t_recv = time.perf_counter()
         async with reactive.lock():
-            price_signal.set(_counter)
+            price_signal.set(_price_counter)
             await reactive.flush()
         t_flush = time.perf_counter()
         elapsed_ms = (t_flush - t_recv) * 1000
-        print(f"[NOTIFY #{_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
+        print(f"[NOTIFY price_updated #{_price_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
 
-    await conn.add_listener("price_updated", on_notify)
+    async def on_insert_notify(conn, pid, channel, payload):
+        global _insert_counter
+        _insert_counter += 1
+        t_recv = time.perf_counter()
+        async with reactive.lock():
+            daily_insert_signal.set(_insert_counter)
+            await reactive.flush()
+        t_flush = time.perf_counter()
+        elapsed_ms = (t_flush - t_recv) * 1000
+        print(f"[NOTIFY daily_inserted #{_insert_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
+
+    await conn.add_listener("price_updated", on_price_notify)
+    await conn.add_listener("daily_inserted", on_insert_notify)
     while True:
         await asyncio.sleep(3600)
 
