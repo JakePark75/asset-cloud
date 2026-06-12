@@ -12,6 +12,7 @@ from app.utils.metrics import (
     calculate_exposure_and_ratios,
 )
 from app.modules.components import fmt_krw
+from app.utils.display_diff import diff_display
 
 
 # ── 포맷 헬퍼 ────────────────────────────────────────────────
@@ -285,9 +286,10 @@ def _donut_svg(slices: list[dict]) -> str:
 
     cx, cy, r_outer, r_inner = 65, 65, 58, 36
     gap_angle = 1.5  # 슬라이스 간 갭 (도)
+    angle_snap = 2.0  # 슬라이스 경계 각도 스냅 단위 (도) — 이보다 작은 비중 변화는 도넛 모양 불변
 
     paths = []
-    angle = -90.0  # 12시 방향 시작
+    angle = -90.0  # 12시 방향 시작 (정밀 누적값, 스냅 전)
 
     for s in slices:
         frac      = s["value"] / total
@@ -296,8 +298,12 @@ def _donut_svg(slices: list[dict]) -> str:
             angle += frac * 360
             continue
 
-        start_rad = math.radians(angle)
-        end_rad   = math.radians(angle + sweep)
+        # 좌표 계산용 각도는 angle_snap 단위로 스냅 (미세 변화 시 동일 문자열 출력 → 재전송 안 됨)
+        disp_start = round(angle / angle_snap) * angle_snap
+        disp_end   = round((angle + sweep) / angle_snap) * angle_snap
+
+        start_rad = math.radians(disp_start)
+        end_rad   = math.radians(disp_end)
 
         x1o = cx + r_outer * math.cos(start_rad)
         y1o = cy + r_outer * math.sin(start_rad)
@@ -311,10 +317,10 @@ def _donut_svg(slices: list[dict]) -> str:
         large = 1 if sweep > 180 else 0
 
         d = (
-            f"M {x1o:.2f} {y1o:.2f} "
-            f"A {r_outer} {r_outer} 0 {large} 1 {x2o:.2f} {y2o:.2f} "
-            f"L {x1i:.2f} {y1i:.2f} "
-            f"A {r_inner} {r_inner} 0 {large} 0 {x2i:.2f} {y2i:.2f} "
+            f"M {x1o:.1f} {y1o:.1f} "
+            f"A {r_outer} {r_outer} 0 {large} 1 {x2o:.1f} {y2o:.1f} "
+            f"L {x1i:.1f} {y1i:.1f} "
+            f"A {r_inner} {r_inner} 0 {large} 0 {x2i:.1f} {y2i:.1f} "
             f"Z"
         )
         paths.append(f'<path d="{d}" fill="{s["color"]}" />')
@@ -340,10 +346,10 @@ def _hero_line_svg(values: list[float]) -> str:
         pts.append((x, y))
     
     # 2. Path와 Polyline 생성
-    polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
-    fill_d = f"M {pts[0][0]:.1f},{pts[0][1]:.1f} " + \
-             " ".join(f"L {x:.1f},{y:.1f}" for x, y in pts[1:]) + \
-             f" L {pts[-1][0]:.1f},100 L {pts[0][0]:.1f},100 Z"
+    polyline = " ".join(f"{x:.0f},{y:.0f}" for x, y in pts)
+    fill_d = f"M {pts[0][0]:.0f},{pts[0][1]:.0f} " + \
+             " ".join(f"L {x:.0f},{y:.0f}" for x, y in pts[1:]) + \
+             f" L {pts[-1][0]:.0f},100 L {pts[0][0]:.0f},100 Z"
              
     # 3. 뷰박스 고정 + preserveAspectRatio="none" (강제 맵핑)
     # vector-effect="non-scaling-stroke" (선 굵기 유지)
@@ -360,23 +366,242 @@ def _hero_line_svg(values: list[float]) -> str:
             stroke-linejoin="round" stroke-linecap="round"/>
 </svg>'''
 
+
+# ── 도넛 데이터 빌더 (server에서 공유) ───────────────────────
+
+def _build_donut_payload(positions: list[dict]) -> dict:
+    """
+    position_data() 결과를 받아 도넛 렌더링에 필요한 데이터를 반환.
+    svg_html + legend 리스트를 dict로 반환.
+    """
+    if not positions:
+        return {}
+
+    total = sum(p["eval_krw"] for p in positions)
+    if total == 0:
+        return {}
+
+    # 같은 티커 합산
+    merged: dict[str, dict] = {}
+    for p in positions:
+        t = p["ticker"]
+        if t in merged:
+            merged[t]["eval_krw"] += p["eval_krw"]
+        else:
+            merged[t] = dict(p)
+
+    # 현금(KRW+USD) 하나로 합산
+    cash_eval = sum(
+        v["eval_krw"] for k, v in merged.items() if k in ("KRW", "USD")
+    )
+    items = [v for k, v in merged.items() if k not in ("KRW", "USD")]
+    if cash_eval > 0:
+        items.append({
+            "ticker":   "CASH",
+            "name":     "현금",
+            "leverage": 1,
+            "eval_krw": cash_eval,
+        })
+
+    # 평가액 내림차순 정렬, 상위 8 + 기타
+    items_sorted = sorted(items, key=lambda x: x["eval_krw"], reverse=True)
+    top8       = items_sorted[:8]
+    others     = items_sorted[8:]
+    other_eval = sum(p["eval_krw"] for p in others)
+
+    slices = []
+    lev_palettes = {
+        1: ["#00c073", "#00a862", "#009050", "#007840", "#005c30"],
+        2: ["#e6a817", "#c98f0f", "#ad7a0c", "#916509", "#755207"],
+        3: ["#ff4d4d", "#e63c3c", "#cc2c2c", "#b21c1c", "#991010"],
+    }
+    lev_count = {1: 0, 2: 0, 3: 0}
+
+    for p in top8:
+        if p["ticker"] == "CASH":
+            slices.append({"label": "현금", "value": p["eval_krw"], "color": "#111111"})
+            continue
+        lev     = p["leverage"]
+        idx     = lev_count.get(lev, 0)
+        palette = lev_palettes.get(lev, ["#888888"])
+        color   = palette[min(idx, len(palette) - 1)]
+        lev_count[lev] = idx + 1
+        slices.append({
+            "label": p["name"] or p["ticker"],
+            "value": p["eval_krw"],
+            "color": color,
+        })
+
+    if other_eval > 0:
+        slices.append({"label": "기타", "value": other_eval, "color": "#3a3a3a"})
+
+    svg_html = _donut_svg(slices)
+
+    legend = []
+    for s in slices:
+        pct = s["value"] / total * 100
+        legend.append({
+            "label":    s["label"],
+            "color":    s["color"],
+            "pct":      f"{pct:.1f}%",
+            "is_cash":  s["label"] == "현금",
+        })
+
+    subtitle = f"상위 {min(8, len(items))}"
+
+    return {
+        "svg_html": svg_html,
+        "legend":   legend,
+        "subtitle": subtitle,
+    }
+
+
 # ── UI ───────────────────────────────────────────────────────
 
-@module.ui
-def dashboard_ui():
+def _dashboard_ui_dom_patch():
     return ui.div(
         {"id": "dashboard-root"},
+        # JS 핸들러: db_update 메시지 수신 → DOM 패치
+        ui.tags.script("""
+(function() {
+  function pnlClass(v) {
+    return v > 0 ? 'db-pos' : v < 0 ? 'db-neg' : 'db-neu';
+  }
+  function setText(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+  function setHTML(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = val;
+  }
+  function setClass(id, base, extra) {
+    var el = document.getElementById(id);
+    if (el) el.className = base + (extra ? ' ' + extra : '');
+  }
+
+  Shiny.addCustomMessageHandler('db_update', function(m) {
+
+    // ── 히어로 (텍스트) ───────────────────────────────
+    if (m.hero_text) {
+      setText('db-hero-amount',      m.hero_text.total_asset);
+      setText('db-hero-delta-text',  m.hero_text.delta_text);
+      setClass('db-hero-delta-text', 'db-hero-delta', pnlClass(m.hero_text.delta_val));
+    }
+    // ── 히어로 (차트 SVG) ─────────────────────────────
+    if (m.hero_chart_svg !== undefined) {
+      setHTML('db-hero-chart-inner', m.hero_chart_svg);
+    }
+
+    // ── Exposure ─────────────────────────────────────
+    if (m.exposure) {
+      var expEl = document.getElementById('db-exposure-val');
+      if (expEl) {
+        expEl.textContent = m.exposure.exposure_text;
+        expEl.className   = 'db-exposure-val ' + m.exposure.exp_cls;
+      }
+      setText('db-cash-ratio-val', m.exposure.cash_ratio_text);
+      setText('db-cash-eval-val',  m.exposure.cash_eval_text);
+
+      // 레버리지 바 세그먼트 교체
+      var track = document.getElementById('db-lev-bar-track');
+      if (track) track.innerHTML = m.exposure.lev_bar_html;
+
+      // 레버리지 범례 교체
+      var legend = document.getElementById('db-lev-legend');
+      if (legend) legend.innerHTML = m.exposure.lev_legend_html;
+    }
+
+    // ── 수익률 ───────────────────────────────────────
+    if (m.irr) {
+      var annEl = document.getElementById('db-annual-irr');
+      if (annEl) { annEl.textContent = m.irr.annual_text; annEl.className = 'db-metric-value ' + pnlClass(m.irr.annual_val); }
+      var monEl = document.getElementById('db-monthly-irr');
+      if (monEl) { monEl.textContent = m.irr.monthly_text; monEl.className = 'db-metric-value ' + pnlClass(m.irr.monthly_val); }
+    }
+
+    // ── 알파 ─────────────────────────────────────────
+    if (m.alpha) {
+      var caEl = document.getElementById('db-cumul-alpha');
+      if (caEl) { caEl.textContent = m.alpha.cumul_text; caEl.className = 'db-metric-value ' + pnlClass(m.alpha.cumul_val); }
+      var a30El = document.getElementById('db-alpha-30');
+      if (a30El) { a30El.textContent = m.alpha.alpha30_text; a30El.className = 'db-metric-value ' + pnlClass(m.alpha.alpha30_val); }
+    }
+
+    // ── 베타 ─────────────────────────────────────────
+    if (m.beta) {
+      setText('db-beta-all', m.beta.all_text);
+      setText('db-beta-30',  m.beta.beta30_text);
+    }
+
+    // ── 도넛 (텍스트) ─────────────────────────────────
+    if (m.donut_text) {
+      setHTML('db-donut-legend',    m.donut_text.legend_html);
+      setText('db-donut-title-sub', '(' + m.donut_text.subtitle + ')');
+    }
+    // ── 도넛 (SVG) ────────────────────────────────────
+    if (m.donut_svg !== undefined) {
+      setHTML('db-donut-svg-wrap', m.donut_svg);
+    }
+
+    // ── 은퇴 시뮬레이션 ──────────────────────────────
+    if (m.retirement) {
+      setText('db-retirement-subtitle', m.retirement.subtitle);
+      setText('db-retirement-amount',   m.retirement.amount_text);
+      setText('db-retirement-sub',      m.retirement.sub_text);
+      setText('db-retirement-compound', m.retirement.compound_text);
+    }
+  });
+})();
+        """),
+
         ui.div(
             {"class": "page-inner"},
 
             # ── 총자산 히어로 ─────────────────────────────
-            ui.output_ui("hero_block"),
+            ui.div(
+                {"class": "db-hero"},
+                ui.div({"id": "db-hero-chart-inner", "class": "db-hero-chart"}),
+                ui.div(
+                    {"class": "db-hero-content"},
+                    ui.div("총 자산", class_="db-hero-label"),
+                    ui.div("–", id="db-hero-amount", class_="db-hero-amount"),
+                    ui.div(
+                        {"class": "db-hero-delta-row"},
+                        ui.span("–", id="db-hero-delta-text", class_="db-hero-delta"),
+                        ui.span("전일 대비", class_="db-hero-delta-tag"),
+                    ),
+                ),
+            ),
 
             # ── 오늘 ──────────────────────────────────────
             ui.div(
                 {"class": "db-section"},
                 ui.div("오늘", class_="db-section-title"),
-                ui.output_ui("out_exposure_card"),
+                ui.div(
+                    {"class": "db-exposure-card"},
+                    # 상단: Exposure + 현금/투자 비중
+                    ui.div(
+                        {"class": "db-exposure-top"},
+                        ui.div(
+                            ui.div("익스포저", class_="db-today-label"),
+                            ui.span("–", id="db-exposure-val", class_="db-exposure-val"),
+                        ),
+                        ui.div(
+                            {"class": "db-exposure-right"},
+                            ui.div(
+                                {"class": "db-ratio-item"},
+                                ui.div("현금", class_="db-ratio-label"),
+                                ui.div("–", id="db-cash-ratio-val", class_="db-ratio-val"),
+                                ui.div("–", id="db-cash-eval-val",  class_="db-ratio-sub"),
+                            ),
+                        ),
+                    ),
+                    # 하단: 레버리지 바
+                    ui.div("레버리지 비중", class_="db-today-label"),
+                    ui.div({"id": "db-lev-bar-track",  "class": "db-lev-bar-track"}),
+                    ui.div({"id": "db-lev-legend",     "class": "db-lev-legend"}),
+                ),
             ),
 
             # ── 수익률 ────────────────────────────────────
@@ -388,12 +613,12 @@ def dashboard_ui():
                     ui.div(
                         {"class": "db-metric-card"},
                         ui.div("연평균 IRR", class_="db-metric-label"),
-                        ui.output_ui("out_annual_irr"),
+                        ui.span("–", id="db-annual-irr", class_="db-metric-value"),
                     ),
                     ui.div(
                         {"class": "db-metric-card"},
                         ui.div("월평균 IRR", class_="db-metric-label"),
-                        ui.output_ui("out_monthly_irr"),
+                        ui.span("–", id="db-monthly-irr", class_="db-metric-value"),
                     ),
                 ),
             ),
@@ -407,34 +632,69 @@ def dashboard_ui():
                     ui.div(
                         {"class": "db-metric-card"},
                         ui.div("누적 알파", class_="db-metric-label"),
-                        ui.output_ui("out_cumul_alpha"),
+                        ui.span("–", id="db-cumul-alpha", class_="db-metric-value"),
                     ),
                     ui.div(
                         {"class": "db-metric-card"},
                         ui.div("30일 알파", class_="db-metric-label"),
-                        ui.output_ui("out_alpha_30"),
+                        ui.span("–", id="db-alpha-30", class_="db-metric-value"),
                     ),
                 ),
-                ui.output_ui("out_beta"),
+                ui.div(
+                    {"class": "db-beta-card"},
+                    ui.div("베타 (vs NDX100)", class_="db-beta-label"),
+                    ui.div(
+                        {"class": "db-beta-values"},
+                        ui.span("전체 ",  class_="db-beta-tag"),
+                        ui.span("–", id="db-beta-all", class_="db-beta-value"),
+                        ui.span("/",      class_="db-beta-sep"),
+                        ui.span("30일 ", class_="db-beta-tag"),
+                        ui.span("–", id="db-beta-30",  class_="db-beta-value"),
+                    ),
+                ),
             ),
 
             # ── 종목 비중 ─────────────────────────────────
             ui.div(
                 {"class": "db-section"},
-                ui.output_ui("out_donut"),
+                ui.div(
+                    {"class": "db-donut-card"},
+                    ui.div(
+                        ui.span("종목 비중", class_="db-donut-title", style="display:inline"),
+                        ui.span("–", id="db-donut-title-sub", class_="db-donut-title-sub"),
+                    ),
+                    ui.div(
+                        {"class": "db-donut-wrap"},
+                        ui.div({"id": "db-donut-svg-wrap",  "class": "db-donut-svg-wrap"}),
+                        ui.div({"id": "db-donut-legend",    "class": "db-donut-legend"}),
+                    ),
+                ),
             ),
 
             # ── 은퇴 시뮬레이션 ───────────────────────────
-            ui.output_ui("out_retirement"),
-
+            ui.div(
+                {"class": "db-retirement"},
+                ui.div("미래 예측", class_="db-retirement-eyebrow"),
+                ui.div("–", id="db-retirement-subtitle", class_="db-retirement-subtitle"),
+                ui.div("–", id="db-retirement-amount",   class_="db-retirement-amount"),
+                ui.div("–", id="db-retirement-sub",      class_="db-retirement-sub"),
+                ui.div("–", id="db-retirement-compound", class_="db-retirement-compound"),
+            ),
         ),
     )
+
+
+@module.ui
+def dashboard_ui():
+    return _dashboard_ui_dom_patch()
 
 
 # ── Server ───────────────────────────────────────────────────
 
 @module.server
 def dashboard_server(input, output, session):
+
+    _last_display: dict = {}
 
     @reactive.calc
     def data():
@@ -446,296 +706,145 @@ def dashboard_server(input, output, session):
         _price_signal.get()
         return _load_position_data()
 
-    # ── 히어로 ────────────────────────────────────────
+    @reactive.effect
+    async def _send_update():
+            d = data()
+            positions = position_data()
+            if not d:
+                return
 
-    @output
-    @render.ui
-    def hero_block():
-        d = data()
-        if not d:
-            return ui.div({"class": "db-hero"}, ui.div({"class": "db-hero-content"}, ui.span("–")))
+            # ── 히어로 ──────────────────────────────────────
+            delta     = d["asset_delta"]
+            pct       = d["asset_delta_pct"]
+            chart_svg = _hero_line_svg(d.get("chart_data", []))
+            hero = {
+                "total_asset": fmt_krw(d["total_asset"]),
+                "delta_text":  f"{_arrow(delta)}{fmt_krw(abs(delta))}  ({_fmt_pct(pct)})",
+                "delta_val":   delta,
+                "chart_svg":   chart_svg,
+            }
 
-        delta = d["asset_delta"]
-        pct   = d["asset_delta_pct"]
-        cls   = _pnl_class(delta)
+            # ── Exposure ─────────────────────────────────────
+            exposure   = d["exposure"]
+            cash_ratio = d["cash_ratio"]
+            cash_eval  = d["cash_eval"]
+            x1   = d["x1_ratio"] * 100
+            x2   = d["x2_ratio"] * 100
+            x3   = d["x3_ratio"] * 100
+            cash = cash_ratio * 100
+            exp_cls = "db-neg" if exposure >= 1.5 else "db-warn" if exposure >= 1.2 else "db-pos"
 
-        chart_svg = _hero_line_svg(d.get("chart_data", []))
+            lev_bar_parts = []
+            for seg_cls, val, label in [
+                ("x1",   x1,   f"{x1:.0f}%"),
+                ("x2",   x2,   f"{x2:.0f}%"),
+                ("x3",   x3,   f"{x3:.0f}%"),
+                ("cash", cash, f"{cash:.0f}%"),
+            ]:
+                if val >= 0.5:
+                    inner = label if val >= 5 else ""
+                    lev_bar_parts.append(
+                        f'<div class="db-lev-bar-seg {seg_cls}" style="flex:{val:.1f}">{inner}</div>'
+                    )
 
-        return ui.div(
-            {"class": "db-hero"},
-            # 오버레이 차트
-            ui.HTML(f'<div class="db-hero-chart">{chart_svg}</div>'),
-            # 콘텐츠
-            ui.div(
-                {"class": "db-hero-content"},
-                ui.div("총 자산", class_="db-hero-label"),
-                ui.div(fmt_krw(d["total_asset"]), class_="db-hero-amount"),
-                ui.div(
-                    {"class": "db-hero-delta-row"},
-                    ui.span(
-                        f"{_arrow(delta)}{fmt_krw(abs(delta))}  ({_fmt_pct(pct)})",
-                        class_=f"db-hero-delta {cls}",
-                    ),
-                    ui.span("전일 대비", class_="db-hero-delta-tag"),
-                ),
-            ),
-        )
-
-    # ── 금일 순수익 ───────────────────────────────────
-
-
-    # ── Exposure + 레버리지 통합 카드 ─────────────────
-
-    @output
-    @render.ui
-    def out_exposure_card():
-        d = data()
-        if not d:
-            return ui.div({"class": "db-exposure-card"}, ui.span("–"))
-
-        exposure   = d["exposure"]
-        cash_ratio = d["cash_ratio"]
-        cash_eval  = d["cash_eval"]
-        x1 = d["x1_ratio"] * 100
-        x2 = d["x2_ratio"] * 100
-        x3 = d["x3_ratio"] * 100
-        cash = cash_ratio * 100
-
-        exp_cls = "db-neg" if exposure >= 1.5 else "db-warn" if exposure >= 1.2 else "db-pos"
-
-        # 레버리지 바 세그먼트
-        segs = []
-        for cls, val, label in [
-            ("x1",   x1,   f"{x1:.0f}%"),
-            ("x2",   x2,   f"{x2:.0f}%"),
-            ("x3",   x3,   f"{x3:.0f}%"),
-            ("cash", cash, f"{cash:.0f}%"),
-        ]:
-            if val >= 0.5:
-                segs.append(ui.div(
-                    {"class": f"db-lev-bar-seg {cls}", "style": f"flex:{val:.1f}"},
-                    label if val >= 5 else "",
-                ))
-
-        legend_items = []
-        for cls, val, label in [
-            ("x1",   x1,   f"x1  {x1:.1f}%"),
-            ("x2",   x2,   f"x2  {x2:.1f}%"),
-            ("x3",   x3,   f"x3  {x3:.1f}%"),
-            ("cash", cash, f"현금  {cash:.1f}%"),
-        ]:
-            legend_items.append(ui.span(
-                {"class": "db-lev-legend-item"},
-                ui.span({"class": f"db-lev-legend-dot {cls}"}),
-                label,
-            ))
-
-        return ui.div(
-            {"class": "db-exposure-card"},
-            # 상단: Exposure + 현금/투자 비중
-            ui.div(
-                {"class": "db-exposure-top"},
-                ui.div(
-                    ui.div("익스포저", class_="db-today-label"),
-                    ui.span(f"{exposure:.2f}x", class_=f"db-exposure-val {exp_cls}"),
-                ),
-                ui.div(
-                    {"class": "db-exposure-right"},
-                    ui.div(
-                        {"class": "db-ratio-item"},
-                        ui.div("현금", class_="db-ratio-label"),
-                        ui.div(_fmt_pct_plain(cash_ratio), class_="db-ratio-val"),
-                        ui.div(fmt_krw(cash_eval), class_="db-ratio-sub"),
-                    ),
-                ),
-            ),
-            # 하단: 레버리지 바
-            ui.div("레버리지 비중", class_="db-today-label"),
-            ui.div({"class": "db-lev-bar-track"}, *segs),
-            ui.div({"class": "db-lev-legend"}, *legend_items),
-        )
-
-    # ── 수익률 ────────────────────────────────────────
-
-    @output
-    @render.ui
-    def out_annual_irr():
-        d = data()
-        if not d: return ui.span("–", class_="db-metric-value")
-        val = d["annual_irr"]
-        return ui.span(_fmt_pct(val), class_=f"db-metric-value {_pnl_class(val)}")
-
-    @output
-    @render.ui
-    def out_monthly_irr():
-        d = data()
-        if not d: return ui.span("–", class_="db-metric-value")
-        val = d["monthly_irr"]
-        return ui.span(_fmt_pct(val), class_=f"db-metric-value {_pnl_class(val)}")
-
-    # ── 알파 ──────────────────────────────────────────
-
-    @output
-    @render.ui
-    def out_cumul_alpha():
-        d = data()
-        if not d: return ui.span("–", class_="db-metric-value")
-        val = d["cumul_alpha"]
-        return ui.span(_fmt_pct(val), class_=f"db-metric-value {_pnl_class(val)}")
-
-    @output
-    @render.ui
-    def out_alpha_30():
-        d = data()
-        if not d: return ui.span("–", class_="db-metric-value")
-        val = d["alpha_30"]
-        return ui.span(_fmt_pct(val), class_=f"db-metric-value {_pnl_class(val)}")
-
-    # ── 베타 ──────────────────────────────────────────
-
-    @output
-    @render.ui
-    def out_beta():
-        d = data()
-        if not d: return ui.span("")
-        return ui.div(
-            {"class": "db-beta-card"},
-            ui.div("베타 (vs NDX100)", class_="db-beta-label"),
-            ui.div(
-                {"class": "db-beta-values"},
-                ui.span("전체 ", class_="db-beta-tag"),
-                ui.span(f"{d['beta_all']:.2f}", class_="db-beta-value"),
-                ui.span("/", class_="db-beta-sep"),
-                ui.span("30일 ", class_="db-beta-tag"),
-                ui.span(f"{d['beta_30']:.2f}", class_="db-beta-value"),
-            ),
-        )
-
-    # ── 종목 비중 도넛 ────────────────────────────────
-
-    @output
-    @render.ui
-    def out_donut():
-        positions = position_data()
-        if not positions:
-            return ui.span("")
-
-        total = sum(p["eval_krw"] for p in positions)
-        if total == 0:
-            return ui.span("")
-
-        # 같은 티커 합산
-        merged: dict[str, dict] = {}
-        for p in positions:
-            t = p["ticker"]
-            if t in merged:
-                merged[t]["eval_krw"] += p["eval_krw"]
-            else:
-                merged[t] = dict(p)
-
-        # 현금(KRW+USD) 하나로 합산 → 종목처럼 취급
-        cash_eval = sum(
-            v["eval_krw"] for k, v in merged.items() if k in ("KRW", "USD")
-        )
-        items = [v for k, v in merged.items() if k not in ("KRW", "USD")]
-        if cash_eval > 0:
-            items.append({
-                "ticker":   "CASH",
-                "name":     "현금",
-                "leverage": 1,
-                "eval_krw": cash_eval,
-            })
-
-        # 평가액 내림차순 정렬, 상위 8 + 기타
-        items_sorted = sorted(items, key=lambda x: x["eval_krw"], reverse=True)
-        top8       = items_sorted[:8]
-        others     = items_sorted[8:]
-        other_eval = sum(p["eval_krw"] for p in others)
-
-        # 슬라이스 구성
-        slices = []
-        lev_palettes = {
-            1: ["#00c073", "#00a862", "#009050", "#007840", "#005c30"],
-            2: ["#e6a817", "#c98f0f", "#ad7a0c", "#916509", "#755207"],
-            3: ["#ff4d4d", "#e63c3c", "#cc2c2c", "#b21c1c", "#991010"],
-        }
-        lev_count = {1: 0, 2: 0, 3: 0}
-
-        for p in top8:
-            if p["ticker"] == "CASH":
-                slices.append({"label": "현금", "value": p["eval_krw"], "color": "#111111"})
-                continue
-            lev     = p["leverage"]
-            idx     = lev_count.get(lev, 0)
-            palette = lev_palettes.get(lev, ["#888888"])
-            color   = palette[min(idx, len(palette) - 1)]
-            lev_count[lev] = idx + 1
-            slices.append({
-                "label": p["name"] or p["ticker"],
-                "value": p["eval_krw"],
-                "color": color,
-            })
-
-        if other_eval > 0:
-            slices.append({"label": "기타", "value": other_eval, "color": "#3a3a3a"})
-
-        svg_html = _donut_svg(slices)
-
-        # 범례 행
-        legend_rows = []
-        for s in slices:
-            pct = s["value"] / total * 100
-            dot_cls = "db-donut-legend-dot cash" if s["label"] == "현금" else "db-donut-legend-dot"
-            legend_rows.append(
-                ui.div(
-                    {"class": "db-donut-legend-row"},
-                    ui.span({"class": dot_cls, "style": f"background:{s['color']}"}),
-                    ui.span(s["label"], class_="db-donut-legend-name"),
-                    ui.span(f"{pct:.1f}%", class_="db-donut-legend-pct"),
+            lev_legend_parts = []
+            for seg_cls, val, label in [
+                ("x1",   x1,   f"x1  {x1:.1f}%"),
+                ("x2",   x2,   f"x2  {x2:.1f}%"),
+                ("x3",   x3,   f"x3  {x3:.1f}%"),
+                ("cash", cash, f"현금  {cash:.1f}%"),
+            ]:
+                lev_legend_parts.append(
+                    f'<span class="db-lev-legend-item">'
+                    f'<span class="db-lev-legend-dot {seg_cls}"></span>'
+                    f'{label}</span>'
                 )
-            )
 
-        subtitle = f"상위 {min(8, len(items))}"
+            exposure_payload = {
+                "exposure_text":   f"{exposure:.2f}x",
+                "exp_cls":         exp_cls,
+                "cash_ratio_text": _fmt_pct_plain(cash_ratio),
+                "cash_eval_text":  fmt_krw(cash_eval),
+                "lev_bar_html":    "".join(lev_bar_parts),
+                "lev_legend_html": "".join(lev_legend_parts),
+            }
 
-        return ui.div(
-            {"class": "db-donut-card"},
-            ui.div(
-                ui.span("종목 비중", class_="db-donut-title", style="display:inline"),
-                ui.span(f"({subtitle})", class_="db-donut-title-sub"),
-            ),
-            ui.div(
-                {"class": "db-donut-wrap"},
-                ui.div({"class": "db-donut-svg-wrap"}, ui.HTML(svg_html)),
-                ui.div({"class": "db-donut-legend"}, *legend_rows),
-            ),
-        )
+            # ── 수익률 ───────────────────────────────────────
+            irr = {
+                "annual_text":  _fmt_pct(d["annual_irr"]),
+                "annual_val":   d["annual_irr"],
+                "monthly_text": _fmt_pct(d["monthly_irr"]),
+                "monthly_val":  d["monthly_irr"],
+            }
 
-    # ── 은퇴 시뮬레이션 ──────────────────────────────
+            # ── 알파 ─────────────────────────────────────────
+            alpha = {
+                "cumul_text":   _fmt_pct(d["cumul_alpha"]),
+                "cumul_val":    d["cumul_alpha"],
+                "alpha30_text": _fmt_pct(d["alpha_30"]),
+                "alpha30_val":  d["alpha_30"],
+            }
 
-    @output
-    @render.ui
-    def out_retirement():
-        d = data()
-        if not d:
-            return ui.span("")
-        ret_asset   = d["retirement_asset"]
-        ret_date    = d["retirement_date"]
-        monthly_irr = d["monthly_irr"]
-        today       = datetime.date.today()
-        months      = max(0, (ret_date.year - today.year) * 12 + (ret_date.month - today.month))
-        years       = months / 12
+            # ── 베타 ─────────────────────────────────────────
+            beta = {
+                "all_text":    f"{d['beta_all']:.2f}",
+                "beta30_text": f"{d['beta_30']:.2f}",
+            }
 
-        return ui.div(
-            {"class": "db-retirement"},
-            ui.div("미래 예측", class_="db-retirement-eyebrow"),
-            ui.div(
-                f"은퇴 시뮬레이션 ({ret_date.strftime('%Y년 %m월')}, +{years:.1f}년 후)",
-                class_="db-retirement-subtitle",
-            ),
-            ui.div(fmt_krw(ret_asset), class_="db-retirement-amount"),
-            ui.div(
-                f"월평균 IRR {_fmt_pct(monthly_irr)} 복리 적용",
-                class_="db-retirement-sub",
-            ),
-            ui.div(f"{months}개월 복리", class_="db-retirement-compound"),
-        )
+            # ── 도넛 ─────────────────────────────────────────
+            donut_data = _build_donut_payload(positions)
+            if donut_data:
+                legend_html_parts = []
+                for item in donut_data["legend"]:
+                    dot_cls = "db-donut-legend-dot cash" if item["is_cash"] else "db-donut-legend-dot"
+                    legend_html_parts.append(
+                        f'<div class="db-donut-legend-row">'
+                        f'<span class="{dot_cls}" style="background:{item["color"]}"></span>'
+                        f'<span class="db-donut-legend-name">{item["label"]}</span>'
+                        f'<span class="db-donut-legend-pct">{item["pct"]}</span>'
+                        f'</div>'
+                    )
+                donut = {
+                    "svg_html":    donut_data["svg_html"],
+                    "legend_html": "".join(legend_html_parts),
+                    "subtitle":    donut_data["subtitle"],
+                }
+            else:
+                donut = {"svg_html": "", "legend_html": "", "subtitle": "–"}
+
+            # ── 은퇴 시뮬레이션 ──────────────────────────────
+            ret_asset   = d["retirement_asset"]
+            ret_date    = d["retirement_date"]
+            monthly_irr = d["monthly_irr"]
+            today       = datetime.date.today()
+            months      = max(0, (ret_date.year - today.year) * 12 + (ret_date.month - today.month))
+            years       = months / 12
+            retirement = {
+                "subtitle":      f"은퇴 시뮬레이션 ({ret_date.strftime('%Y년 %m월')}, +{years:.1f}년 후)",
+                "amount_text":   fmt_krw(ret_asset),
+                "sub_text":      f"월평균 IRR {_fmt_pct(monthly_irr)} 복리 적용",
+                "compound_text": f"{months}개월 복리",
+            }
+
+            current = {
+                "hero_text": {
+                    "total_asset": hero["total_asset"],
+                    "delta_text":  hero["delta_text"],
+                    "delta_val":   hero["delta_val"],
+                },
+                "hero_chart_svg": hero["chart_svg"],
+                "exposure": exposure_payload,
+                "irr":   irr,
+                "alpha": alpha,
+                "beta":  beta,
+                "donut_text": {
+                    "legend_html": donut["legend_html"],
+                    "subtitle":    donut["subtitle"],
+                },
+                "donut_svg": donut["svg_html"],
+                "retirement": retirement,
+            }
+
+            diff = diff_display(current, _last_display)
+            if diff:
+                await session.send_custom_message("db_update", diff)

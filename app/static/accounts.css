@@ -15,7 +15,7 @@
 
 .detail-titlebar-back {
     position: absolute;
-    left: 16px;
+    left: 0px;
     color: var(--text-bright);
     font-size: 22px;
     cursor: pointer;

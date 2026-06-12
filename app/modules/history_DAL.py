@@ -4,6 +4,7 @@ from app.db import get_db
 
 
 def load_history():
+    """DB에서 과거 rows만 반환. today_row는 포함하지 않음."""
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -14,37 +15,27 @@ def load_history():
         """)
         rows = cur.fetchall()
         cur.close()
+    return rows
 
-    # Redis today row 붙이기 — 실패해도 기존 rows 그대로 반환
+
+def load_today_row() -> dict | None:
+    """Redis에서 today_row만 조회. 없으면 None."""
     try:
         from common.redis_store import get_redis
         r = get_redis()
-        if r:
-            raw = r.get("today_row")
-            if raw:
-                t = json.loads(raw)
-                today = datetime.date.today()
-                # DB 마지막 날짜가 오늘이면 중복이므로 스킵
-                if not rows or rows[-1][0] < today:
-                    today_row = (
-                        today,
-                        t.get("total_asset"),
-                        t.get("twr_asset"),
-                        t.get("ndx100"),
-                        t.get("cash_flow", 0),
-                        t.get("cash_flow_note"),
-                        t.get("exposure"),
-                        t.get("cash_ratio"),
-                        t.get("x1_ratio"),
-                        t.get("x2_ratio"),
-                        t.get("x3_ratio"),
-                        t.get("usd_krw"),
-                    )
-                    rows = list(rows) + [today_row]
+        if not r:
+            return None
+        raw = r.get("today_row")
+        if not raw:
+            return None
+        t = json.loads(raw)
+        today = datetime.date.today()
+        t["date"] = str(today)
+        return t
     except Exception as e:
-        print(f"[history_DAL] Redis today_row 조회 실패 (무시): {e}")
+        print(f"[history_DAL] load_today_row 실패 (무시): {e}")
+        return None
 
-    return rows
 
 def calc_twr_pct(rows):
     if not rows:
@@ -62,6 +53,7 @@ def calc_ndx_pct(rows):
     if base == 0:
         return [0.0] * len(rows)
     return [(float(r[3] or 0) / base - 1) * 100 for r in rows]
+
 
 def save_cash_flow(date_str: str, cash_flow: int, note: str):
     with get_db() as conn:

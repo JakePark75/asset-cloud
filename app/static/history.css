@@ -93,3 +93,7 @@
     display: none;
 }
 .history-load-more:active { opacity: 0.6; }
+
+.history-table tbody tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.03);
+}
