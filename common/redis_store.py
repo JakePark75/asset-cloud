@@ -14,6 +14,8 @@ import datetime
 import threading
 import sys
 import os
+from zoneinfo import ZoneInfo
+KST = ZoneInfo("Asia/Seoul")
 
 import redis
 
@@ -205,8 +207,9 @@ def recalc_today_row() -> None:
             twr_asset = prev_twr * ((total_asset - cash_flow) / denom) if denom else prev_twr
 
         # 10. Redis 저장
+        
         today_row = {
-            "date":           str(datetime.date.today()),
+            "date":           str(datetime.datetime.now(KST).date()),
             "total_asset":    total_asset,
             "twr_asset":      twr_asset,
             "ndx100":         ndx100,
