@@ -298,26 +298,10 @@ def get_yahoo_price(ticker):
         return 0.0, 0.0, datetime.now(timezone.utc)
 
 # ---------------------------------------------------------------------------
-# DB 업데이트
+# Redis 시세 업데이트
 # ---------------------------------------------------------------------------
-def update_ticker_in_db(conn, ticker, price, change_pct, data_time=None):
-    # TODO: Redis 전환 완료(Step 6) 후 current_price, change_pct DB write 제거 대상.
-    #       updated_at, data_time 은 메타데이터이므로 유지.
-    # with conn.cursor() as cur:
-    #     cur.execute(
-    #         """
-    #         UPDATE tickers
-    #            SET current_price = %s,
-    #                change_pct    = %s,
-    #                updated_at    = %s,
-    #                data_time     = %s
-    #          WHERE ticker = %s
-    #         """,
-    #         (price, change_pct, datetime.now(), data_time, ticker),
-    #     )
-    # conn.commit()
-
-    # Redis write (휘발성 시세 데이터 — 각 화면은 Step 6 이후 Redis에서만 읽음)
+def update_price_cache(ticker, price, change_pct, data_time=None):
+    # Redis write (휘발성 시세 데이터)
     try:
         from common.redis_store import write_price
         write_price(ticker, float(price), float(change_pct))
@@ -407,12 +391,8 @@ def run_kr_final_close_update():
             if price == 0:
                 log.warning(f"[{ticker}] KR 종가 가격 0 — 건너뜀")
                 return
-            conn = get_db_conn()
-            try:
-                update_ticker_in_db(conn, ticker, price, change_pct, None)
-                log.info(f"[{ticker}] KR 종가: {price:,.4f} ({change_pct:+.2f}%)")
-            finally:
-                conn.close()
+            update_price_cache(ticker, price, change_pct, None)
+            log.info(f"[{ticker}] KR 종가: {price:,.4f} ({change_pct:+.2f}%)")
         except Exception as e:
             log.error(f"[{ticker}] KR 종가 조회 실패: {e}")
 
@@ -423,19 +403,11 @@ def run_kr_final_close_update():
         t.join()
 
     try:
-        from common.redis_store import recalc_today_row
+        from common.redis_store import recalc_today_row, publish_price_updated
         recalc_today_row()
+        publish_price_updated()
+        log.info("price_updated 신호 발행 (Redis, KR 종가)")
     except Exception as e:
-        log.error(f"recalc_today_row 실패: {e}")
-
-    try:
-        conn = get_db_conn()
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute("NOTIFY price_updated")
-        conn.close()
-        log.info("NOTIFY price_updated 전송 (KR 종가)")
-    except Exception as e:
-        log.error(f"NOTIFY 실패: {e}")
+        log.error(f"recalc_today_row/신호 발행 실패: {e}")
 
     log.info("KR 종가 확정 조회 완료")

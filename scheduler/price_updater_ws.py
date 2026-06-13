@@ -27,7 +27,7 @@ from price_updater_common import (
     holiday_cache,
     get_market_status,
     get_yahoo_price,
-    update_ticker_in_db,
+    update_price_cache,
     should_run_kr_final_close,
     run_kr_final_close_update,
 )
@@ -142,35 +142,27 @@ def parse_us(raw: str):
         return None
 
 # ---------------------------------------------------------------------------
-# 웹소켓 수신 데이터 → DB 업데이트
+# 웹소켓 수신 데이터 → Redis 업데이트
 # ---------------------------------------------------------------------------
 def _save_price(ticker: str, price: float, change_pct: float):
     if price == 0:
-        log.warning(f"[{ticker}] 가격 0 수신 — DB 업데이트 건너뜀")
+        log.warning(f"[{ticker}] 가격 0 수신 — 저장 건너뜀")
         return
     try:
-        conn = get_db_conn()
-        try:
-            update_ticker_in_db(conn, ticker, price, change_pct, None)
-            log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
-        finally:
-            conn.close()
+        update_price_cache(ticker, price, change_pct, None)
+        log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
     except Exception as e:
-        log.error(f"[{ticker}] DB 저장 실패: {e}")
+        log.error(f"[{ticker}] 저장 실패: {e}")
 
 
 def _notify():
     try:
-        from common.redis_store import recalc_today_row
-        recalc_today_row()  # ← 추가
-        conn = get_db_conn()
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute("NOTIFY price_updated")
-        conn.close()
-        log.info("NOTIFY price_updated 전송")  # 추가
+        from common.redis_store import recalc_today_row, publish_price_updated
+        recalc_today_row()
+        publish_price_updated()
+        log.info("price_updated 신호 발행 (Redis)")
     except Exception as e:
-        log.error(f"NOTIFY 실패: {e}")
+        log.error(f"신호 발행 실패: {e}")
 
 # ---------------------------------------------------------------------------
 # US tr_key → DB ticker 역매핑 테이블
@@ -245,12 +237,8 @@ async def yahoo_poll_task(yahoo_rows: list):
                 if price == 0:
                     log.warning(f"[{ticker}] Yahoo 가격 0 — 건너뜀")
                     continue
-                conn = get_db_conn()
-                try:
-                    update_ticker_in_db(conn, ticker, price, change_pct, data_time)
-                    log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
-                finally:
-                    conn.close()
+                update_price_cache(ticker, price, change_pct, data_time)
+                log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
             except Exception as e:
                 log.error(f"[{ticker}] Yahoo 폴링 실패: {e}")
 
@@ -353,7 +341,7 @@ async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
                             else:
                                 log.warning(f"[US] 매핑 실패: {symb}")
 
-                    # 일정 주기마다 NOTIFY
+                    # 일정 주기마다 price_updated 신호 발행 (Redis pub/sub)
                     now = time.time()
                     # if now - last_notify >= YAHOO_POLL_INTERVAL:
                     if now - last_notify >= 0.2:

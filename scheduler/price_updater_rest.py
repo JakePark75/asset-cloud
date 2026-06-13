@@ -13,7 +13,7 @@ from price_updater_common import (
     log,
     load_config, get_db_conn, get_access_token,
     holiday_cache, get_market_status,
-    get_yahoo_price, update_ticker_in_db,
+    get_yahoo_price, update_price_cache,
     get_kr_price,
     should_run_kr_final_close, run_kr_final_close_update,
 )
@@ -71,18 +71,17 @@ def update_worker(row):
             return
 
         if price == 0:
-            log.warning(f"[{ticker}] 가격 0 수신 — DB 업데이트 건너뜀")
+            log.warning(f"[{ticker}] 가격 0 수신 — 업데이트 건너뜀")
             return
 
-        conn = get_db_conn()
         try:
-            update_ticker_in_db(
-                conn, ticker, price, change_pct,
+            update_price_cache(
+                ticker, price, change_pct,
                 data_time if market_time == "24h" else None
             )
             log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
-        finally:
-            conn.close()
+        except Exception as e:
+            log.error(f"[{ticker}] 시세 업데이트 실패: {e}")
 
     except Exception as e:
         log.error(f"[{ticker}] 업데이트 실패: {e}")
@@ -136,15 +135,9 @@ def run_update_cycle(force=False):
     except Exception as e:
         log.error(f"recalc_today_row 실패: {e}")
 
-    try:
-        conn = get_db_conn()
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute("NOTIFY price_updated")
-        conn.close()
-        log.info("NOTIFY price_updated 전송")
-    except Exception as e:
-        log.error(f"NOTIFY 실패: {e}")
+    from common.redis_store import publish_price_updated
+    publish_price_updated()
+    log.info("price_updated 신호 발행 (Redis)")
 
 
 # ---------------------------------------------------------------------------

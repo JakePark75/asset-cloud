@@ -7,6 +7,8 @@ common/redis_store.py
 - get_price()          : 단일 종목 시세 조회
 - get_all_prices()     : 전체 종목 시세 조회
 - recalc_today_row()   : 오늘치 실적 row 계산 + Redis 저장 (Lock 보호)
+- publish_price_updated()   : price_updated 채널에 신호 발행 (NOTIFY 대체)
+- publish_daily_inserted()  : daily_inserted 채널에 신호 발행 (NOTIFY 대체)
 """
 
 import json
@@ -65,6 +67,40 @@ def write_price(ticker: str, price: float, change_pct: float) -> None:
             r.set("usd_krw", price)
     except Exception as e:
         print(f"[redis_store] write_price 실패 ({ticker}): {e}")
+
+
+# ── 갱신 신호 Pub/Sub (NOTIFY 대체) ────────────────────────────────────────────
+
+def publish_price_updated() -> None:
+    """
+    price_updated 채널에 신호 발행.
+    기존 PostgreSQL NOTIFY price_updated 대체.
+    payload는 의미 없는 고정값("1") — 화면 쪽은 채널 수신 자체만 트리거로 사용.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.publish("price_updated", "1")
+    except Exception as e:
+        print(f"[redis_store] publish_price_updated 실패: {e}")
+
+
+def publish_daily_inserted() -> None:
+    """
+    daily_inserted 채널에 신호 발행.
+    기존 PostgreSQL NOTIFY daily_inserted 대체.
+    payload는 의미 없는 고정값("1") — 화면 쪽은 채널 수신 자체만 트리거로 사용.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.publish("daily_inserted", "1")
+    except Exception as e:
+        print(f"[redis_store] publish_daily_inserted 실패: {e}")
 
 
 def get_price(ticker: str) -> dict | None:

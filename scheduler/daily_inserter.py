@@ -234,18 +234,16 @@ def _schedule_retry() -> None:
     threading.Timer(3600, _on_trigger).start()
 
 # ---------------------------------------------------------------------------
-# NOTIFY 발송
+# 갱신 신호 발행 (Redis pub/sub)
 # ---------------------------------------------------------------------------
 def _notify_daily_inserted() -> None:
     try:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("NOTIFY daily_inserted")
-            conn.commit()
+        from common.redis_store import publish_daily_inserted
+        publish_daily_inserted()
     except Exception as e:
         now_kst = datetime.datetime.now(KST)
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
-              f"⚠️ NOTIFY daily_inserted 실패 (무시): {e}", flush=True)
+              f"⚠️ daily_inserted 신호 발행 실패 (무시): {e}", flush=True)
 
 # ---------------------------------------------------------------------------
 # 트리거 핸들러

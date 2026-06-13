@@ -12,22 +12,19 @@ def _notify_price_updated():
     티커 추가/삭제 후 다른 화면들에게 갱신 신호를 보낸다.
 
     배경:
-      티커가 추가/삭제되어도 price_updater 의 NOTIFY 가 오기 전까지
+      티커가 추가/삭제되어도 price_updater 의 신호(Redis pub/sub)가 오기 전까지
       포트폴리오/대시보드 등 다른 화면은 변경을 인지하지 못한다.
-      티커 변경은 시세 변경과 독립적인 이벤트이므로 직접 NOTIFY 를 발송한다.
+      티커 변경은 시세 변경과 독립적인 이벤트이므로 직접 Redis pub/sub 신호를 발행한다.
 
     주의:
       - price_updater 와 동일한 채널(price_updated)을 사용하므로 추가 리스너 불필요.
       - 실패해도 설정 화면 자체의 갱신(refresh)에는 영향 없으므로 예외를 삼킨다.
     """
     try:
-        with get_db() as conn:
-            conn.autocommit = True
-            cur = conn.cursor()
-            cur.execute("NOTIFY price_updated")
-            cur.close()
+        from common.redis_store import publish_price_updated
+        publish_price_updated()
     except Exception as e:
-        print(f"[settings] NOTIFY price_updated 실패 (무시): {e}")
+        print(f"[settings] price_updated 신호 발행 실패 (무시): {e}")
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────────

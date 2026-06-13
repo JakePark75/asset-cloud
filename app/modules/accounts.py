@@ -1,7 +1,7 @@
 from shiny import ui, module, reactive
 
 from app.modules.accounts_DAL import fetch_accounts_summary, fetch_account_details
-from app.db import get_connection, get_db, get_usd_krw, get_config, get_market_currency, get_market_map, get_market_label
+from app.db import get_db, get_usd_krw, get_config, get_market_currency, get_market_map, get_market_label
 from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
 from app.price_signal import price_signal, daily_insert_signal
 from scheduler.price_updater_common import get_market_status
@@ -10,20 +10,11 @@ from app.utils.display_diff import diff_display
 
 def _notify_price_updated():
     try:
-        conn = get_connection()
-        conn.autocommit = True
-        cur = conn.cursor()
-        cur.execute("NOTIFY price_updated")
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(f"[accounts] NOTIFY price_updated 실패 (무시): {e}")
-
-    try:
-        from common.redis_store import recalc_today_row
+        from common.redis_store import recalc_today_row, publish_price_updated
         recalc_today_row()
+        publish_price_updated()
     except Exception as e:
-        print(f"[accounts] recalc_today_row 실패 (무시): {e}")
+        print(f"[accounts] price_updated 신호 발행 실패 (무시): {e}")
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────────

@@ -167,7 +167,7 @@ app_ui = ui.page_fluid(
 def server(input, output, session):
     from app.price_signal import start_signal_listener
     from app.db import get_config
-    start_signal_listener(get_config()["db_password"])
+    start_signal_listener()
 
     active_tab = reactive.value("dashboard")
 
