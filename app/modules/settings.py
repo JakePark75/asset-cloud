@@ -118,15 +118,42 @@ def settings_ui():
     market_options = "".join(f'<option value="{m}">{m}</option>' for m in market_choices)
 
     return ui.div(
+        ui.tags.style("""
+/* ── 실시간 토글 스위치 ──────────────────── */
+.toggle-track {
+  display: inline-block;
+  width: 42px; height: 24px;
+  background: #333;
+  border-radius: 12px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 18px; height: 18px;
+  background: #888;
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+#st-realtime-toggle:checked ~ .toggle-track {
+  background: #00c073;
+}
+#st-realtime-toggle:checked ~ .toggle-track::after {
+  transform: translateX(18px);
+  background: #fff;
+}
+        """),
         ui.tags.script("""
 (function() {
 
   // ── st_init: 종목 구성 변경 시 골격 통째 교체 ──────────────
   Shiny.addCustomMessageHandler('st_init', function(m) {
-    // interval 버튼 active 상태 반영
-    document.querySelectorAll('.interval-btn').forEach(function(b) {
-      b.classList.toggle('active', parseInt(b.dataset.val) === m.interval);
-    });
+    // 실시간 토글 상태 반영
+    var toggle = document.getElementById('st-realtime-toggle');
+    if (toggle) toggle.checked = (m.interval === 0);
 
     var listEl = document.getElementById('st-ticker-list');
     if (listEl) listEl.innerHTML = m.ticker_list_html || '<p style="color:#888; padding:8px 0;">등록된 티커가 없습니다.</p>';
@@ -187,22 +214,26 @@ def settings_ui():
         ui.div(
             # 시세조회 간격
             ui.div(
-                ui.p("시세조회 간격", style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:12px;"),
                 ui.div(
-                    *[
-                        ui.tags.button(
-                            label,
-                            class_="interval-btn",
-                            **{"data-val": str(v)},
-                            onclick=(
-                                f"Shiny.setInputValue('settings-btn_save_interval', {v}, {{priority: 'event'}});"
-                                "document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));"
-                                "this.classList.add('active');"
+                    ui.p("시세조회 간격", style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin:0;"),
+                    ui.div(
+                        ui.tags.label(
+                            ui.tags.input(
+                                id="st-realtime-toggle",
+                                type="checkbox",
+                                style="display:none;",
+                                onchange=(
+                                    "Shiny.setInputValue('settings-btn_save_interval',"
+                                    " this.checked ? 0 : -1, {priority: 'event'});"
+                                ),
                             ),
-                        )
-                        for v, label in [(0, "실시간"), (1, "1분"), (3, "3분"), (5, "5분"), (10, "10분"), (30, "30분")]
-                    ],
-                    style="display:flex; gap:8px;",
+                            ui.span(class_="toggle-track"),
+                            style="display:inline-flex; align-items:center; cursor:pointer;",
+                        ),
+                        ui.span("실시간", style="font-size:13px; color:#ccc; margin-left:8px;"),
+                        style="display:flex; align-items:center;",
+                    ),
+                    style="display:flex; justify-content:space-between; align-items:center;",
                 ),
                 style="padding: 20px 0; border-bottom: 1px solid #1e1e1e;",
             ),
@@ -300,6 +331,8 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
     _last_display: dict = {}
 
     # ── 시세조회 간격 저장 ────────────────────────────────────────────────────
+    # val=0  → 실시간 ON  : config["interval"] = 0
+    # val=-1 → 실시간 OFF : config["interval"] 를 config["default_interval"] 로 복원
 
     @reactive.effect
     @reactive.event(input.btn_save_interval)
@@ -308,7 +341,12 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         if val is None:
             return
         config = get_config()
-        config["interval"] = val
+        if val == 0:
+            # 실시간 ON
+            config["interval"] = 0
+        else:
+            # 실시간 OFF → config 에 저장된 default_interval 로 복원
+            config["interval"] = config.get("default_interval", 1)
         save_config(config)
         subprocess.Popen(["sudo", "systemctl", "restart", "price_updater"])
 
