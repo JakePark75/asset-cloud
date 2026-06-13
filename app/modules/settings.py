@@ -92,10 +92,9 @@ def _build_tick_values(ticker, market, price, change_pct):
 
     status = get_market_status(market)
     dot_map = {
-        "open":    ("●", "Open",       "status-open"),
-        "pre":     ("●", "Pre",        "status-pre"),
-        "after":   ("●", "After",      "status-after"),
-        "closing": ("●", "Closing...", "status-closing"),
+        "open":    ("●", "Open",  "status-open"),
+        "pre":     ("●", "Pre",   "status-pre"),
+        "after":   ("●", "After", "status-after"),
     }
     status_dot, status_text, status_cls = dot_map.get(status, ("○", "Closed", "status-closed"))
 
@@ -321,6 +320,7 @@ def settings_ui():
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
+
 @module.server
 def settings_server(input, output, session, active_tab: reactive.value = None):
     initialized = reactive.value(False)
@@ -356,6 +356,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
     # diff_display 로 이전 화면과 비교해 변경된 필드만 JS로 전송 (DOM 전체 교체 아님).
     # 탭 비활성 시 스킵: 보이지 않는 DOM을 패치하는 건 낭비이고,
     # 탭 활성화 순간 active_tab 이 "settings"로 바뀌면서 자동으로 재실행된다.
+
     @reactive.effect
     async def _send_update():
         nonlocal _last_tickers, _last_display

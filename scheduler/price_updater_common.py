@@ -27,6 +27,14 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 LOG_FILE    = os.path.join(BASE_DIR, "price_updater.log")
 
 # ---------------------------------------------------------------------------
+# 시장 마감/시간외종가 개시 후 안전마진 (분)
+#  - KR  조회중단: 15:30 + 이 값
+#  - KR  종가확정 1회 조회: 15:40 + 이 값
+#  - US  pre/after 경계에도 동일 적용
+# ---------------------------------------------------------------------------
+MARKET_CLOSE_BUFFER_MIN = 5
+
+# ---------------------------------------------------------------------------
 # 로깅
 # ---------------------------------------------------------------------------
 logging.basicConfig(
@@ -181,7 +189,7 @@ holiday_cache = HolidayCache()
 
 # ---------------------------------------------------------------------------
 # 시장 상태 판단
-# 반환값: "open" | "pre" | "closing" | "after" | "closed"
+# 반환값: "open" | "pre" | "after" | "closed"
 # ---------------------------------------------------------------------------
 def get_market_status(market: str) -> str:
     _config = config if config else {}
@@ -199,8 +207,6 @@ def get_market_status(market: str) -> str:
     if market_time == "24h":
         return "open"
 
-    buf = _config.get("interval", 1)
-
     if market_time == "KR":
         tz = pytz.timezone("Asia/Seoul")
         now_local   = datetime.now(tz)
@@ -212,10 +218,8 @@ def get_market_status(market: str) -> str:
             return "closed"
 
         now_min = now_local.hour * 60 + now_local.minute
-        if 9 * 60 - buf <= now_min <= 15 * 60 + 30:
+        if 9 * 60 - MARKET_CLOSE_BUFFER_MIN <= now_min <= 15 * 60 + 30 + MARKET_CLOSE_BUFFER_MIN:
             return "open"
-        if 15 * 60 + 30 < now_min <= 18 * 60:
-            return "closing"
         return "closed"
 
     if market_time == "US":
@@ -229,11 +233,11 @@ def get_market_status(market: str) -> str:
             return "closed"
 
         now_min = now_local.hour * 60 + now_local.minute
-        if 4 * 60 - buf <= now_min < 9 * 60 + 30:
+        if 4 * 60 - MARKET_CLOSE_BUFFER_MIN <= now_min < 9 * 60 + 30:
             return "pre"
         if 9 * 60 + 30 <= now_min <= 16 * 60:
             return "open"
-        if 16 * 60 < now_min <= 20 * 60 + buf:
+        if 16 * 60 < now_min <= 20 * 60 + MARKET_CLOSE_BUFFER_MIN:
             return "after"
         return "closed"
 
@@ -322,22 +326,116 @@ def update_ticker_in_db(conn, ticker, price, change_pct, data_time=None):
 
 
 # ---------------------------------------------------------------------------
-# 종가 확정 플래그 관리
+# KR 현재가 조회 (inquire-price) — WS/REST 공통
 # ---------------------------------------------------------------------------
-_close_confirmed: dict = {}
-_close_lock = threading.Lock()
+def get_kr_price(ticker):
+    token = get_access_token()
+    url   = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price"
+    headers = {
+        "authorization": f"Bearer {token}",
+        "appkey":        config["kis_app_key"],
+        "appsecret":     config["kis_app_secret"],
+        "tr_id":         "FHKST01010100",
+        "custtype":      "P",
+    }
+    params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker}
+    res    = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
+    out    = res.json().get("output", {})
+    curr_price = float(out.get("stck_prpr", 0))
+    price      = curr_price if curr_price != 0 else float(out.get("prdy_clpr", 0))
+    return price, float(out.get("prdy_ctrt", 0))
 
 
-def _is_close_confirmed(market_group: str) -> bool:
-    with _close_lock:
-        return _close_confirmed.get(market_group) == date.today()
+# ---------------------------------------------------------------------------
+# KR 종가 1회성 확정 조회
+#
+# 정책:
+#   - 15:40(시간외종가매매 개시) + MARKET_CLOSE_BUFFER_MIN 이후,
+#     하루 1회만 KR 전 종목의 현재가(inquire-price)를 조회해 그날의 종가로 기록.
+#   - 이 시각엔 시간외종가매매가 "당일 종가"로만 체결되므로 이 값이 곧 종가.
+#   - WS/REST 어느 쪽이 떠 있어도 동일하게 호출 가능 (전역 플래그로 1일 1회 보장).
+# ---------------------------------------------------------------------------
+_kr_final_close_done: date | None = None
+_kr_final_close_lock = threading.Lock()
 
 
-def _set_close_confirmed(market_group: str):
-    with _close_lock:
-        _close_confirmed[market_group] = date.today()
-        log.info(f"[{market_group}] 종가 확정 — 오늘 조회 중단")
+def should_run_kr_final_close() -> bool:
+    """지금이 KR 종가 1회성 조회 시각 이후이고, 오늘 아직 실행 안 했으면 True (호출 시 즉시 '실행함'으로 마킹)."""
+    global _kr_final_close_done
+
+    tz = pytz.timezone("Asia/Seoul")
+    now_local   = datetime.now(tz)
+    today_local = now_local.date()
+
+    with _kr_final_close_lock:
+        if _kr_final_close_done == today_local:
+            return False
+        if now_local.weekday() >= 5:
+            return False
+        if holiday_cache.is_kr_holiday(today_local):
+            return False
+
+        now_min    = now_local.hour * 60 + now_local.minute
+        target_min = 15 * 60 + 40 + MARKET_CLOSE_BUFFER_MIN
+        if now_min < target_min:
+            return False
+
+        _kr_final_close_done = today_local
+        return True
 
 
-def _market_group(market: str) -> str:
-    return "KR" if market == "KR" else market
+def run_kr_final_close_update():
+    """KR 전 종목에 대해 inquire-price를 1회 조회하여 그날의 종가로 Redis에 반영."""
+    try:
+        conn = get_db_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT ticker FROM tickers WHERE market = 'KR'")
+            tickers = [r[0] for r in cur.fetchall()]
+        conn.close()
+    except Exception as e:
+        log.error(f"KR 종가조회 대상 조회 실패: {e}")
+        return
+
+    if not tickers:
+        return
+
+    log.info(f"KR 종가 확정 조회 시작 — {len(tickers)}개")
+
+    def _worker(ticker):
+        try:
+            price, change_pct = get_kr_price(ticker)
+            if price == 0:
+                log.warning(f"[{ticker}] KR 종가 가격 0 — 건너뜀")
+                return
+            conn = get_db_conn()
+            try:
+                update_ticker_in_db(conn, ticker, price, change_pct, None)
+                log.info(f"[{ticker}] KR 종가: {price:,.4f} ({change_pct:+.2f}%)")
+            finally:
+                conn.close()
+        except Exception as e:
+            log.error(f"[{ticker}] KR 종가 조회 실패: {e}")
+
+    threads = [threading.Thread(target=_worker, args=(t,), daemon=True) for t in tickers]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    try:
+        from common.redis_store import recalc_today_row
+        recalc_today_row()
+    except Exception as e:
+        log.error(f"recalc_today_row 실패: {e}")
+
+    try:
+        conn = get_db_conn()
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("NOTIFY price_updated")
+        conn.close()
+        log.info("NOTIFY price_updated 전송 (KR 종가)")
+    except Exception as e:
+        log.error(f"NOTIFY 실패: {e}")
+
+    log.info("KR 종가 확정 조회 완료")

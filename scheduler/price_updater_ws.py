@@ -28,8 +28,8 @@ from price_updater_common import (
     get_market_status,
     get_yahoo_price,
     update_ticker_in_db,
-    _is_close_confirmed,
-    _set_close_confirmed,
+    should_run_kr_final_close,
+    run_kr_final_close_update,
 )
 
 import urllib3
@@ -218,7 +218,7 @@ def get_subscribe_targets():
         market_time = market_info.get("market_time", "24h")
 
         if market_time == "KR":
-            if status in ("open", "pre", "after", "closing"):
+            if status == "open":
                 kr_tickers.append(r["ticker"])
         elif market_time == "US":
             if status in ("open", "pre", "after"):
@@ -356,7 +356,7 @@ async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
                     # 일정 주기마다 NOTIFY
                     now = time.time()
                     # if now - last_notify >= YAHOO_POLL_INTERVAL:
-                    if now - last_notify >= 1:
+                    if now - last_notify >= 0.2:
                         _notify()
                         last_notify = now
 
@@ -366,6 +366,16 @@ async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
             log.error(f"KIS 웹소켓 오류: {e} — {WS_RECONNECT_DELAY}초 후 재연결")
 
         await asyncio.sleep(WS_RECONNECT_DELAY)
+
+
+# ---------------------------------------------------------------------------
+# KR 종가 1회성 확정 조회 task (15:40 + buf 이후 하루 1회)
+# ---------------------------------------------------------------------------
+async def kr_final_close_task():
+    while True:
+        await asyncio.sleep(60)
+        if should_run_kr_final_close():
+            run_kr_final_close_update()
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +452,10 @@ def main():
 
         tasks.append(asyncio.create_task(
             subscription_refresh_task(approval_key_holder)
+        ))
+
+        tasks.append(asyncio.create_task(
+            kr_final_close_task()
         ))
 
         await asyncio.gather(*tasks)

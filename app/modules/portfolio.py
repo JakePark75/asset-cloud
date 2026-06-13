@@ -147,10 +147,9 @@ def _build_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_
     if not is_cash and market:
         status = get_market_status(market)
         dot_map = {
-            "open":    ("●", "Open",       "status-open"),
-            "pre":     ("●", "Pre",        "status-pre"),
-            "after":   ("●", "After",      "status-after"),
-            "closing": ("●", "Closing...", "status-closing"),
+            "open":    ("●", "Open",  "status-open"),
+            "pre":     ("●", "Pre",   "status-pre"),
+            "after":   ("●", "After", "status-after"),
         }
         status_dot, status_text, status_cls = dot_map.get(status, ("○", "Closed", "status-closed"))
 
@@ -280,6 +279,7 @@ def portfolio_ui():
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
+
 @module.server
 def portfolio_server(input, output, session, active_tab: reactive.value = None):
 

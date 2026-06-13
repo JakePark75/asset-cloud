@@ -5,10 +5,8 @@ config.json 의 realtime_quote = false 일 때 동작.
 """
 import threading
 import time
-from datetime import datetime
 
 import requests
-import pytz
 
 import price_updater_common as common
 from price_updater_common import (
@@ -16,32 +14,12 @@ from price_updater_common import (
     load_config, get_db_conn, get_access_token,
     holiday_cache, get_market_status,
     get_yahoo_price, update_ticker_in_db,
-    _is_close_confirmed, _set_close_confirmed,
+    get_kr_price,
+    should_run_kr_final_close, run_kr_final_close_update,
 )
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-
-# ---------------------------------------------------------------------------
-# KR 현재가
-# ---------------------------------------------------------------------------
-def get_kr_price(ticker):
-    token = get_access_token()
-    url   = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price"
-    headers = {
-        "authorization": f"Bearer {token}",
-        "appkey":        common.config["kis_app_key"],
-        "appsecret":     common.config["kis_app_secret"],
-        "tr_id":         "FHKST01010100",
-        "custtype":      "P",
-    }
-    params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": ticker}
-    res    = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-    out    = res.json().get("output", {})
-    curr_price = float(out.get("stck_prpr", 0))
-    price      = curr_price if curr_price != 0 else float(out.get("prdy_clpr", 0))
-    return price, float(out.get("prdy_ctrt", 0))
 
 
 # ---------------------------------------------------------------------------
@@ -69,50 +47,6 @@ def get_us_price(ticker, excd):
 
     price = safe_float(out.get("last")) if safe_float(out.get("last")) != 0 else safe_float(out.get("base"))
     return price, safe_float(out.get("rate"))
-
-
-# ---------------------------------------------------------------------------
-# KR 종가 확정 조회
-# ---------------------------------------------------------------------------
-def get_confirmed_close_kr(ticker: str):
-    """
-    output2에 오늘 날짜 데이터가 있으면 (종가, change_pct) 반환.
-    미확정이면 None 반환.
-    """
-    token    = get_access_token()
-    today    = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d")
-    url      = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-price"
-    headers  = {
-        "authorization": f"Bearer {token}",
-        "appkey":        common.config["kis_app_key"],
-        "appsecret":     common.config["kis_app_secret"],
-        "tr_id":         "FHKST03010100",
-        "custtype":      "P",
-    }
-    params = {
-        "fid_cond_mrkt_div_code": "J",
-        "fid_input_iscd":         ticker,
-        "fid_org_adj_prc":        "1",
-        "fid_period_div_code":    "D",
-        "fid_input_date_1":       today,
-        "fid_input_date_2":       today,
-    }
-    try:
-        res   = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-        body  = res.json()
-        rows  = body.get("output2", [])
-        if not rows:
-            return None
-        row = rows[0]
-        if row.get("stck_bsop_date") != today:
-            return None
-        price     = float(row.get("stck_clpr", 0))
-        prdy_clpr = float(body.get("output1", {}).get("stck_prdy_clpr", 0) or 0)
-        change_pct = round((price - prdy_clpr) / prdy_clpr * 100, 2) if prdy_clpr else 0.0
-        return price, change_pct
-    except Exception as e:
-        log.error(f"[{ticker}] KR 종가 확정 조회 실패: {e}")
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -155,38 +89,6 @@ def update_worker(row):
 
 
 # ---------------------------------------------------------------------------
-# 종가 확정 워커
-# ---------------------------------------------------------------------------
-def close_confirm_worker(row: dict):
-    ticker = row["ticker"]
-    market = row["market"]
-
-    try:
-        if market != "KR":
-            return
-
-        result = get_confirmed_close_kr(ticker)
-        if result is None:
-            return
-
-        price, change_pct = result
-        if price == 0:
-            return
-
-        conn = get_db_conn()
-        try:
-            update_ticker_in_db(conn, ticker, price, change_pct, None)
-            log.info(f"[{ticker}] 종가 확정 업데이트: {price:,.4f} ({change_pct:+.2f}%)")
-        finally:
-            conn.close()
-
-        _set_close_confirmed("KR")
-
-    except Exception as e:
-        log.error(f"[{ticker}] 종가 확정 워커 실패: {e}")
-
-
-# ---------------------------------------------------------------------------
 # 전체 종목 업데이트 사이클
 # ---------------------------------------------------------------------------
 def run_update_cycle(force=False):
@@ -205,39 +107,19 @@ def run_update_cycle(force=False):
         return
 
     if force:
-        targets       = rows
-        close_targets = []
+        targets = rows
     else:
-        targets       = []
-        close_targets = []
+        targets = [r for r in rows if get_market_status(r["market"]) in ("open", "pre", "after")]
 
-        for r in rows:
-            market = r["market"]
-            status = get_market_status(market)
-
-            if status in ("open", "pre", "after"):
-                targets.append(r)
-            elif status == "closing":
-                if _is_close_confirmed("KR"):
-                    pass
-                else:
-                    close_targets.append(r)
-            # closed → 스킵
-
-    if not targets and not close_targets:
+    if not targets:
         log.info("현재 업데이트 대상 종목이 없습니다.")
         return
 
-    log.info(f"업데이트 시작 — 실시간 {len(targets)}개 / 종가확정 {len(close_targets)}개 / 전체 {len(rows)}개")
+    log.info(f"업데이트 시작 — {len(targets)}개 / 전체 {len(rows)}개")
 
     threads = []
     for row in targets:
         t = threading.Thread(target=update_worker, args=(row,), daemon=True)
-        threads.append(t)
-        t.start()
-
-    for row in close_targets:
-        t = threading.Thread(target=close_confirm_worker, args=(row,), daemon=True)
         threads.append(t)
         t.start()
 
@@ -280,6 +162,8 @@ def main():
 
         start = time.time()
         run_update_cycle()
+        if should_run_kr_final_close():
+            run_kr_final_close_update()
         elapsed = time.time() - start
         sleep_sec = max(0, interval_sec - elapsed)
         log.info(f"다음 업데이트까지 {sleep_sec:.1f}초 대기")
