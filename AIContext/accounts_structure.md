@@ -1,136 +1,74 @@
-# accounts.py — 구조 요약
+# settings.py — 구조 요약
 
-### Reactive State
+### 역할
+- 설정 화면 UI 및 서버 로직
+- 시세조회 간격 설정, 수동 티커 관리, 로그아웃
+
+### import
+- `from app.db import get_db, get_config, save_config, get_market_currency, get_market_map`
+- `from app.modules.components import fmt_change`
+- `from app.price_signal import price_signal`
+- `from scheduler.price_updater_common import get_market_status`
+- `from app.utils.display_diff import diff_display`
+
+### Reactive State / 세션 상태
 
 | 변수 | 타입 | 설명 |
 |------|------|------|
-| `selected_account` | `reactive.value(None)` | 선택된 계좌 ID. None이면 목록, 값 있으면 상세 화면 |
-| `refresh` | `reactive.value(0)` | 증가시키면 main_view 강제 재렌더 |
-| `show_modal` | `reactive.value(False)` | 계좌 추가 모달 표시 여부 |
-| `show_modal_position` | `reactive.value(False)` | 종목 추가 모달 표시 여부 |
-| `show_modal_cash` | `reactive.value(False)` | 현금 추가 모달 표시 여부 |
-| `show_modal_edit_position` | `reactive.value(False)` | 종목 수정 모달 표시 여부 |
-| `edit_position_id` | `reactive.value(None)` | 수정 중인 position id (종목) |
-| `show_modal_edit_cash` | `reactive.value(False)` | 현금 수정 모달 표시 여부 |
-| `edit_cash_id` | `reactive.value(None)` | 수정 중인 position id (현금) |
+| `refresh` | `reactive.value(0)` | 티커 추가/삭제 후 증가 → `_send_update` 재실행 |
+| `_last_tickers` | `list` | 이전 ticker 목록 (구성 변경 감지) |
+| `_last_display` | `dict` | `diff_display` 기준 이전 표시값 |
 
-### DB 조회 함수
+### UI 구조 (`settings_ui()`)
+- `@render.ui` 없음 — 모든 갱신은 `st_init` / `st_tick` 커스텀 메시지로 DOM 직접 패치
+- 시세조회 간격 버튼: 실시간(0) / 1분(1) / 3분(3) / 5분(5) / 10분(10) / 30분(30). 클릭 시 JS로 active 클래스 전환 + `settings-btn_save_interval` input 세팅
+- 티커 관리 영역: `<div id="st-ticker-list">` (내용은 `st_init`으로 주입)
+- 로그아웃: JS에서 직접 `deleteCookie('auth_token')` 후 `location.reload()`
+- 티커 추가 모달: 정적 HTML DOM 상주, `stShowModal()` / `stHideModal()`로 display 제어
+  - input: `st-new-ticker`, `st-new-ticker-name`, `st-new-ticker-market`, `st-new-ticker-leverage`
+  - 추가 버튼 클릭 → `settings-btn_confirm_add_ticker` input 세팅 (JSON payload)
+  - `stHideModal()` 시 입력값 자동 초기화
 
-DB 조회 함수는 `accounts_DAL.py`로 분리됨.
+### JS 커스텀 메시지 핸들러
 
-#### `fetch_accounts_summary()` (accounts_DAL.py)
-- 계좌 목록 + 총자산/현금/당일손익 집계
-- accounts LEFT JOIN positions LEFT JOIN tickers
-- 반환: `[(id, name, alias, total, cash, pnl, is_watch), ...]`
-- cash: KRW + USD×환율 원화 합산
-- pnl: 종목별 change_pct 기반, 미국주식 환율 반영
-- is_watch: True면 감시 계좌 (총자산 합계에서 제외)
+| 핸들러 | 동작 |
+|--------|------|
+| `st_init` | interval 버튼 active 반영, `st-ticker-list` 골격 HTML 교체, ticker 값 즉시 반영 |
+| `st_tick` | 변경된 ticker key만 DOM 패치 (status, price/chg) |
 
-#### `fetch_account_details(account_id)` (accounts_DAL.py)
-- 계좌명/별명/is_watch, 포지션 목록, USDKRW 환율 조회
-- 반환: `(acc, positions, usd_rate)`
-  - `acc`: `(name, alias, is_watch)`
-  - `positions`: `[(id, ticker, quantity, name, current_price, change_pct, market, leverage), ...]`
-  - `usd_rate`: float (Decimal → float 변환 적용)
-- 정렬: 종목 먼저/현금 하단 → 시장별(KR→미국→CRYPTO→나머지) → 레버리지 내림차순 → 평가액 내림차순 → 티커 알파벳순
+### `_send_update` (`@reactive.effect`, async)
+- `price_signal`, `refresh()` 구독 + `reactive.invalidate_later(60)` (1분 자동 갱신)
+- 탭 비활성 시 스킵
+- Redis `get_all_prices()` + DB tickers 전체 조회 → `_sort_key` 정렬
+- 구성 변경(`current_tickers != _last_tickers`) → `st_init` (골격 + interval + tick 값)
+- 구성 동일 → `diff_display(ticker_values, _last_display)` → `st_tick`
 
-#### `get_usd_krw()` (db.py)
-- USDKRW=X 티커의 current_price, change_pct 조회
-- 반환: `(usd_rate: float, usd_chg: float)` 또는 `(None, None)`
-- 다른 화면에서도 재사용 가능
+### `_sort_key` 정렬 순서
+`is_manual DESC → 시장 그룹 → leverage DESC → ticker ASC`
 
-### UI 렌더러 (output_ui)
-
-#### `main_view`
-- `price_signal.get()` 호출로 시세 갱신 시 자동 재실행
-- `selected_account()`가 None이면 계좌 목록, 값 있으면 계좌 상세
-- **계좌 목록**: `fetch_accounts_summary()` → `render_asset_card()` 반복, onclick으로 `selected_id` input 세팅
-  - 카드 목록 상단: 전체 총자산/일간손익 요약 (total-summary), **감시 계좌 제외**하고 합산
-  - 일간손익 표시: ▲/▼ + 금액 + 수익률(%), 투자금(총자산-현금) 대비
-  - **일반 계좌 섹션** + **"감시 계좌" 섹션** 분리 표시 (감시 계좌 있을 때만 섹션 노출)
-- **계좌 상세**: `fetch_account_details()` → `render_ticker_row()` 반복, 현금/종목 분기 렌더
-  - 상단 타이틀바: ‹ 아이콘(좌측, `btn_back`) + 계좌명(중앙), `detail-titlebar` 클래스
-  - 타이틀바 아래: 해당 계좌 총자산/일간손익 요약 (`total-summary`), positions 루프 돌며 Python에서 합산
-  - 중단: positions 루프 → `.ticker-row` (ticker-name / ticker-qty / ticker-amount / ticker-change), onclick으로 `edit_pos_id` input 세팅
-  - 하단: 종목추가(`btn_add_position`), 현금추가(`btn_add_cash`), 계좌삭제(`btn_delete_account`, `btn-account-delete-bottom` 클래스) 버튼
-- 계좌 목록 상단 총자산 요약(total-summary)에 USD/KRW 환율 및 등락률 표시
-  - `get_usd_krw()`로 환율/등락률 조회
-  - 일간손익과 같은 줄 우측 정렬, 11px
-  - "USD/KRW" 레이블은 #888888, 숫자/등락률은 positive/negative 색상
-
-#### `modal_add_account`
-- `show_modal()` True일 때 렌더
-- `modal_add_account_ui(ns)` 호출 (accounts_modals.py)
-- input: `new_account_name`, `new_account_alias`, `new_account_is_watch` (체크박스: "감시 계좌 (내 자산 아님)")
-- 닫기: `modal_close`
-
-#### `modal_add_position`
-- `show_modal_position()` True일 때 렌더
-- `modal_add_position_ui(ns)` 호출 (accounts_modals.py)
-- input: `new_position_name`, `new_position_ticker`, `new_position_market`, `new_position_leverage`, `new_position_qty`
-- 닫기: `modal_position_close`
-
-#### `modal_add_cash`
-- `show_modal_cash()` True일 때 렌더
-- `modal_add_cash_ui(ns)` 호출 (accounts_modals.py)
-- input: `new_cash_type`, `new_cash_amount`
-- 닫기: `modal_cash_close`
-
-#### `modal_edit_position`
-- `show_modal_edit_position()` True일 때 렌더
-- `fetch_account_details()`로 positions 조회 후 해당 pos_id 행에서 기존값 추출
-- `modal_edit_position_ui(ns, ticker, name, market, leverage, qty)` 호출 (accounts_modals.py)
-- 티커는 읽기전용 표시
-- input: `edit_position_name`, `edit_position_market`, `edit_position_leverage`, `edit_position_qty`
-- 저장: `btn_confirm_edit_position`, 삭제: `confirm_delete_position` (JS confirm 후 세팅)
-- 닫기: `modal_edit_position_close`
-- 삭제 버튼: modal-box 안 하단, `btn-modal-delete-bottom` 클래스
-
-#### `modal_edit_cash`
-- `show_modal_edit_cash()` True일 때 렌더
-- `fetch_account_details()`로 positions 조회 후 해당 pos_id 행에서 기존값 추출
-- `modal_edit_cash_ui(ns, ticker, amount)` 호출 (accounts_modals.py)
-- input: `edit_cash_type`, `edit_cash_amount`
-- 저장: `btn_confirm_edit_cash`, 삭제: `confirm_delete_cash` (JS confirm 후 세팅)
-- 닫기: `modal_edit_cash_close`
-- 삭제 버튼: modal-box 안 하단, `btn-modal-delete-bottom` 클래스
+시장 그룹 순서: KR(0) → NAS/NYS/AMS/ARC(1) → CRYPTO(2) → COM(3) → FX/INDEX(4)
 
 ### 이벤트 핸들러
 
-| 핸들러 함수 | 트리거 | 동작 |
-|---|---|---|
-| `handle_card_click` | `input.selected_id` | `selected_account` 세팅 |
-| `open_modal` | `btn_add_account` | `show_modal = True` |
-| `close_modal` | `modal_close` | `show_modal = False` |
-| `add_account` | `btn_confirm_add` | accounts INSERT (name/alias/is_watch), 모달 닫기, refresh |
-| `go_back` | `btn_back` | `selected_account = None`, refresh |
-| `open_modal_position` | `btn_add_position` | `show_modal_position = True` |
-| `close_modal_position` | `modal_position_close` | `show_modal_position = False` |
-| `open_modal_cash` | `btn_add_cash` | `show_modal_cash = True` |
-| `close_modal_cash` | `modal_cash_close` | `show_modal_cash = False` |
-| `add_position` | `btn_confirm_add_position` | tickers 없으면 INSERT (market/leverage 반영), positions INSERT, refresh |
-| `add_cash` | `btn_confirm_add_cash` | positions INSERT (ticker=KRW/USD), refresh |
-| `delete_account` | `confirm_delete_account` | accounts DELETE (CASCADE로 positions 자동 삭제), `selected_account = None`, refresh |
-| `handle_edit_pos_click` | `input.edit_pos_id` | ticker가 KRW/USD면 `edit_cash_id` + `show_modal_edit_cash`, 아니면 `edit_position_id` + `show_modal_edit_position` |
-| `close_modal_edit_position` | `modal_edit_position_close` | `show_modal_edit_position = False` |
-| `edit_position` | `btn_confirm_edit_position` | positions UPDATE (quantity), tickers UPDATE (name/market/leverage), refresh |
-| `delete_position` | `confirm_delete_position` | positions DELETE, refresh |
-| `close_modal_edit_cash` | `modal_edit_cash_close` | `show_modal_edit_cash = False` |
-| `edit_cash` | `btn_confirm_edit_cash` | positions UPDATE (ticker/quantity), refresh |
-| `delete_cash` | `confirm_delete_cash` | positions DELETE, refresh |
+| 핸들러 | 트리거 | 동작 |
+|--------|--------|------|
+| `_` | `btn_save_interval` | `save_config()` interval 업데이트 + `systemctl restart price_updater` |
+| `_` | `confirm_delete_ticker` | `DELETE FROM tickers WHERE ticker = %s AND is_manual = true` → `refresh` 증가 + `_notify_price_updated()` |
+| `_` | `btn_confirm_add_ticker` | tickers INSERT (`is_manual=true`, `sort_order` 자동 채번) ON CONFLICT DO UPDATE (name/market/leverage/is_manual) → `refresh` 증가 + `_notify_price_updated()` |
+
+### 헬퍼 함수 (모듈 레벨)
+
+| 함수 | 설명 |
+|------|------|
+| `_ticker_to_id(ticker)` | 하이픈/캐럿/등호 → 언더스코어 (DOM id 안전화) |
+| `_sort_key(r)` | 티커 정렬 기준 반환 |
+| `_build_row_skeleton(...)` | 골격 HTML. `is_manual=true`만 삭제 버튼 포함, 아니면 빈 div |
+| `_build_tick_values(ticker, market, price, change_pct)` | tick 값 dict (`id, price, chg, chg_css, status_dot, status_txt, status_cls`) |
+| `_notify_price_updated()` | DB `NOTIFY price_updated` 발송 |
 
 ### 비고
-- 계좌/종목/현금 삭제 시 JS `confirm()`으로 확인 후 Shiny input 세팅하는 방식 사용
-- tickers.ticker는 PK라 티커 변경 불가 — 수정 모달에서 읽기전용 표시만
-- `start_signal_listener(db_password)`를 server 함수 진입부에서 호출 (`price_signal.py` 연동)
-- DB NUMERIC 컬럼(current_price, change_pct, quantity 등)은 psycopg2가 Decimal로 반환 — float() 변환 후 사용
-- 모달 UI 함수들은 `accounts_modals.py`로 분리 (`modal_add_account_ui`, `modal_add_position_ui`, `modal_add_cash_ui`, `modal_edit_position_ui`, `modal_edit_cash_ui`)
-- 포맷 유틸 및 공통 헤더는 `components.py`로 분리 (`fmt_krw`, `fmt_usd`, `fmt_pct`, `fmt_pnl`, `fmt_change`, `render_summary_header`)
-  - `fmt_change(price, chg_pct, currency)`: 현재가 + 등락률 + CSS 클래스 반환 → `render_ticker_row`에서 사용
-  - `render_summary_header()`: 계좌목록/계좌상세/포트폴리오 공통 상단 요약 헤더
-  - `render_ticker_row`: 종목 행 우측 하단에 현재가 + 등락률 표시
-    - 현재가는 거래 화폐단위 그대로 표시 (KRW종목→원화, 미국주식→USD)
-    - 현재가 색상은 등락률과 동일 (positive/negative)
-    - 현금(KRW/USD)은 시장 상태 배지 표시 안 함
-    - 종목은 `get_market_status()`로 4종류 배지: 장중(녹)/프리(보라)/애프터(주황)/휴장(회색)
----
+- 로그아웃: JS에서 직접 `deleteCookie('auth_token')` 후 `location.reload()`
+- 티커 추가 시 이미 존재하는 ticker면 name/market/leverage/is_manual 업데이트 (ON CONFLICT). `sort_order`는 `MAX(sort_order) + 1` 자동 채번
+- 시세조회 간격 변경 시 `price_updater` 서비스 재시작 → `price_updater.py`(런처)가 새 interval 읽어서 REST/WS 모드 재분기
+- 티커 추가 모달은 `reactive.value` 없이 정적 DOM 상주, JS `stShowModal()` / `stHideModal()` 로만 제어
+- `_notify_price_updated()`: settings는 `get_connection()` 대신 `get_db()` 사용 (accounts와 구현 방식 상이)

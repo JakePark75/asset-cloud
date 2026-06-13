@@ -411,6 +411,4 @@
 | ✅ 완료 | market_map 리팩토링 — 하드코딩 마켓 목록 제거, config.json market_map 중앙화 (currency/label/market_time 필드 추가, 전 파일 적용) |
 | ✅ 완료 | CSS 화면별 분리 — style.css → base.css / dashboard.css / portfolio.css / accounts.css / history.css. page-inner이 좌우 패딩 단일 기준 |
 | ✅ 완료 | Redis 전환 (Phase 1) — common/redis_store.py 신규, 시세 R/W Redis화, recalc_today_row() 도입, 각 화면 시세 조회 DB→Redis 전환 완료. 상세: redis_migration_context.md |
-| ⬜ 대기 | WS 모드 recalc_today_row() 미연결 (yahoo_poll_task에 추가 필요) |
-| ⬜ 대기 | Redis Phase 2 — history 탭 렌더링 최적화, 중복 계산 제거, settings invalidate_later 개선 |
 | ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |

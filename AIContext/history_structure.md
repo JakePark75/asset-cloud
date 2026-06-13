@@ -3,10 +3,9 @@
 ## 파일 구성
 | 파일 | 역할 |
 |------|------|
-| `app/modules/history.py` | UI / Server 진입점 |
+| `app/modules/history.py` | UI / Server 진입점, 테이블 JS 렌더링 포함 |
 | `app/modules/history_DAL.py` | DB 조회 및 TWR 재계산 |
 | `app/modules/history_charts.py` | Plotly 차트 생성 |
-| `app/modules/history_table.py` | 일간 누적 테이블 렌더링 |
 | `app/modules/history_utils.py` | 포맷 유틸 |
 
 ---
@@ -17,26 +16,49 @@
 - 기간 버튼 (1개월 / 3개월 / 전체) — JS `setChartPeriod()`로 Plotly `relayout` 직접 호출, 서버 호출 없음
 - 총자산 추이 차트 (`chart_asset`)
 - TWR vs NDX100 차트 (`chart_twr`)
-- 일간 누적 테이블 (`history_table`)
+- 일간 누적 테이블 — `<table id="history-tbody">` + JS로 직접 렌더링 (`history_table.py` 미사용)
+  - 컬럼 순서: 날짜 / 총자산 / 전일대비 / Exp / 현금 / 입출금 / **x3 / x2 / x1** / TWR / 나스닥 / 환율
+  - "▼ 더 보기" 버튼으로 50건씩 페이지 로드 (`PAGE = 50`)
+- 행 클릭 → `Shiny.setInputValue('history-selected_date', date)` (네임스페이스 하드코딩)
 
 ### Server
 
-#### `history_data` (reactive.calc)
-- `price_signal.get()` 호출로 실시간 갱신 연동
-- `load_history()` 호출 후 캐싱
+#### `_db_rows` (`@reactive.calc`)
+- `_reload_trigger`, `daily_insert_signal` 구독 → 과거 입출금 수정 또는 daily insert 시 무효화
+- `load_history()` 호출 결과 캐싱
 
-#### `chart_asset` / `chart_twr` / `history_table`
-- `history_data()` 결과를 각 렌더러에 전달
+#### `_all_rows_for_chart` (`@reactive.calc`)
+- `_db_rows()` + `load_today_row()` 합산 → 오늘 행이 DB에 없으면 today_row를 마지막에 append
+- 차트 렌더링 전용
 
-#### `_open_edit_modal`
+#### `chart_asset` / `chart_twr` (`@render.ui`)
+- `_all_rows_for_chart()` 의존 → 시세 업데이트마다 차트 전체 재렌더링
+- 탭 비활성 시 `ui.HTML("")` 반환
+
+#### `_send_history_table` (`@reactive.effect`, async)
+- `_db_rows()` 의존 + 탭 활성 확인
+- `load_today_row()` 결과를 맨 앞에 붙여 내림차순 구성
+- `ndx_change_pct` (전일 대비 NDX 등락률) 계산 후 포함
+- `send_custom_message("history_data", data)` → JS가 테이블 전체 교체
+
+#### `_send_today_row_update` (`@reactive.effect`, async)
+- `price_signal`, `daily_insert_signal`, `today_cf_trigger` 모두 구독
+- 탭 비활성 시 스킵
+- `load_today_row()` + `_db_rows()` 기반으로 today 행만 구성
+- `twr_pct`, `ndx_pct` (차트 끝단 % 업데이트용) 서버에서 계산해서 포함
+- `send_custom_message("today_row_update", row)` → JS가 테이블 최상단 행 + 차트 끝단 패치
+
+#### `_open_edit_modal` (`@reactive.effect`)
 - `input.selected_date` 이벤트 (테이블 행 클릭 시 세팅)
-- DB에서 해당 날짜의 cash_flow, cash_flow_note 조회
+- **오늘 날짜면 Redis** (`today_cash_flow`, `today_cash_flow_note`) 조회, 과거면 DB 조회
 - Shiny 모달로 입출금 수정 UI 표시
 - 입력: `edit_cf` (numeric), `edit_note` (text)
 
-#### `_save_cash_flow`
+#### `_save_cash_flow` (`@reactive.effect`)
 - `input.edit_save` 이벤트
-- `save_cash_flow()` 호출 후 모달 닫기 + 알림
+- **오늘 날짜면 Redis** 저장 → `recalc_today_row()` → `today_cf_trigger` 증가
+- **과거면** `save_cash_flow()` → `_reload_trigger` 증가 (DB rows 재로드 + 차트 갱신)
+- 모달 닫기 + 알림
 
 ---
 
@@ -70,8 +92,8 @@
 
 ### `make_chart_asset(rows)` → HTML str
 - 총자산 추이 라인 차트 (녹색 #00c073)
-- 입금 마커: 삼각형 위 (녹색)
-- 출금 마커: 삼각형 아래 (빨강)
+- 입금 마커: 삼각형 위 (빨강 #ff4d4d)
+- 출금 마커: 삼각형 아래 (파랑 #4d9fff)
 - y축: 억 단위 포맷 (`fmt_10m`)
 - 초기 범위: 최근 3개월
 - `fig.to_html(full_html=False, include_plotlyjs=False, div_id="chart-asset")`
@@ -94,21 +116,6 @@
 
 ### 비고
 - plotly.js는 `app.py` head에서 CDN으로 전역 로드 (`include_plotlyjs=False`)
-
----
-
-## history_table.py
-
-### `render_history_table(rows)` → Shiny UI
-- daily_summary rows (ASC) → 최신순(DESC)으로 뒤집어서 렌더
-- 컬럼 순서: 날짜(yymmdd) / 총자산(억) / 전일대비 / Exp / 현금 / 입출금 / x1 / x2 / x3 / TWR / 나스닥 / 환율
-- 전일 대비: 금액 + 등락률(%), positive/negative 색상
-- 입출금: 0이 아닌 경우만 표시, 사유 있으면 dotted underline + title tooltip
-- 비율 컬럼(Exp/현금/x1/x2/x3): DB값 × 100 → % 표시
-- TWR: 억 단위 (`fmt_10m`)
-- 나스닥: 소수점 2자리, 없으면 "-"
-- 환율: 소수점 2자리, 없으면 "-"
-- 행 클릭 시 `history-selected_date` input 세팅 (네임스페이스 하드코딩)
 
 ---
 

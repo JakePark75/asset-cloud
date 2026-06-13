@@ -4,37 +4,44 @@
 `app/modules/portfolio.py`
 
 ## 관련 파일
-- `app/modules/accounts_components.py` — `render_ticker_row()` 공유
-- `app/modules/components.py` — `render_summary_header()`, 포맷 유틸 공유
-- `app/db.py` — `get_usd_krw()`
+- `app/modules/components.py` — `fmt_krw`, `fmt_usd`, `fmt_pct`, `fmt_change` 포맷 유틸 공유
+- `app/db.py` — `get_usd_krw()`, `get_config()`, `get_market_currency()`
 - `app/price_signal.py` — `price_signal`
+- `app/utils/display_diff.py` — `diff_display`
+- `scheduler/price_updater_common.py` — `get_market_status()`
 
 ---
 
 ## 역할
-- 전체 계좌 통합 종목 뷰 (계좌 구분 없음)
+- 전체 계좌 통합 종목 뷰 (계좌 구분 없음, `is_watch = false` 계좌만)
 - 종목별 평가액, 현재가, 등락률, 시장 상태 배지 표시
-- 강제 시세 조회 버튼 (`↺`)
+- 강제 시세 조회 버튼 (`↺`) — `interval != 0`일 때만 표시
+- `render.ui` 없음 — `pf_init` / `pf_tick` 커스텀 메시지로 DOM 직접 패치
+- `render_summary_header()`, `render_ticker_row()` 미사용 (자체 골격 HTML 생성)
 
 ---
 
 ## 데이터 로드
 
 ### `load_portfolio()`
-- `config.json`에서 db_password 로드 후 psycopg2 직접 접속
-- positions 전체를 ticker 기준으로 GROUP BY 집계
-- tickers JOIN으로 name, current_price, change_pct, market, leverage 조회
+- `get_all_prices()` (Redis)로 시세 조회 — tickers DB의 current_price/change_pct 미사용
 - `get_usd_krw()`로 USD/KRW 환율 조회
-- 반환: `(rows, usd_rate, usd_chg)`
-  - rows: `[(ticker, quantity, name, current_price, change_pct, market, leverage), ...]`
+- positions을 ticker 기준 GROUP BY 집계, tickers LEFT JOIN으로 name, market, leverage 조회
+- `is_watch = false` 계좌만 포함
+- `daily_summary` 최근 1건 조회 → `yesterday_total` (전일 총자산, 손익 계산용)
+- 반환: `(rows, usd_rate, usd_chg, yesterday_total)`
+  - rows: `[(ticker, quantity, name, price, change_pct, market, leverage), ...]` (price/change_pct는 Redis 값)
 
 ---
 
 ## UI
 
 ### `portfolio_ui()`
-- 강제 시세 조회 confirm JS (`force-update-btn` 클릭 시)
-- `ui.output_ui("portfolio_content")`
+- JS 커스텀 메시지 핸들러 인라인 포함:
+  - `pf_init`: 종목 구성 변경 시 골격 HTML 통째 교체 + tick 값 즉시 반영
+  - `pf_tick`: 변경된 key만 DOM 패치 (summary + ticker별)
+- `@render.ui` 없음 — `<div id="pf-ticker-list">` 등 정적 골격만 선언, 내용은 서버 메시지로 주입
+- `ui.output_ui` 없음
 
 ---
 
@@ -42,25 +49,30 @@
 
 ### `portfolio_server()`
 
-#### `_do_force_update`
-- `input.force_update` 이벤트
-- `subprocess.Popen`으로 `price_updater.py --force` 실행
+#### 세션 상태
+- `_last_tickers: list` — 이전 ticker 목록 (종목 구성 변경 감지용)
+- `_last_display: dict` — 이전 표시값 (`diff_display` 기준)
 
-#### `portfolio_content` (render.ui)
-- `price_signal.get()` 호출로 실시간 시세 갱신 시 자동 재실행
-- `load_portfolio()` 호출
-- 총자산 / 손익 / 손익률 계산 (Python에서 직접 합산)
-  - KRW: quantity 그대로
-  - USD: quantity × usd_rate
-  - 미국주식(NAS/AMS/ARC): quantity × price × usd_rate
-  - 국내주식: quantity × price
-- 종목 정렬: 현금(KRW/USD) 하단, 나머지는 평가액 내림차순
-- `render_summary_header()` — 상단 요약 헤더
-- `render_ticker_row()` — 종목/현금 행 렌더링
-  - pos_id=None으로 호출 (클릭 이벤트 없음)
-  - 현금(KRW/USD)은 시장 상태 배지 없음
-  - 종목은 현재가 + 등락률 표시, 색상 동일
-- 우측 상단 강제 조회 버튼 (`force-update-btn`)
+#### `_show_force_modal` / `_do_force_update` / `_cancel_force_update`
+- `input.force_update` → 확인/취소 모달 표시
+- `input.force_confirm` → `subprocess.Popen`으로 `price_updater.py --force` 실행
+- `input.force_cancel` → 모달 닫기
+
+#### `_send_update` (`@reactive.effect`, async)
+- `price_signal.get()` 구독 → 시세 갱신 시 자동 실행
+- 탭 비활성 시 스킵
+- `load_portfolio()` → 총 평가액 합산, 손익(`total_pnl = total_asset - yesterday_total`), USD 환율 HTML 구성
+- **종목 구성 변경 감지** (`current_tickers != _last_tickers`):
+  - 변경됨 → `_build_row_skeleton()` 으로 골격 HTML 생성 → `pf_init` 전송 (골격 + tick 값 동시 포함)
+  - 동일 → `diff_display(current, _last_display)` → 변경된 key만 `pf_tick` 전송
+- `show_force_btn`: `config.json`의 `interval != 0` 이면 표시
+
+#### 헬퍼 함수 (모듈 레벨)
+- `_ticker_to_id(ticker)` — 하이픈/캐럿 → 언더스코어 변환 (DOM id 안전화)
+- `_calc_amount(ticker, qty_f, price_f, market, usd_rate)` — KRW/USD/미국주식/국내주식 분기 평가액 계산
+- `_sort_rows(rows, usd_rate)` — 현금(KRW/USD) 하단, 나머지 평가액 내림차순
+- `_build_row_skeleton(...)` → 골격 HTML (가변값은 id 달린 빈 span)
+- `_build_tick_values(...)` → 시세 갱신 시 전송할 값 dict (`id, amount, price, chg, chg_css, status_dot, status_txt, status_cls`)
 
 ---
 
@@ -80,8 +92,8 @@
 | `fmt_change(price, chg_pct, currency)` | 현재가 + 등락률 + CSS | `("1,234원", "+1.23%", "positive")` |
 
 ### `render_summary_header(label, total_asset, pnl, pnl_pct, usd_rate, usd_chg)`
-- 계좌/포트폴리오/계좌상세 상단 공통 요약 헤더
-- label: 헤더 레이블 (예: "포트폴리오", "총자산", 계좌명)
+- 계좌/계좌상세 상단 공통 요약 헤더 (portfolio.py에서는 **미사용** — portfolio는 자체 HTML로 직접 구성)
+- label: 헤더 레이블 (예: "총자산", 계좌명)
 - total_asset: 총자산 (원화)
 - pnl / pnl_pct: 손익 금액 / 손익률
 - usd_rate / usd_chg: 환율 및 등락률 (None이면 미표시)
