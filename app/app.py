@@ -161,6 +161,27 @@ app_ui = ui.page_fluid(
         $(document).on('shiny:disconnected', function() {
             location.reload();
         });
+
+        // 백그라운드 진입 시 오버레이 씌우기 → reload 시 깜빡임 방지
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'hidden') {
+                var overlay = document.getElementById('bg-overlay');
+
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'bg-overlay';
+                    overlay.style.cssText =
+                        'position:fixed;top:0;left:0;width:100%;height:100%;background:#0a0a0a;z-index:99999;';
+                    document.body.appendChild(overlay);
+                }
+            } else if (document.visibilityState === 'visible') {
+                var overlay = document.getElementById('bg-overlay');
+
+                if (overlay) {
+                    overlay.remove();
+                }
+            }
+        });
     """),
 )
 
