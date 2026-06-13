@@ -690,10 +690,10 @@ def dashboard_ui():
 
 
 # ── Server ───────────────────────────────────────────────────
-
 @module.server
 def dashboard_server(input, output, session, active_tab: reactive.value = None):
 
+    initialized = reactive.value(False)
     _last_display: dict = {}
 
     # ── 대시보드 요약 데이터 계산 ────────────────────────────────────────────
@@ -723,7 +723,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     # 탭 활성화 순간 active_tab 이 "dashboard"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_update():
-            if active_tab and active_tab.get() != "dashboard":
+            if initialized.get() and active_tab and active_tab.get() != "dashboard":
                 return
             d = data()
             positions = position_data()
@@ -865,3 +865,4 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             diff = diff_display(current, _last_display)
             if diff:
                 await session.send_custom_message("db_update", diff)
+            initialized.set(True)

@@ -349,10 +349,11 @@ def history_ui():
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
-
 @module.server
 def history_server(input, output, session, active_tab: reactive.value = None):
 
+    initialized_today_row    = reactive.value(False)
+    initialized_historytable = reactive.value(False)
     today_cf_trigger = reactive.value(0)  # 오늘 입출금 저장 시 강제 갱신용
     _reload_trigger  = reactive.value(0)  # 입출금 수정(과거) 시 DB rows 재로드용
 
@@ -414,7 +415,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_history_table():
-        if active_tab and active_tab.get() != "history":
+        if initialized_historytable.get() and active_tab and active_tab.get() != "history":
             return
         rows = list(_db_rows())
         t = load_today_row()
@@ -471,6 +472,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             })
 
         await session.send_custom_message("history_data", data)
+        initialized_historytable.set(True)
 
     # ── 시세/daily insert/입출금 수정 시 today_row 갱신 ────────────────────
     # price_signal 마다 recalc_today_row() 가 Redis today_row 를 갱신하므로
@@ -484,7 +486,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         daily_insert_signal.get()    # daily insert 완료 시 갱신
         today_cf_trigger.get()       # 오늘 입출금 수정 시 갱신
 
-        if active_tab and active_tab.get() != "history":
+        if initialized_today_row.get() and active_tab and active_tab.get() != "history":
             return
 
         t = load_today_row()
@@ -532,6 +534,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         }
 
         await session.send_custom_message("today_row_update", row)
+        initialized_today_row.set(True)
 
     # ── 날짜 클릭 → 입출금 수정 모달 ────────────────────────────────────────
     @reactive.effect

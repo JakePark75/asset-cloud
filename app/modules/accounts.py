@@ -665,10 +665,10 @@ def accounts_ui():
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
-
 @module.server
 def accounts_server(input, output, session, active_tab: reactive.value = None):
 
+    initialized = reactive.value(False)
     selected_account = reactive.value(None)
     refresh          = reactive.value(0)
 
@@ -694,7 +694,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         daily_insert_signal.get()
         refresh()
 
-        if active_tab and active_tab.get() != "accounts":
+        if initialized.get() and active_tab and active_tab.get() != "accounts":
             return
 
         usd_rate_val, usd_chg = get_usd_krw()
@@ -785,6 +785,8 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
                 diff = diff_display(current, _last_display)
                 if diff:
                     await session.send_custom_message("ac_detail_tick", diff)
+
+        initialized.set(True)
 
     # ── 계좌 카드 클릭 → 상세 이동 ───────────────────────────────────────────
 

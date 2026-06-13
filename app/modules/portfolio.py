@@ -280,9 +280,10 @@ def portfolio_ui():
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
-
 @module.server
 def portfolio_server(input, output, session, active_tab: reactive.value = None):
+
+    initialized = reactive.value(False)
 
     # 종목 구성 캐시 — ticker 목록이 바뀌면 pf_init 전송
     _last_tickers: list = []
@@ -336,7 +337,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
         nonlocal _last_tickers, _last_display
         price_signal.get()
 
-        if active_tab and active_tab.get() != "portfolio":
+        if initialized.get() and active_tab and active_tab.get() != "portfolio":
             return
 
         rows, usd_rate, usd_chg, yesterday_total = load_portfolio()
@@ -398,3 +399,4 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             diff = diff_display(current, _last_display)
             if diff:
                 await session.send_custom_message("pf_tick", diff)
+        initialized.set(True)
