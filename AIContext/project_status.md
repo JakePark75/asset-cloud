@@ -33,7 +33,6 @@
 |--------|------|------|
 | shiny | 1.6.2 | 웹 프레임워크 |
 | psycopg2 | 2.9.12 | PostgreSQL 동기 연결 (DB 조회/수정) |
-| asyncpg | 0.31.0 | PostgreSQL 비동기 연결 (LISTEN/NOTIFY) |
 | websockets | - | KIS 웹소켓 실시간 시세 수신 |
 
 ### Shiny 1.6.2 주의사항
@@ -131,9 +130,9 @@
 └── scheduler/
     ├── price_updater.py         # 런처 — interval=0이면 WS모드, >0이면 REST모드 분기
     │                            # → 상세: price_updater_structure.md
-    ├── price_updater_common.py  # 공통 모듈 — 설정/DB/시장상태/공휴일/Yahoo/DB업데이트
+    ├── price_updater_common.py  # 공통 모듈 — 설정/DB/시장상태/공휴일/Yahoo/Redis 시세 업데이트
     │                            # get_market_status() ★ — daily_inserter, settings에서 import
-    │                            # get_yahoo_price() / update_ticker_in_db()
+    │                            # get_yahoo_price() / update_price_cache()
     │                            # HolidayCache / get_access_token()
     ├── price_updater_rest.py    # REST 폴링 모드 — N분 주기 전 종목 조회
     │                            # get_kr_price() / get_us_price() / get_confirmed_close_kr()
@@ -316,7 +315,7 @@
 - 공휴일 캐싱: HolidayCache 클래스, 매일 08:00 KST 1회 갱신
   - 한국: 공공데이터포털 특일 API (`data_go_kr_key`)
   - 미국: Finnhub market-holiday API (`finnhub_api_key`)
-- 업데이트 완료 후 PostgreSQL `NOTIFY price_updated` 전송
+- 업데이트 완료 후 Redis pub/sub `publish_price_updated()` 발행
 - systemd 서비스: VM 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
 - 웹소켓 모드에서 구독 대상 변경 감지 시 os.execv()로 자체 재시작
 
@@ -331,10 +330,10 @@
 - 각 모듈 ui/server를 네임스페이스로 등록
 
 ### 실시간 시세 갱신 구조
-- `price_signal.py`: asyncpg로 PostgreSQL `LISTEN price_updated` 대기
-- NOTIFY 수신 시 `async with reactive.lock()` → `price_signal.set()` → `await reactive.flush()` 호출
+- `price_signal.py`: redis.asyncio pubsub으로 `price_updated` / `daily_inserted` 채널 구독
+- 메시지 수신 시 `async with reactive.lock()` → `price_signal.set()` → `await reactive.flush()` 호출
 - 각 화면 모듈에서 `price_signal.get()`을 렌더러 안에서 호출해 의존성 등록
-- 시세 업데이트 시 의존 렌더러 자동 재실행 → DB 재조회 → 화면 갱신
+- 시세 업데이트 시 의존 렌더러 자동 재실행 → Redis/DB 재조회 → 화면 갱신
 - 백그라운드 태스크는 첫 세션 접속 시 1회만 시작 (`_task_started` 플래그)
 
 ### 설정 화면 구현 특이점
@@ -356,7 +355,7 @@
 - 평가액 계산 시 USD 종목 환율(USDKRW=X) 변환 적용
 - 종목 추가 시 tickers 미존재 종목은 자동 등록 (market/leverage 반영, is_manual=false)
 - 종목 클릭 시 수정 모달 (종목명/시장/레버리지/수량), 현금 클릭 시 수정 모달 (통화/금액) 분기
-- 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY 기반)
+- 실시간 시세 갱신 (Redis pub/sub 기반)
 - 모바일 사파리 WebSocket 끊김 대응:
   - iOS Safari는 백그라운드 전환 시 약 5초 후 WebSocket을 능동적으로 끊음 (iOS 레벨 동작, 서버 설정으로 변경 불가)
   - shiny:disconnected 이벤트 감지 시 location.reload()로 자동 재연결
@@ -382,7 +381,8 @@
 | ✅ 완료 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·수정·삭제) |
 | ✅ 완료 | 계좌 화면 UI 개선 (일간손익 환율반영, 삼각형 표시, 총자산 요약 섹션, 타이틀바 개선, 삭제버튼 하단 분리) |
 | ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
-| ✅ 완료 | 실시간 시세 갱신 (PostgreSQL LISTEN/NOTIFY) |
+| ✅ 완료 | 실시간 시세 갱신 (Redis pub/sub) — PostgreSQL LISTEN/NOTIFY 전환 완료 |
+| ✅ 완료 | NOTIFY → Redis pub/sub 전환 — price_signal.py/accounts/settings/daily_inserter, update_price_cache() 함수명 변경 |
 | ✅ 완료 | nginx Basic Auth 접근 제한 | → Shiny 앱 내 로그인으로 방향 변경 |
 | ✅ 완료 | Shiny 앱 로그인 화면 구현 |
 | ✅ 완료 | 계좌 화면 환율 표시 (USD/KRW, 등락률, 색상) |
@@ -411,4 +411,4 @@
 | ✅ 완료 | market_map 리팩토링 — 하드코딩 마켓 목록 제거, config.json market_map 중앙화 (currency/label/market_time 필드 추가, 전 파일 적용) |
 | ✅ 완료 | CSS 화면별 분리 — style.css → base.css / dashboard.css / portfolio.css / accounts.css / history.css. page-inner이 좌우 패딩 단일 기준 |
 | ✅ 완료 | Redis 전환 (Phase 1) — common/redis_store.py 신규, 시세 R/W Redis화, recalc_today_row() 도입, 각 화면 시세 조회 DB→Redis 전환 완료. 상세: redis_migration_context.md |
-| ⬜ 대기 | 텔레그램 봇 (우선순위 최하위) |
+| ✅ 완료 | Redis 전환 (Phase 2) — NOTIFY/LISTEN 완전 제거, Redis pub/sub 통일. price_signal.py 재작성, accounts/settings/daily_inserter 전환, update_price_cache() 함수명 정리 |
