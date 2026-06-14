@@ -163,24 +163,24 @@ app_ui = ui.page_fluid(
         });
 
         // 백그라운드 진입 시 오버레이 씌우기 → reload 시 깜빡임 방지
-        document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState === 'hidden') {
-                var overlay = document.getElementById('bg-overlay');
-
-                if (!overlay) {
-                    overlay = document.createElement('div');
-                    overlay.id = 'bg-overlay';
-                    overlay.style.cssText =
-                        'position:fixed;top:0;left:0;width:100%;height:100%;background:#0a0a0a;z-index:99999;';
-                    document.body.appendChild(overlay);
-                }
-            } else if (document.visibilityState === 'visible') {
-                var overlay = document.getElementById('bg-overlay');
-
-                if (overlay) {
-                    overlay.remove();
-                }
+        // 1. 오버레이를 생성하고 띄우는 건 '연결 끊김'이 감지될 때만!
+        $(document).on('shiny:disconnected', function() {
+            var overlay = document.getElementById('bg-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'bg-overlay';
+                overlay.style.position = 'fixed';
+                overlay.style.top = '0'; overlay.style.left = '0';
+                overlay.style.width = '100%'; overlay.style.height = '100%';
+                overlay.style.backgroundColor = 'black';
+                overlay.style.zIndex = '9999';
+                document.body.appendChild(overlay);
             }
+            
+            // 리로드 안전장치 (리로드가 발생할 때만 깜빡임 방지용)
+            setTimeout(function() {
+                location.reload();
+            }, 50); // 50ms면 리로드 명령 내리기엔 충분합니다
         });
     """),
 )
