@@ -159,28 +159,8 @@ app_ui = ui.page_fluid(
 
         // Shiny 끊김 감지 시 reload
         $(document).on('shiny:disconnected', function() {
-            location.reload();
-        });
-
-        // 백그라운드 진입 시 오버레이 씌우기 → reload 시 깜빡임 방지
-        // 1. 오버레이를 생성하고 띄우는 건 '연결 끊김'이 감지될 때만!
-        $(document).on('shiny:disconnected', function() {
-            var overlay = document.getElementById('bg-overlay');
-            if (!overlay) {
-                overlay = document.createElement('div');
-                overlay.id = 'bg-overlay';
-                overlay.style.position = 'fixed';
-                overlay.style.top = '0'; overlay.style.left = '0';
-                overlay.style.width = '100%'; overlay.style.height = '100%';
-                overlay.style.backgroundColor = 'black';
-                overlay.style.zIndex = '9999';
-                document.body.appendChild(overlay);
-            }
-            
-            // 리로드 안전장치 (리로드가 발생할 때만 깜빡임 방지용)
-            setTimeout(function() {
-                location.reload();
-            }, 50); // 50ms면 리로드 명령 내리기엔 충분합니다
+            // 히스토리 오염을 막고, 현재 페이지를 즉시 대체(교체)
+            window.location.replace(window.location.href);
         });
     """),
 )
