@@ -22,7 +22,8 @@ def load_portfolio():
         cur = conn.cursor()
         cur.execute("""
             SELECT p.ticker, SUM(p.quantity) AS quantity,
-                   t.name, t.market, t.leverage
+                   t.name, t.market, t.leverage,
+                   SUM(p.quantity * p.avg_price) / NULLIF(SUM(p.quantity), 0) AS avg_price
             FROM positions p
             LEFT JOIN tickers t ON p.ticker = t.ticker
             LEFT JOIN accounts a ON p.account_id = a.id
@@ -37,11 +38,11 @@ def load_portfolio():
         cur.close()
 
     rows = []
-    for ticker, qty, name, market, leverage in db_rows:
+    for ticker, qty, name, market, leverage, avg_price in db_rows:
         p_data     = prices.get(ticker)
         price      = float(p_data["price"])      if p_data else 0.0
         change_pct = float(p_data["change_pct"]) if p_data else 0.0
-        rows.append((ticker, qty, name, price, change_pct, market, leverage))
+        rows.append((ticker, qty, name, price, change_pct, market, leverage, avg_price))
 
     return rows, usd_rate, usd_chg, yesterday_total
 
@@ -61,6 +62,7 @@ def _calc_amount(ticker, qty_f, price_f, market, usd_rate):
 
 
 def _sort_rows(rows, usd_rate):
+    # rows tuple: (ticker, qty, name, price, chg_pct, market, leverage, avg_price)
     return sorted(
         rows,
         key=lambda r: (
@@ -70,7 +72,7 @@ def _sort_rows(rows, usd_rate):
     )
 
 
-def _build_row_skeleton(ticker, qty, name, market, leverage, usd_rate):
+def _build_row_skeleton(ticker, qty, name, market, leverage, usd_rate, avg_price=None):
     """
     종목 구성 변경 시 1회 전송하는 골격 HTML.
     가변 값(amount, price, chg, status)은 id 달린 span으로 비워둠.
@@ -82,6 +84,8 @@ def _build_row_skeleton(ticker, qty, name, market, leverage, usd_rate):
 
     lev_html = f'<span class="lev-badge lev-x{leverage}">x{leverage}</span>' if leverage > 1 else ""
 
+    SEP = '<span style="color:var(--text-dim);margin:0 4px;">·</span>'
+
     if ticker == 'KRW':
         display_name = "현금(KRW)"
         qty_str      = ""
@@ -92,7 +96,13 @@ def _build_row_skeleton(ticker, qty, name, market, leverage, usd_rate):
         change_html  = ""
     else:
         display_name = name or ticker
-        qty_str      = f"{qty_f:g}주"
+        qty_str      = (
+            f'<span id="pf-qty-{tid}"></span>'
+            f'{SEP}'
+            f'<span id="pf-avgprice-{tid}"></span>'
+            f'{SEP}'
+            f'<span id="pf-pnlpct-{tid}"></span>'
+        )
         change_html  = (
             f'<div class="ticker-change">'
             f'<span id="pf-price-{tid}" style="margin-right:4px;"></span>'
@@ -120,16 +130,27 @@ def _build_row_skeleton(ticker, qty, name, market, leverage, usd_rate):
     )
 
 
-def _build_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate):
+def _fmt_amount_short(amount: float) -> str:
+    """포트폴리오 전용 평가액 축약 포맷 (100만원 이상 4자리 축약)"""
+    if amount >= 100_000_000:
+        return f"{amount / 100_000_000:.1f}억원"
+    elif amount >= 1_000_000:
+        return f"{amount / 10_000:.0f}만원"
+    else:
+        return fmt_krw(amount)
+
+
+def _build_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price=None):
     """
     시세 갱신 시마다 전송하는 값 dict.
     """
     tid      = _ticker_to_id(ticker)
     is_cash  = ticker in ('KRW', 'USD')
     leverage = int(leverage) if leverage else 1
-    qty_f    = float(qty   or 0)
-    price_f  = float(price or 0)
-    chg_f    = float(chg_pct or 0)
+    qty_f    = float(qty      or 0)
+    price_f  = float(price    or 0)
+    chg_f    = float(chg_pct  or 0)
+    avg_f    = float(avg_price or 0)
 
     # amount
     amount = _calc_amount(ticker, qty_f, price_f, market, usd_rate)
@@ -141,6 +162,25 @@ def _build_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_
     else:
         currency  = get_market_currency(market)
         price_str, chg_str, chg_css = fmt_change(price_f, chg_f, currency=currency)
+
+    # 평균단가 · 수익률
+    avgprice_str = pnlpct_str = pnlpct_css = ""
+    qty_str = ""
+    if not is_cash and qty_f > 0:
+        if qty_f != int(qty_f):
+            qty_str = f"≈{qty_f:.2f}주"
+        else:
+            qty_str = f"{qty_f:g}주"
+    if not is_cash and avg_f > 0 and price_f > 0:
+        currency = get_market_currency(market)
+        if currency == "USD":
+            avgprice_str = f"${avg_f:,.2f}"
+        else:
+            avgprice_str = _fmt_amount_short(avg_f)
+        pnl_pct = (price_f - avg_f) / avg_f * 100
+        sign = "+" if pnl_pct >= 0 else ""
+        pnlpct_str = f"{sign}{pnl_pct:.2f}%"
+        pnlpct_css = "positive" if pnl_pct >= 0 else "negative"
 
     # status
     status_dot = status_text = status_cls = ""
@@ -154,14 +194,18 @@ def _build_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_
         status_dot, status_text, status_cls = dot_map.get(status, ("○", "Closed", "status-closed"))
 
     return {
-        "id":         tid,
-        "amount":     amount_str,
-        "price":      price_str,
-        "chg":        chg_str,
-        "chg_css":    chg_css,
-        "status_dot": status_dot,
-        "status_txt": status_text,
-        "status_cls": status_cls,
+        "id":          tid,
+        "amount":      amount_str,
+        "qty":         qty_str,
+        "price":       price_str,
+        "chg":         chg_str,
+        "chg_css":     chg_css,
+        "avgprice":    avgprice_str,
+        "pnlpct":      pnlpct_str,
+        "pnlpct_css":  pnlpct_css,
+        "status_dot":  status_dot,
+        "status_txt":  status_text,
+        "status_cls":  status_cls,
     }
 
 
@@ -229,6 +273,9 @@ def portfolio_ui():
     var amountEl = document.getElementById('pf-amount-' + t.id);
     if (amountEl) amountEl.textContent = t.amount;
 
+    var qtyEl = document.getElementById('pf-qty-' + t.id);
+    if (qtyEl) qtyEl.textContent = t.qty || '';
+
     var priceEl = document.getElementById('pf-price-' + t.id);
     if (priceEl) {
       priceEl.textContent  = t.price;
@@ -238,6 +285,12 @@ def portfolio_ui():
 
     var chgEl = document.getElementById('pf-chg-' + t.id);
     if (chgEl) { chgEl.textContent = t.chg; chgEl.className = t.chg_css; }
+
+    var avgEl = document.getElementById('pf-avgprice-' + t.id);
+    if (avgEl) avgEl.textContent = t.avgprice || '';
+
+    var pnlEl = document.getElementById('pf-pnlpct-' + t.id);
+    if (pnlEl) { pnlEl.textContent = t.pnlpct || ''; pnlEl.className = t.pnlpct_css || ''; }
 
     var stEl = document.getElementById('pf-status-' + t.id);
     if (stEl) {
@@ -344,7 +397,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
         # ── 총 평가액 합산 ────────────────────────────────
         total_asset = 0
-        for ticker, qty, name, price, chg_pct, market, leverage in rows:
+        for ticker, qty, name, price, chg_pct, market, leverage, avg_price in rows:
             qty_f   = float(qty   or 0)
             price_f = float(price or 0)
             total_asset += _calc_amount(ticker, qty_f, price_f, market, usd_rate)
@@ -364,8 +417,8 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
         # ── tick 값 (ticker → top-level key) ────────────────
         ticker_values = {
-            ticker: _build_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate)
-            for ticker, qty, name, price, chg_pct, market, leverage in rows_sorted
+            ticker: _build_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
+            for ticker, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
         }
 
         summary = {
@@ -385,8 +438,8 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             cfg        = get_config()
             show_force = int(cfg.get("interval", 1)) != 0
             ticker_list_html = "".join(
-                _build_row_skeleton(ticker, qty, name, market, leverage, usd_rate)
-                for ticker, qty, name, price, chg_pct, market, leverage in rows_sorted
+                _build_row_skeleton(ticker, qty, name, market, leverage, usd_rate, avg_price)
+                for ticker, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
             )
             await session.send_custom_message("pf_init", {
                 "summary":          summary,
