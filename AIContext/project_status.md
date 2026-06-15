@@ -169,7 +169,7 @@
 - 텔레그램 봇 (우선순위 최하위)
 
 ### 제외 대상 (1차)
-- 매수/매도 이력, 평단 관리
+- ~~매수/매도 이력, 평단 관리~~ → 완료 (매수/매도 이력 없이 평단+수량+현금만 관리)
 - 과거 데이터 일괄 조회 기능
 
 ---
@@ -254,6 +254,7 @@
 | account_id | INT FK → accounts.id | CASCADE DELETE |
 | ticker | TEXT | 종목 티커 또는 "KRW"/"USD" (현금) |
 | quantity | NUMERIC | 수량 (현금인 경우 금액) |
+| avg_price | NUMERIC | 평균단가 (NULL 허용, 현금 미사용) |
 
 ### daily_summary
 
@@ -412,3 +413,5 @@
 | ✅ 완료 | CSS 화면별 분리 — style.css → base.css / dashboard.css / portfolio.css / accounts.css / history.css. page-inner이 좌우 패딩 단일 기준 |
 | ✅ 완료 | Redis 전환 (Phase 1) — common/redis_store.py 신규, 시세 R/W Redis화, recalc_today_row() 도입, 각 화면 시세 조회 DB→Redis 전환 완료. 상세: redis_migration_context.md |
 | ✅ 완료 | Redis 전환 (Phase 2) — NOTIFY/LISTEN 완전 제거, Redis pub/sub 통일. price_signal.py 재작성, accounts/settings/daily_inserter 전환, update_price_cache() 함수명 정리 |
+| ✅ 완료 | 평단 관리 기능 — positions.avg_price 컬럼 추가, 종목 수정 모달 탭 3개(정보/매수/매도) 구조로 개편, 매수 시 가중평균 평단 재계산 + 현금 자동 차감, 매도 시 현금 자동 가산 + 실현손익 미리보기, 포트폴리오 화면 평단/수익률 표시 |
+| ✅ 완료 | accounts.py 파일 분리 — 1032줄 → accounts.py / accounts_helpers.py / accounts_modals.py / accounts_DAL.py 4파일로 분리 |
