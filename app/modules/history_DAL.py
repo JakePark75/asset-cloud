@@ -29,8 +29,10 @@ def load_today_row() -> dict | None:
         if not raw:
             return None
         t = json.loads(raw)
-        today = datetime.date.today()
-        t["date"] = str(today)
+        from zoneinfo import ZoneInfo
+        KST = ZoneInfo("Asia/Seoul")
+        today_kst = datetime.datetime.now(KST).date()
+        t["date"] = str(today_kst)
         return t
     except Exception as e:
         print(f"[history_DAL] load_today_row 실패 (무시): {e}")

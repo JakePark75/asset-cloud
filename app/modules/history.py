@@ -1,6 +1,12 @@
 import json
 import datetime
+from zoneinfo import ZoneInfo
 from shiny import ui, reactive, module, render
+
+KST = ZoneInfo("Asia/Seoul")
+
+def _today_kst() -> datetime.date:
+    return datetime.datetime.now(KST).date()
 from app.price_signal import price_signal, daily_insert_signal
 from app.db import get_db
 from .history_DAL import load_history, load_today_row, save_cash_flow
@@ -373,7 +379,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         rows = list(_db_rows())
         t = load_today_row()
         if t:
-            today = datetime.date.today()
+            today = _today_kst()
             if not rows or rows[-1][0] < today:
                 rows.append((
                     today,
@@ -415,11 +421,13 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_history_table():
+        print(f"[history] _send_history_table called, initialized={initialized_historytable.get()}, tab={active_tab.get() if active_tab else None}", flush=True)
         if initialized_historytable.get() and active_tab and active_tab.get() != "history":
             return
         rows = list(_db_rows())
         t = load_today_row()
-        today = datetime.date.today()
+        today = _today_kst()
+        print(f"[history] rows_last={rows[-1][0] if rows else None}, today_row_date={t.get('date') if t else None}, today={today}", flush=True)
 
         # today_row를 맨 앞에 붙여서 내림차순으로 전송
         if t and (not rows or rows[-1][0] < today):
@@ -471,6 +479,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
                 "ndx_change_pct": str(ndx_change_pct) if ndx_change_pct is not None else '',
             })
 
+        print(f"[history] sending history_data rows={len(data)}, first_date={data[0]['date'] if data else None}", flush=True)
         await session.send_custom_message("history_data", data)
         initialized_historytable.set(True)
 
@@ -494,7 +503,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             return
 
         rows = _db_rows()
-        today = datetime.date.today()
+        today = _today_kst()
         prev     = float(rows[-1][1] or 0) if rows else None
         prev_ndx = float(rows[-1][3] or 0) if rows else None
 
@@ -544,7 +553,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         if not date_str:
             return
 
-        today_str = str(datetime.date.today())
+        today_str = str(_today_kst())
         is_today = (date_str == today_str)
 
         if is_today:
@@ -595,7 +604,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         cf   = input.edit_cf() or 0
         note = input.edit_note() or ""
 
-        today_str = str(datetime.date.today())
+        today_str = str(_today_kst())
         if date_str == today_str:
             try:
                 from common.redis_store import get_redis
