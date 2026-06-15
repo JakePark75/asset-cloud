@@ -604,6 +604,23 @@ def _dashboard_ui_dom_patch():
                 ),
             ),
 
+            # ── 종목 비중 ─────────────────────────────────
+            ui.div(
+                {"class": "db-section"},
+                ui.div(
+                    {"class": "db-donut-card"},
+                    ui.div(
+                        ui.span("종목 비중", class_="db-donut-title", style="display:inline"),
+                        ui.span("–", id="db-donut-title-sub", class_="db-donut-title-sub"),
+                    ),
+                    ui.div(
+                        {"class": "db-donut-wrap"},
+                        ui.div({"id": "db-donut-svg-wrap",  "class": "db-donut-svg-wrap"}),
+                        ui.div({"id": "db-donut-legend",    "class": "db-donut-legend"}),
+                    ),
+                ),
+            ),
+
             # ── 수익률 ────────────────────────────────────
             ui.div(
                 {"class": "db-section"},
@@ -654,23 +671,6 @@ def _dashboard_ui_dom_patch():
                 ),
             ),
 
-            # ── 종목 비중 ─────────────────────────────────
-            ui.div(
-                {"class": "db-section"},
-                ui.div(
-                    {"class": "db-donut-card"},
-                    ui.div(
-                        ui.span("종목 비중", class_="db-donut-title", style="display:inline"),
-                        ui.span("–", id="db-donut-title-sub", class_="db-donut-title-sub"),
-                    ),
-                    ui.div(
-                        {"class": "db-donut-wrap"},
-                        ui.div({"id": "db-donut-svg-wrap",  "class": "db-donut-svg-wrap"}),
-                        ui.div({"id": "db-donut-legend",    "class": "db-donut-legend"}),
-                    ),
-                ),
-            ),
-
             # ── 은퇴 시뮬레이션 ───────────────────────────
             ui.div(
                 {"class": "db-retirement"},
@@ -705,6 +705,8 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     def data():
         _price_signal.get()
         _daily_insert_signal.get()
+        if initialized.get() and active_tab and active_tab.get() != "dashboard":
+            return None
         return _load_summary_data()
 
     # ── 포지션 데이터 계산 ────────────────────────────────────────────────
@@ -714,6 +716,8 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     @reactive.calc
     def position_data():
         _price_signal.get()
+        if initialized.get() and active_tab and active_tab.get() != "dashboard":
+            return None
         return _load_position_data()
 
     # ── 시세/daily insert 수신 시 대시보드 전체 갱신 ─────────────────────

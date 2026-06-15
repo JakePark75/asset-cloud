@@ -368,6 +368,8 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     def _db_rows():
         _reload_trigger.get()        # 입출금 수정 시 무효화
         daily_insert_signal.get()    # daily insert 완료 시 무효화
+        if initialized_historytable.get() and active_tab and active_tab.get() != "history":
+            return None
         return load_history()
 
     # ── 차트용 rows 계산 — DB rows + today_row 합산 ──────────────────────────
@@ -376,7 +378,10 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     # 시세 업데이트마다 차트 데이터가 갱신된다.
     @reactive.calc
     def _all_rows_for_chart():
-        rows = list(_db_rows())
+        if initialized_historytable.get() and active_tab and active_tab.get() != "history":
+            return None
+        db_rows = _db_rows()
+        rows = list(db_rows) if db_rows else []
         t = load_today_row()
         if t:
             today = _today_kst()
@@ -424,7 +429,8 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         print(f"[history] _send_history_table called, initialized={initialized_historytable.get()}, tab={active_tab.get() if active_tab else None}", flush=True)
         if initialized_historytable.get() and active_tab and active_tab.get() != "history":
             return
-        rows = list(_db_rows())
+        db_rows = _db_rows()
+        rows = list(db_rows) if db_rows is not None else []
         t = load_today_row()
         today = _today_kst()
         print(f"[history] rows_last={rows[-1][0] if rows else None}, today_row_date={t.get('date') if t else None}, today={today}", flush=True)
