@@ -4,7 +4,7 @@ import sys
 from app.db import get_db, get_usd_krw, get_config, get_market_currency
 from app.price_signal import price_signal, position_signal, ticker_signal
 from app.modules.components import (
-    fmt_krw, fmt_usd, fmt_pct, fmt_change,
+    fmt_krw, fmt_usd, fmt_pct, fmt_change, fmt_pnl,
     build_ticker_row_skeleton, build_ticker_row_values,
 )
 from scheduler.price_updater_common import get_market_status
@@ -201,6 +201,12 @@ def portfolio_ui():
     el = document.getElementById('pf-force-btn-wrap');
     if (el) el.style.display = m.show_force_btn ? '' : 'none';
 
+    el = document.getElementById('pf-header-price-wrap');
+    if (el) el.style.display = 'none';
+
+    el = document.getElementById('pf-summary-label');
+    if (el) el.textContent = '포트폴리오';
+
     _applyTickers(m.tickers);
   });
 
@@ -236,11 +242,18 @@ def portfolio_ui():
     el = document.getElementById('pf-usd-wrap');
     if (el) el.style.display = 'none';
 
-    el = document.getElementById('pf-drilldown-title');
+    el = document.getElementById('pf-summary-label');
     if (el) el.textContent = m.ticker_name;
 
     el = document.getElementById('pf-drilldown-list');
     if (el) el.innerHTML = m.account_list_html;
+
+    el = document.getElementById('pf-header-price-wrap');
+    if (el) el.style.display = '';
+    el = document.getElementById('pf-header-price');
+    if (el) { el.textContent = m.summary.price_text; el.className = m.summary.chg_css; }
+    el = document.getElementById('pf-header-chg');
+    if (el) { el.textContent = m.summary.chg_text; el.className = m.summary.chg_css; }
 
     document.getElementById('pf-list-view').style.display      = 'none';
     document.getElementById('pf-drilldown-view').style.display = '';
@@ -258,6 +271,10 @@ def portfolio_ui():
       if (el) el.textContent = m.summary.total_asset;
       el = document.getElementById('pf-pnl');
       if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
+      el = document.getElementById('pf-header-price');
+      if (el) { el.textContent = m.summary.price_text; el.className = m.summary.chg_css; }
+      el = document.getElementById('pf-header-chg');
+      if (el) { el.textContent = m.summary.chg_text; el.className = m.summary.chg_css; }
     }
     Object.keys(m).forEach(function(key) {
       if (key === 'summary') return;
@@ -275,6 +292,9 @@ def portfolio_ui():
     document.getElementById('pf-list-view').style.display      = '';
     document.getElementById('pf-drilldown-view').style.display = 'none';
     document.getElementById('pf-back-btn').style.display       = 'none';
+    document.getElementById('pf-header-price-wrap').style.display = 'none';
+    var labelEl = document.getElementById('pf-summary-label');
+    if (labelEl) labelEl.textContent = '포트폴리오';
     Shiny.setInputValue('portfolio-go_back', Math.random(), { priority: 'event' });
   };
 
@@ -371,6 +391,11 @@ def portfolio_ui():
                         {"id": "pf-usd-wrap", "style": "display:none;"},
                         ui.span({"id": "pf-usd-text", "class": "summary-usd"}),
                     ),
+                    ui.span(
+                        {"id": "pf-header-price-wrap", "style": "display:none; margin-left:auto;"},
+                        ui.span("", id="pf-header-price", style="margin-right:4px;"),
+                        ui.span("", id="pf-header-chg"),
+                    ),
                     class_="summary-delta-row",
                 ),
             ),
@@ -390,7 +415,6 @@ def portfolio_ui():
             # ── 드릴다운 뷰 (종목별 계좌 목록) ───────────────────────────────
             ui.div(
                 {"id": "pf-drilldown-view", "style": "display:none;"},
-                ui.h4("", id="pf-drilldown-title", class_="section-heading"),
                 ui.div({"id": "pf-drilldown-list", "class": "ticker-list"}),
             ),
         ),
@@ -616,16 +640,40 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             normal = [r for r in acc_rows if not r[3]]
             watch  = [r for r in acc_rows if r[3]]
 
-            # 드릴다운 헤더: 해당 종목 전체 보유 평가액 합산
+            # 드릴다운 헤더: 비감시 계좌만 합산 (감시계좌는 보유자산이 아니므로 제외 — 목록 뷰와 동일 기준)
             total_asset = sum(
                 _calc_amount(ticker, float(qty or 0), float(p or 0), market, usd_rate)
-                for _, _, _, _, qty, _, market, leverage, p, _, _ in acc_rows
+                for _, _, _, _, qty, _, market, leverage, p, _, _ in normal
             )
-            # 드릴다운은 전일 종목 단위 평가액 미제공 → 손익 미표시
+            cost_basis = sum(
+                _calc_amount(ticker, float(qty or 0), float(avg_price or 0), market, usd_rate)
+                for _, _, _, _, qty, avg_price, market, leverage, p, _, _ in normal
+            )
+            sum_qty = sum(float(qty or 0) for _, _, _, _, qty, _, _, _, _, _, _ in normal)
+            weighted_avg_price = (
+                sum(
+                    float(qty or 0) * float(avg_price or 0)
+                    for _, _, _, _, qty, avg_price, _, _, _, _, _ in normal
+                ) / sum_qty
+            ) if sum_qty else 0.0
+
+            pnl_amount = total_asset - cost_basis
+            pnl_pct    = (
+                (price - weighted_avg_price) / weighted_avg_price * 100
+            ) if weighted_avg_price else 0.0
+            pnl_text, pnl_class = fmt_pnl(pnl_amount, pnl_pct)
+
+            ticker_market = acc_rows[0][6] if acc_rows else None
+            currency = get_market_currency(ticker_market) if ticker_market else None
+            price_text, chg_text, chg_css = fmt_change(price, chg_pct, currency=currency)
+
             summary = {
                 "total_asset": fmt_krw(total_asset),
-                "pnl_text":    "",
-                "pnl_class":   "",
+                "pnl_text":    pnl_text,
+                "pnl_class":   pnl_class,
+                "price_text":  price_text,
+                "chg_text":    chg_text,
+                "chg_css":     chg_css,
             }
 
             row_values = {

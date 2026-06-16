@@ -52,6 +52,18 @@
 
 .ticker-list { }
 
+/*    드릴다운 헤더: 좌(total-summary) / 우(현재가·등락률) 배치  */
+.pf-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.pf-header-row .total-summary {
+    flex: 1;
+    min-width: 0;
+}
+
 /*     */
 .lev-name-wrap {
     position: relative;
