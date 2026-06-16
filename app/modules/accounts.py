@@ -20,13 +20,13 @@ from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
 
 
-def _notify_price_updated():
+def _notify_position_changed():
     try:
-        from common.redis_store import recalc_today_row, publish_price_updated
+        from common.redis_store import recalc_today_row, publish_position_changed
         recalc_today_row()
-        publish_price_updated()
+        publish_position_changed()
     except Exception as e:
-        print(f"[accounts] price_updated 신호 발행 실패 (무시): {e}")
+        print(f"[accounts] position_changed 신호 발행 실패 (무시): {e}")
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -674,7 +674,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 계좌 삭제 ─────────────────────────────────────────────────────────────
 
@@ -691,7 +691,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             cur.close()
         selected_account.set(None)
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 종목 추가 ─────────────────────────────────────────────────────────────
 
@@ -725,7 +725,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 현금 추가 ─────────────────────────────────────────────────────────────
 
@@ -749,7 +749,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 종목 수정 (정보 탭 저장) ──────────────────────────────────────────────
 
@@ -787,7 +787,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 매수 ──────────────────────────────────────────────────────────────────
 
@@ -807,7 +807,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             print(f"[accounts] 매수 처리 오류: {e}")
             return
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 매도 ──────────────────────────────────────────────────────────────────
 
@@ -827,7 +827,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             print(f"[accounts] 매도 처리 오류: {e}")
             return
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 종목 삭제 ─────────────────────────────────────────────────────────────
 
@@ -855,7 +855,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 현금 수정 ─────────────────────────────────────────────────────────────
 
@@ -877,7 +877,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()
 
     # ── 현금 삭제 ─────────────────────────────────────────────────────────────
 
@@ -894,4 +894,4 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_position_changed()

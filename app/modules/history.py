@@ -7,7 +7,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 def _today_kst() -> datetime.date:
     return datetime.datetime.now(KST).date()
-from app.price_signal import price_signal, daily_insert_signal
+from app.price_signal import price_signal, daily_insert_signal, position_signal
 from app.db import get_db
 from .history_DAL import load_history, load_today_row, save_cash_flow
 from .history_charts import make_chart_asset, make_chart_twr
@@ -499,6 +499,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     async def _send_today_row_update():
         price_signal.get()           # 시세 업데이트 시 갱신
         daily_insert_signal.get()    # daily insert 완료 시 갱신
+        position_signal.get()        # 포지션 CRUD 시 today_row 재계산 반영
         today_cf_trigger.get()       # 오늘 입출금 수정 시 갱신
 
         if initialized_today_row.get() and active_tab and active_tab.get() != "history":

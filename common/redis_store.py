@@ -87,6 +87,38 @@ def publish_price_updated() -> None:
         print(f"[redis_store] publish_price_updated 실패: {e}")
 
 
+def publish_position_changed() -> None:
+    """
+    position_changed 채널에 신호 발행.
+    accounts.py에서 포지션(종목/현금) CRUD 완료 후 호출.
+    payload는 의미 없는 고정값("1") — 화면 쪽은 채널 수신 자체만 트리거로 사용.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.publish("position_changed", "1")
+    except Exception as e:
+        print(f"[redis_store] publish_position_changed 실패: {e}")
+
+
+def publish_ticker_changed() -> None:
+    """
+    ticker_changed 채널에 신호 발행.
+    settings.py에서 티커 CRUD 완료 후 호출.
+    payload는 의미 없는 고정값("1") — 화면 쪽은 채널 수신 자체만 트리거로 사용.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.publish("ticker_changed", "1")
+    except Exception as e:
+        print(f"[redis_store] publish_ticker_changed 실패: {e}")
+
+
 def publish_daily_inserted() -> None:
     """
     daily_inserted 채널에 신호 발행.

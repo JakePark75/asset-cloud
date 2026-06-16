@@ -4,7 +4,7 @@ import math
 from shiny import module, ui, render, reactive
 
 from app.db import get_db, get_market_currency
-from app.price_signal import price_signal as _price_signal, daily_insert_signal as _daily_insert_signal
+from app.price_signal import price_signal as _price_signal, daily_insert_signal as _daily_insert_signal, position_signal as _position_signal, ticker_signal as _ticker_signal
 from app.utils.metrics import (
     to_f, calculate_xirr, calculate_monthly_irr,
     calculate_alpha, calculate_beta,
@@ -46,7 +46,7 @@ def _fmt_krw_short(val: float) -> str:
 
 # ── DAL ──────────────────────────────────────────────────────
 
-def _load_summary_data() -> dict:
+def _load_summary_data(rows, raw_rows) -> dict:
     # ---------------------------------------------------------------------------
     # Step 6-2: 시세(current_price) 조회를 DB → Redis 전환
     #   - usd_krw  : Redis get_price('USDKRW=X') → fallback 1300.0
@@ -66,30 +66,6 @@ def _load_summary_data() -> dict:
     # ^NDX: prices hash 우선, 없으면 None (live_ndx100 = None → prev 사용)
     ndx_data    = prices.get("^NDX")
     live_ndx100 = float(ndx_data["price"]) if ndx_data else None
-
-    with get_db() as conn:
-        cur = conn.cursor()
-
-        # daily_summary 전체 이력 — DB 유지
-        cur.execute("""
-            SELECT date, total_asset, cash_flow, ndx100,
-                   exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
-            FROM daily_summary
-            ORDER BY date ASC
-        """)
-        rows = cur.fetchall()
-
-        # positions + 메타데이터(leverage, market) — DB 유지
-        # current_price는 SELECT하지 않고 Redis prices에서 매핑
-        cur.execute("""
-            SELECT p.ticker, p.quantity, t.leverage, t.market
-            FROM positions p
-            LEFT JOIN tickers t ON p.ticker = t.ticker
-            LEFT JOIN accounts a ON p.account_id = a.id
-            WHERE a.is_watch = false
-        """)
-        raw_rows = cur.fetchall()
-        cur.close()
 
     # positions에 Redis 시세 매핑
     pos_rows = []
@@ -213,10 +189,11 @@ def _load_summary_data() -> dict:
     }
 
 
-def _load_position_data() -> list[dict]:
+def _load_position_data(rows) -> list[dict]:
     # ---------------------------------------------------------------------------
     # Step 6-2: current_price DB JOIN → Redis get_all_prices() 매핑
     #   메타데이터(name, market, leverage)는 DB 유지
+    #   DB 조회는 호출자(_db_position_detail_rows)가 캐싱해서 전달
     # ---------------------------------------------------------------------------
     from common.redis_store import get_all_prices
 
@@ -225,20 +202,6 @@ def _load_position_data() -> list[dict]:
     # usd_krw: prices hash에서 직접 읽음
     fx_data = prices.get("USDKRW=X")
     usd_krw = float(fx_data["price"]) if fx_data else 1300.0
-
-    with get_db() as conn:
-        cur = conn.cursor()
-        # current_price 제거 — Redis에서 매핑
-        cur.execute("""
-            SELECT p.ticker, t.name, t.market, t.leverage, p.quantity
-            FROM positions p
-            LEFT JOIN tickers t ON p.ticker = t.ticker
-            LEFT JOIN accounts a ON p.account_id = a.id
-            WHERE a.is_watch = false
-            ORDER BY p.ticker
-        """)
-        rows = cur.fetchall()
-        cur.close()
 
     result = []
     for ticker, name, market, leverage, qty in rows:
@@ -696,29 +659,88 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     initialized = reactive.value(False)
     _last_display: dict = {}
 
+    # ── DB 캐시 ──────────────────────────────────────────────────────────────
+    # positions 메타, tickers 메타, daily_summary 이력은
+    # position_changed / ticker_changed / daily_insert_signal 때만 DB 재조회.
+    # price_updated 시에는 캐시 그대로 사용 — Redis 시세만 새로 읽음.
+
+    @reactive.calc
+    def _db_summary_rows():
+        """daily_summary 전체 이력 — daily_insert_signal 시에만 재조회."""
+        _daily_insert_signal.get()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT date, total_asset, cash_flow, ndx100,
+                       exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
+                FROM daily_summary
+                ORDER BY date ASC
+            """)
+            rows = cur.fetchall()
+            cur.close()
+        return rows
+
+    @reactive.calc
+    def _db_position_rows():
+        """positions + tickers 메타 — position_changed / ticker_changed 시에만 재조회."""
+        _position_signal.get()
+        _ticker_signal.get()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT p.ticker, p.quantity, t.leverage, t.market
+                FROM positions p
+                LEFT JOIN tickers t ON p.ticker = t.ticker
+                LEFT JOIN accounts a ON p.account_id = a.id
+                WHERE a.is_watch = false
+            """)
+            rows = cur.fetchall()
+            cur.close()
+        return rows
+
+    @reactive.calc
+    def _db_position_detail_rows():
+        """도넛 차트용 positions + tickers 메타 — position_changed / ticker_changed 시에만 재조회."""
+        _position_signal.get()
+        _ticker_signal.get()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT p.ticker, t.name, t.market, t.leverage, p.quantity
+                FROM positions p
+                LEFT JOIN tickers t ON p.ticker = t.ticker
+                LEFT JOIN accounts a ON p.account_id = a.id
+                WHERE a.is_watch = false
+                ORDER BY p.ticker
+            """)
+            rows = cur.fetchall()
+            cur.close()
+        return rows
+
     # ── 대시보드 요약 데이터 계산 ────────────────────────────────────────────
     # price_signal 마다 Redis 시세를 새로 읽어 총자산·수익률 등 전체 지표를 재계산.
-    # daily_insert_signal 수신 시 daily_summary 에 새 행이 추가됐으므로
-    # DB를 새로 읽어야 IRR·알파·베타 등 이력 기반 지표가 정확해진다.
-    # @reactive.calc 로 캐싱: 같은 signal 값이면 재계산 없이 캐시 반환.
+    # DB 파트(_db_summary_rows, _db_position_rows)는 각자의 signal에 의해서만 갱신됨.
     @reactive.calc
     def data():
         _price_signal.get()
         _daily_insert_signal.get()
+        _position_signal.get()
+        _ticker_signal.get()
         if initialized.get() and active_tab and active_tab.get() != "dashboard":
             return None
-        return _load_summary_data()
+        return _load_summary_data(_db_summary_rows(), _db_position_rows())
 
     # ── 포지션 데이터 계산 ────────────────────────────────────────────────
     # price_signal 마다 Redis 시세를 새로 읽어 종목별 평가액·비중을 재계산.
-    # 포지션 자체(수량·종목)는 자주 안 바뀌므로 DB 조회는 내부에서 캐싱 없이 매번 하되,
-    # 시세는 Redis에서 읽으므로 빠르다.
+    # DB 파트(_db_position_detail_rows)는 position_changed / ticker_changed 시에만 갱신됨.
     @reactive.calc
     def position_data():
         _price_signal.get()
+        _position_signal.get()
+        _ticker_signal.get()
         if initialized.get() and active_tab and active_tab.get() != "dashboard":
             return None
-        return _load_position_data()
+        return _load_position_data(_db_position_detail_rows())
 
     # ── 시세/daily insert 수신 시 대시보드 전체 갱신 ─────────────────────
     # data(), position_data() 의존성을 통해 price_signal, daily_insert_signal 에 연결됨.

@@ -1,13 +1,13 @@
 from shiny import ui, render, module, reactive
 from app.db import get_db, get_config, save_config, get_market_currency, get_market_map
 from app.modules.components import fmt_change
-from app.price_signal import price_signal
+from app.price_signal import price_signal, ticker_signal
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
 import subprocess
 
 
-def _notify_price_updated():
+def _notify_ticker_changed():
     """
     티커 추가/삭제 후 다른 화면들에게 갱신 신호를 보낸다.
 
@@ -17,14 +17,14 @@ def _notify_price_updated():
       티커 변경은 시세 변경과 독립적인 이벤트이므로 직접 Redis pub/sub 신호를 발행한다.
 
     주의:
-      - price_updater 와 동일한 채널(price_updated)을 사용하므로 추가 리스너 불필요.
+      - ticker_changed 채널을 사용 — price_updated와 분리됨.
       - 실패해도 설정 화면 자체의 갱신(refresh)에는 영향 없으므로 예외를 삼킨다.
     """
     try:
-        from common.redis_store import publish_price_updated
-        publish_price_updated()
+        from common.redis_store import publish_ticker_changed
+        publish_ticker_changed()
     except Exception as e:
-        print(f"[settings] price_updated 신호 발행 실패 (무시): {e}")
+        print(f"[settings] ticker_changed 신호 발행 실패 (무시): {e}")
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────────
@@ -327,6 +327,18 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
     _last_tickers: list = []
     _last_display: dict = {}
 
+    # DB 캐시 — tickers 메타데이터 (ticker_changed / refresh 시에만 재조회)
+    @reactive.calc
+    def _ticker_rows():
+        ticker_signal.get()
+        refresh()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT ticker, name, market, leverage, is_manual FROM tickers")
+            rows = cur.fetchall()
+            cur.close()
+        return rows
+
     # ── 시세조회 간격 저장 ────────────────────────────────────────────────────
     # val=0  → 실시간 ON  : config["interval"] = 0
     # val=-1 → 실시간 OFF : config["interval"] 를 config["default_interval"] 로 복원
@@ -362,19 +374,12 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         if initialized.get() and active_tab and active_tab.get() != "settings":
             return
 
-        refresh()
         reactive.invalidate_later(60)
 
         from common.redis_store import get_all_prices
         prices = get_all_prices()
 
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT ticker, name, market, leverage, is_manual FROM tickers")
-            rows = cur.fetchall()
-            cur.close()
-
-        rows = sorted(rows, key=_sort_key)
+        rows = sorted(_ticker_rows(), key=_sort_key)
 
         # ticker → top-level key
         ticker_values = {}
@@ -422,7 +427,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_ticker_changed()
 
     # ── 티커 추가 ─────────────────────────────────────────────────────────────
 
@@ -456,4 +461,4 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             cur.close()
 
         refresh.set(refresh() + 1)
-        _notify_price_updated()
+        _notify_ticker_changed()

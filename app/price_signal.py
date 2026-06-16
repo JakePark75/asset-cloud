@@ -5,17 +5,21 @@ from shiny import reactive
 
 price_signal = reactive.Value(0)
 daily_insert_signal = reactive.Value(0)
+position_signal = reactive.Value(0)
+ticker_signal = reactive.Value(0)
 
 _task_started = False
 _price_counter = 0
 _insert_counter = 0
+_position_counter = 0
+_ticker_counter = 0
 
 
 async def _listen_loop():
     r = redis.Redis(host="127.0.0.1", port=6379, db=0)
 
     async with r.pubsub() as pubsub:
-        await pubsub.subscribe("price_updated", "daily_inserted")
+        await pubsub.subscribe("price_updated", "daily_inserted", "position_changed", "ticker_changed")
 
         async for message in pubsub.listen():
             if message["type"] != "message":
@@ -44,6 +48,28 @@ async def _listen_loop():
                 t_flush = time.perf_counter()
                 elapsed_ms = (t_flush - t_recv) * 1000
                 print(f"[daily_inserted #{_insert_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
+
+            elif channel == "position_changed":
+                global _position_counter
+                _position_counter += 1
+                t_recv = time.perf_counter()
+                async with reactive.lock():
+                    position_signal.set(_position_counter)
+                    await reactive.flush()
+                t_flush = time.perf_counter()
+                elapsed_ms = (t_flush - t_recv) * 1000
+                print(f"[position_changed #{_position_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
+
+            elif channel == "ticker_changed":
+                global _ticker_counter
+                _ticker_counter += 1
+                t_recv = time.perf_counter()
+                async with reactive.lock():
+                    ticker_signal.set(_ticker_counter)
+                    await reactive.flush()
+                t_flush = time.perf_counter()
+                elapsed_ms = (t_flush - t_recv) * 1000
+                print(f"[ticker_changed #{_ticker_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
 
 
 def start_signal_listener():

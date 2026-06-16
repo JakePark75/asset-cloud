@@ -2,7 +2,7 @@ from shiny import ui, reactive, module
 import subprocess
 import sys
 from app.db import get_db, get_usd_krw, get_config, get_market_currency
-from app.price_signal import price_signal
+from app.price_signal import price_signal, position_signal, ticker_signal
 from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_change
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
@@ -10,32 +10,13 @@ from app.utils.display_diff import diff_display
 
 # ── DAL ───────────────────────────────────────────────────────────────────────
 
-def load_portfolio():
+def load_portfolio(db_rows, yesterday_total):
     from common.redis_store import get_all_prices
 
     prices = get_all_prices()
 
     usd_rate, usd_chg = get_usd_krw()
     usd_rate = usd_rate or 0
-
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT p.ticker, SUM(p.quantity) AS quantity,
-                   t.name, t.market, t.leverage,
-                   SUM(p.quantity * p.avg_price) / NULLIF(SUM(p.quantity), 0) AS avg_price
-            FROM positions p
-            LEFT JOIN tickers t ON p.ticker = t.ticker
-            LEFT JOIN accounts a ON p.account_id = a.id
-            WHERE a.is_watch = false
-            GROUP BY p.ticker, t.name, t.market, t.leverage
-        """)
-        db_rows = cur.fetchall()
-
-        cur.execute("SELECT total_asset FROM daily_summary ORDER BY date DESC LIMIT 1")
-        row = cur.fetchone()
-        yesterday_total = float(row[0]) if row else 0.0
-        cur.close()
 
     rows = []
     for ticker, qty, name, market, leverage, avg_price in db_rows:
@@ -342,6 +323,43 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
     _last_tickers: list = []
     _last_display: dict = {}
 
+    # ── DB 캐시 ──────────────────────────────────────────────────────────────
+    # positions 메타, tickers 메타, daily_summary 최신 1행은
+    # position_changed / ticker_changed / daily_insert_signal 때만 재조회.
+
+    @reactive.calc
+    def _db_portfolio_rows():
+        """positions + tickers JOIN — position_changed / ticker_changed 시에만 재조회."""
+        position_signal.get()
+        ticker_signal.get()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT p.ticker, SUM(p.quantity) AS quantity,
+                       t.name, t.market, t.leverage,
+                       SUM(p.quantity * p.avg_price) / NULLIF(SUM(p.quantity), 0) AS avg_price
+                FROM positions p
+                LEFT JOIN tickers t ON p.ticker = t.ticker
+                LEFT JOIN accounts a ON p.account_id = a.id
+                WHERE a.is_watch = false
+                GROUP BY p.ticker, t.name, t.market, t.leverage
+            """)
+            rows = cur.fetchall()
+            cur.close()
+        return rows
+
+    @reactive.calc
+    def _db_yesterday_total():
+        """daily_summary 최신 1행 — daily_insert_signal 시에만 재조회."""
+        from app.price_signal import daily_insert_signal
+        daily_insert_signal.get()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT total_asset FROM daily_summary ORDER BY date DESC LIMIT 1")
+            row = cur.fetchone()
+            cur.close()
+        return float(row[0]) if row else 0.0
+
     # ── 강제 시세 조회 모달 ───────────────────────────────────────────────────
 
     @reactive.effect
@@ -389,11 +407,15 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
     async def _send_update():
         nonlocal _last_tickers, _last_display
         price_signal.get()
+        position_signal.get()
+        ticker_signal.get()
 
         if initialized.get() and active_tab and active_tab.get() != "portfolio":
             return
 
-        rows, usd_rate, usd_chg, yesterday_total = load_portfolio()
+        rows, usd_rate, usd_chg, yesterday_total = load_portfolio(
+            _db_portfolio_rows(), _db_yesterday_total()
+        )
 
         # ── 총 평가액 합산 ────────────────────────────────
         total_asset = 0
