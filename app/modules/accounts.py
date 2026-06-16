@@ -134,15 +134,20 @@ def accounts_ui():
     }
     var chgEl = document.getElementById('ac-chg-' + p.id);
     if (chgEl) { chgEl.textContent = p.chg; chgEl.className = p.chg_css; }
+    var avgEl = document.getElementById('ac-avgprice-' + p.id);
+    if (avgEl) avgEl.textContent = p.avgprice || '';
+
+    var pnlEl = document.getElementById('ac-pnlpct-' + p.id);
+    if (pnlEl) { pnlEl.textContent = p.pnlpct || ''; pnlEl.className = p.pnlpct_css || ''; }
+
     var stEl = document.getElementById('ac-status-' + p.id);
     if (stEl) {
       stEl.textContent = p.status_dot ? p.status_dot + ' ' + p.status_txt : '';
       stEl.className   = 'ticker-status ' + p.status_cls;
     }
     // ── data-* 속성 갱신 (모달 오픈 시 최신값 반영) ──
-    var rowEl = document.getElementById('ac-amount-' + p.id);
-    if (rowEl) {
-      var parentEl = rowEl.closest('[data-pos-id]');
+    if (amountEl) {
+      var parentEl = amountEl.closest('[data-pos-id]');
       if (parentEl) {
         if (p.avg_price !== undefined && p.avg_price !== null) {
           parentEl.setAttribute('data-avg-price', p.avg_price);
@@ -481,6 +486,21 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
     _last_positions: list = []
     _last_display:   dict = {}
 
+    # ── DB 캐시 (price_signal 비의존) ────────────────────────────────────────
+
+    @reactive.calc
+    def _db_accounts():
+        refresh()
+        return fetch_accounts_summary()
+
+    @reactive.calc
+    def _db_detail():
+        refresh()
+        acc_id = selected_account()
+        if acc_id is None:
+            return None
+        return fetch_account_details(acc_id)
+
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 
     @reactive.effect
@@ -488,7 +508,6 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         nonlocal _last_accounts, _last_positions, _last_display
         price_signal.get()
         daily_insert_signal.get()
-        refresh()
 
         if initialized.get() and active_tab and active_tab.get() != "accounts":
             return
@@ -497,7 +516,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         acc_id = selected_account()
 
         if acc_id is None:
-            accounts = fetch_accounts_summary()
+            accounts = _db_accounts()
             normal   = [a for a in accounts if not a[5]]
             watch    = [a for a in accounts if a[5]]
 
@@ -538,7 +557,10 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
                     await session.send_custom_message("ac_list_tick", diff)
 
         else:
-            acc, positions, usd_rate = fetch_account_details(acc_id)
+            detail = _db_detail()
+            if detail is None:
+                return
+            acc, positions, usd_rate = detail
 
             prev_total = float(acc[3])
             total_sum  = 0

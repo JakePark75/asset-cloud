@@ -1,5 +1,8 @@
 from app.db import get_market_currency
-from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
+from app.modules.components import (
+    fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change,
+    build_ticker_row_skeleton, build_ticker_row_values,
+)
 from scheduler.price_updater_common import get_market_status
 
 
@@ -49,124 +52,91 @@ def _build_account_card_values(acc):
 # ── 종목 행 ───────────────────────────────────────────────────────────────────
 
 def _build_position_row_skeleton(pos, ns_str):
-    """종목 행 골격 HTML — 구성 변경 시 1회 전송"""
+    """종목 행 골격 HTML — 공통 build_ticker_row_skeleton 사용"""
     pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price = pos
-    is_cash  = ticker in ('KRW', 'USD')
-    leverage = int(leverage) if leverage else 1
     qty_f    = float(qty or 0)
-
-    lev_html = f'<span class="lev-badge lev-x{leverage}">x{leverage}</span>' if leverage > 1 else ""
+    leverage = int(leverage) if leverage else 1
+    is_cash  = ticker in ('KRW', 'USD')
 
     if ticker == 'KRW':
         display_name = "현금(KRW)"
-        qty_str      = ""
-        change_html  = ""
+        qty_fixed    = ""          # 수량 영역 없음
+        onclick_attr = "acOpenEditCashModal(this);"
+        data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
     elif ticker == 'USD':
         display_name = "현금(USD)"
-        qty_str      = fmt_usd(qty_f)
-        change_html  = ""
+        qty_fixed    = fmt_usd(qty_f)
+        onclick_attr = "acOpenEditCashModal(this);"
+        data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
     else:
-        display_name = tname or ticker
-        qty_str      = f"{qty_f:g}주"
-        change_html  = (
-            f'<div class="ticker-change">'
-            f'<span id="ac-price-{pos_id}" style="margin-right:4px;"></span>'
-            f'<span id="ac-chg-{pos_id}"></span>'
-            f'</div>'
-        )
-
-    status_html = "" if is_cash else f'<span id="ac-status-{pos_id}" class="ticker-status"></span>'
-
-    if is_cash:
-        onclick_js = "acOpenEditCashModal(this);"
-        data_attrs = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
-    else:
+        display_name  = tname or ticker
+        qty_fixed     = f"{qty_f:g}주"
+        onclick_attr  = "acOpenEditPositionModal(this);"
         avg_price_val = float(avg_price) if avg_price is not None else ""
         currency      = get_market_currency(t_market) if t_market else "KRW"
-        data_attrs = (
+        data_attrs    = (
             f'data-pos-id="{pos_id}" data-ticker="{ticker}" '
             f'data-name="{tname or ""}" data-market="{t_market or "KR"}" '
             f'data-currency="{currency}" '
             f'data-leverage="{leverage}" data-qty="{qty_f}" '
             f'data-avg-price="{avg_price_val}"'
         )
-        onclick_js = "acOpenEditPositionModal(this);"
 
-    return (
-        f'<div style="cursor:pointer;" onclick="{onclick_js}" {data_attrs}>'
-        f'  <div class="ticker-row" id="ac-row-{pos_id}">'
-        f'    <div>'
-        f'      <div class="lev-name-wrap">'
-        f'        {lev_html}'
-        f'        <span class="ticker-name">{display_name}</span>'
-        f'        {status_html}'
-        f'      </div>'
-        f'      <div class="ticker-qty">{qty_str}</div>'
-        f'    </div>'
-        f'    <div>'
-        f'      <div class="ticker-amount" id="ac-amount-{pos_id}"></div>'
-        f'      {change_html}'
-        f'    </div>'
-        f'  </div>'
-        f'</div>'
+    return build_ticker_row_skeleton(
+        ticker       = ticker,
+        display_name = display_name,
+        market       = t_market,
+        leverage     = leverage,
+        id_prefix    = "ac",
+        row_id       = str(pos_id),
+        qty_fixed    = qty_fixed,
+        onclick_attr = onclick_attr,
+        data_attrs   = data_attrs,
     )
 
 
 def _build_position_row_values(pos, usd_rate):
-    """종목 행 가변값 dict — 매 tick diff 비교용"""
+    """종목 행 가변값 dict — 공통 build_ticker_row_values 사용"""
     pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price = pos
-    is_cash  = ticker in ('KRW', 'USD')
-    leverage = int(leverage) if leverage else 1
-    qty_f    = float(qty   or 0)
-    price_f  = float(price or 0)
-    chg_f    = float(chg_pct or 0)
+    qty_f   = float(qty   or 0)
+    price_f = float(price or 0)
 
+    # 평가액 계산 (통화/환율 분기는 호출자 책임)
     if ticker == 'KRW':
-        amount_str = fmt_krw(qty_f)
+        amount = qty_f
     elif ticker == 'USD':
-        amount_str = fmt_krw(qty_f * usd_rate)
-    else:
-        currency   = get_market_currency(t_market)
-        rate       = usd_rate if currency == "USD" else 1
-        amount_str = fmt_krw(qty_f * price_f * rate)
-
-    if is_cash:
-        price_str = chg_str = chg_css = ""
+        amount = qty_f * usd_rate
     else:
         currency = get_market_currency(t_market)
-        price_str, chg_str, chg_css = fmt_change(price_f, chg_f, currency=currency)
+        rate     = usd_rate if currency == "USD" else 1
+        amount   = qty_f * price_f * rate
 
-    status_dot = status_text = status_cls = ""
-    if not is_cash and t_market:
-        status = get_market_status(t_market)
-        dot_map = {
-            "open":    ("●", "Open",       "status-open"),
-            "pre":     ("●", "Pre",        "status-pre"),
-            "after":   ("●", "After",      "status-after"),
-            "closing": ("●", "Closing...", "status-closing"),
-        }
-        status_dot, status_text, status_cls = dot_map.get(status, ("○", "Closed", "status-closed"))
+    result = build_ticker_row_values(
+        ticker                 = ticker,
+        amount                 = amount,
+        qty                    = qty,
+        price                  = price,
+        chg_pct                = chg_pct,
+        market                 = t_market,
+        avg_price              = avg_price,
+        id_prefix              = "ac",
+        row_id                 = str(pos_id),
+        get_market_currency_fn = get_market_currency,
+        get_market_status_fn   = get_market_status,
+        qty_in_values          = False,  # 수량은 골격에 고정
+    )
 
-    result = {
-        "id":         pos_id,
-        "amount":     amount_str,
-        "price":      price_str,
-        "chg":        chg_str,
-        "chg_css":    chg_css,
-        "status_dot": status_dot,
-        "status_txt": status_text,
-        "status_cls": status_cls,
-        # 모달 data-* 속성 갱신용
-        "avg_price":  float(avg_price) if avg_price is not None else None,
-        "cash_amount": qty_f if is_cash else None,  # 현금 row만 유효
-    }
+    # accounts 전용 추가 필드 (모달 data-* 갱신용)
+    result["avg_price"]   = float(avg_price) if avg_price is not None else None
+    result["cash_amount"] = qty_f if ticker in ('KRW', 'USD') else None
+
     return result
 
 
 # ── 요약 헤더 ─────────────────────────────────────────────────────────────────
 
 def _build_summary_html(label, total_asset, pnl, pnl_pct, usd_rate=None, usd_chg=None):
-    """summary header HTML"""
+    """summary header 값 dict"""
     pnl_text, pnl_class = fmt_pnl(pnl, pnl_pct)
     usd_html = ""
     if usd_rate and usd_chg is not None:
@@ -176,9 +146,9 @@ def _build_summary_html(label, total_asset, pnl, pnl_pct, usd_rate=None, usd_chg
             f'<span class="{usd_css}">{usd_rate:,.2f} ({fmt_pct(usd_chg)})</span>'
         )
     return {
-        "label":      label,
-        "total":      fmt_krw(total_asset),
-        "pnl_text":   pnl_text,
-        "pnl_class":  pnl_class,
-        "usd_html":   usd_html,
+        "label":     label,
+        "total":     fmt_krw(total_asset),
+        "pnl_text":  pnl_text,
+        "pnl_class": pnl_class,
+        "usd_html":  usd_html,
     }

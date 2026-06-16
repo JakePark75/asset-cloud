@@ -26,13 +26,17 @@
 | `_ticker_to_id(ticker)` | str | 하이픈/캐럿/등호 → 언더스코어 (DOM id 안전화) |
 | `_build_account_card_skeleton(acc, ns_str)` | str (HTML) | 계좌 카드 골격. 구성 변경 시 1회 전송 |
 | `_build_account_card_values(acc)` | dict | 계좌 카드 가변값 (total, pnl_text, pnl_class, cash) |
-| `_build_position_row_skeleton(pos, ns_str)` | str (HTML) | 종목 행 골격. `data-avg-price` 속성 포함. 구성 변경 시 1회 전송 |
-| `_build_position_row_values(pos, usd_rate)` | dict | 종목 행 가변값 (amount, price, chg, chg_css, status_*) |
+| `_build_position_row_skeleton(pos, ns_str)` | str (HTML) | 종목 행 골격. `data-avg-price` 속성 포함. `build_ticker_row_skeleton(ticker=ticker, ...)` 호출 |
+| `_build_position_row_values(pos, usd_rate)` | dict | 종목 행 가변값. `build_ticker_row_values(ticker=ticker, ...)` 호출 |
 | `_build_summary_html(label, total, pnl, pnl_pct, usd_rate, usd_chg)` | dict | summary 헤더 값 dict |
 
 ### 튜플 구조
 - `acc` 튜플 (7): `(id, name, alias, total, cash, is_watch, prev_total)`
 - `pos` 튜플 (9): `(pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price)`
+
+### is_cash 판단
+- `build_ticker_row_skeleton`, `build_ticker_row_values` 모두 `ticker` 파라미터를 받아 내부에서 `is_cash = ticker in ('KRW', 'USD')` 판단
+- 호출자(`_build_position_row_skeleton` 등)는 `is_cash`를 전달하지 않음
 
 ---
 
@@ -43,7 +47,7 @@
 | 함수 | 반환 | 설명 |
 |------|------|------|
 | `modal_edit_position_html(market_options)` | `ui.Tag` | 종목 수정 모달 HTML (탭 3개: 정보/매수/매도) |
-| `modal_edit_position_js()` | str | 모달 전용 JS 문자열 (accounts.py `<script>` 블록에 포함) |
+| `modal_edit_position_js()` | str | 모달 전용 JS 문자열 |
 
 ### 모달 구조
 - 탭 3개: **정보** / **매수** / **매도**
@@ -56,19 +60,13 @@
 | 함수 | 설명 |
 |------|------|
 | `acOpenEditPositionModal(el)` | 종목 row 클릭 시 `data-*` 읽어 필드 채움, 정보 탭으로 초기화 |
-| `acSwitchTab(tab)` | 탭 전환 (`'info'`/`'buy'`/`'sell'`) + 입력값/미리보기 초기화 |
+| `acSwitchTab(tab)` | 탭 전환 + 입력값/미리보기 초기화 |
 | `acUpdateBuyPreview()` | 매수 수량/단가 입력 시 실시간 미리보기 갱신 |
 | `acUpdateSellPreview()` | 매도 수량/단가 입력 시 실시간 미리보기 갱신 |
-| `acTriggerEditPositionSave()` | 정보 탭 저장 → `accounts-btn_confirm_edit_position` 이벤트 |
-| `acTriggerBuy()` | 매수 확인 → `accounts-btn_confirm_buy` 이벤트 |
-| `acTriggerSell()` | 매도 확인 → `accounts-btn_confirm_sell` 이벤트 |
-| `acTriggerPositionDelete()` | 종목 삭제 confirm → `accounts-confirm_delete_position` 이벤트 |
-
-### 모달 상태 JS 변수
-- `_editPosId`: 현재 편집 중인 position id
-- `_editCurQty`: 현재 보유 수량 (미리보기 계산용)
-- `_editCurAvg`: 현재 평단가 (미리보기 계산용)
-- `_editMarket`: 마켓 코드 (통화 판별용)
+| `acTriggerEditPositionSave()` | 정보 탭 저장 이벤트 |
+| `acTriggerBuy()` | 매수 확인 이벤트 |
+| `acTriggerSell()` | 매도 확인 이벤트 |
+| `acTriggerPositionDelete()` | 종목 삭제 confirm + 이벤트 |
 
 ---
 
@@ -90,16 +88,14 @@
 ### 매수/매도 함수
 
 #### `execute_buy(pos_id, qty_delta, trade_price, usd_markets)`
-- 가중평균 평단 재계산: `new_avg = (cur_qty × cur_avg + qty_delta × trade_price) / new_qty`
+- 가중평균 평단 재계산
 - `positions.quantity += qty_delta`, `positions.avg_price = new_avg`
-- 마켓 통화 기준 현금 차감: KR → KRW, USD마켓/CRYPTO → USD
-- `trade_price`: 원천 통화 단가 (KR→KRW, US→USD)
+- 마켓 통화 기준 현금 차감
 
 #### `execute_sell(pos_id, qty_delta, trade_price, usd_markets)`
-- 평단 변동 없음 (매도는 평단에 영향 없음)
-- `positions.quantity -= qty_delta`
-- 마켓 통화 기준 현금 가산
-- 보유 수량 초과 시 `ValueError` 발생
+- 평단 변동 없음
+- `positions.quantity -= qty_delta`, 현금 가산
+- 보유 수량 초과 시 `ValueError`
 
 ---
 
@@ -109,14 +105,23 @@
 
 | 변수 | 타입 | 설명 |
 |------|------|------|
-| `initialized` | `reactive.value(False)` | 첫 렌더 완료 여부 (탭 비활성 스킵 제어) |
-| `selected_account` | `reactive.value(None)` | 선택된 계좌 ID. None이면 목록, 값 있으면 상세 |
-| `refresh` | `reactive.value(0)` | 증가 시 `_send_update` 재실행 |
+| `initialized` | `reactive.value(False)` | 첫 렌더 완료 여부 |
+| `selected_account` | `reactive.value(None)` | None: 목록, 값 있으면 상세 |
+| `refresh` | `reactive.value(0)` | 증가 시 DB 캐시 무효화 + `_send_update` 재실행 |
+
+### DB 캐시 (`@reactive.calc`)
+
+| calc | 구독 신호 | 설명 |
+|------|-----------|------|
+| `_db_accounts()` | `refresh` | `fetch_accounts_summary()` 캐시 |
+| `_db_detail()` | `refresh`, `selected_account` | `fetch_account_details(acc_id)` 캐시. acc_id=None이면 None 반환 |
+
+- `price_signal`/`daily_insert_signal`에는 반응하지 않음 → 시세 갱신 시 DB 재조회 없음
+- `refresh.set()`은 이벤트 핸들러(매수/매도/추가/삭제 등)에서만 호출
 
 ### UI 구조 (`accounts_ui()`)
 - `@render.ui` 없음 — 모든 갱신은 커스텀 메시지로 DOM 직접 패치
 - 모달 전체가 정적 DOM으로 상주 (JS `acShowModal()` / `acHideModal()`로 display 제어)
-- 종목 수정 모달만 `accounts_modals.py`에서 임포트 (`modal_edit_position_html()`)
 
 ### JS 커스텀 메시지 핸들러
 
@@ -128,11 +133,24 @@
 | `ac_detail_tick` | summary + 변경된 종목 값만 DOM 패치 |
 | `ac_ticker_lookup_result` | 티커 자동조회 결과 → 종목명/시장 필드 자동 채움 |
 
+### `_applyOnePosition()` 패치 DOM id
+
+| id 패턴 | 내용 |
+|---------|------|
+| `ac-amount-{pos_id}` | 원화 평가액 |
+| `ac-price-{pos_id}` | 현재가 |
+| `ac-chg-{pos_id}` | 등락률 |
+| `ac-avgprice-{pos_id}` | 평단가 |
+| `ac-pnlpct-{pos_id}` | 수익률 |
+| `ac-status-{pos_id}` | 시장 상태 배지 |
+- data-* 속성 갱신: `amountEl.closest('[data-pos-id]')` 로 wrapper 탐색 후 `data-avg-price`, `data-amount` 갱신
+
 ### `_send_update` (`@reactive.effect`, async)
-- `price_signal`, `daily_insert_signal`, `refresh()` 구독
+- `price_signal`, `daily_insert_signal` 구독
 - `initialized` 후 비활성 탭이면 스킵
-- 계좌 목록 화면: 구성 변경 → `ac_list_init`, 동일 → `diff_display` → `ac_list_tick`
-- 계좌 상세 화면: 구성 변경 → `ac_detail_init`, 동일 → `diff_display` → `ac_detail_tick`
+- `get_usd_krw()` — Redis 조회 (매 tick)
+- 계좌 목록 화면: `_db_accounts()` 캐시 사용 → 구성 변경 시 `ac_list_init`, 동일 시 `diff_display` → `ac_list_tick`
+- 계좌 상세 화면: `_db_detail()` 캐시 사용 → 구성 변경 시 `ac_detail_init`, 동일 시 `diff_display` → `ac_detail_tick`
 
 ### 이벤트 핸들러
 
@@ -149,7 +167,7 @@
 | `_buy` | `btn_confirm_buy` | `execute_buy()` 호출 |
 | `_sell` | `btn_confirm_sell` | `execute_sell()` 호출 |
 | `_delete_position` | `confirm_delete_position` | positions DELETE, 미사용 tickers 정리 |
-| `_edit_cash` | `btn_confirm_edit_cash` | positions UPDATE (ticker/quantity) |
+| `_edit_cash` | `btn_confirm_edit_cash` | positions UPDATE |
 | `_delete_cash` | `confirm_delete_cash` | positions DELETE |
 
 ### JS 전역 함수 (accounts.py 내 `<script>`)
@@ -158,12 +176,11 @@
 |------|------|
 | `acShowModal(id)` / `acHideModal(id)` | 모달 display 제어 |
 | `acOpenEditCashModal(el)` | 현금 row 클릭 시 data-* 읽어 현금 수정 모달 채움 |
-| `acTriggerEditCashSave()` | 현금 저장 이벤트 발송 |
-| `acTriggerCashDelete()` | 현금 삭제 confirm + 이벤트 발송 |
-| `acLookupTicker()` | 티커 자동조회 이벤트 발송 |
+| `acTriggerEditCashSave()` | 현금 저장 이벤트 |
+| `acTriggerCashDelete()` | 현금 삭제 confirm + 이벤트 |
+| `acLookupTicker()` | 티커 자동조회 이벤트 |
 
 ### 비고
 - 평단가 수정: 정보 탭에서 직접 입력 시 UPDATE, 미입력(null) 시 기존값 유지
-- 매수/매도 후 `_notify_price_updated()` 호출 → Redis recalc + 시세 신호 발행
-- `_applyOnePosition()` JS 함수: tick 수신 시 `data-avg-price` 속성도 갱신 (모달 오픈 시 최신값 반영)
-- `ns_str`: `session.ns("_")[:-1]` → `"accounts-"` 접두사 (JS에서 Shiny input id 조립용)
+- 매수/매도 후 `_notify_position_changed()` 호출 → Redis recalc + 시세 신호 발행
+- `ns_str`: `session.ns("_")[:-1]` → `"accounts-"` 접두사

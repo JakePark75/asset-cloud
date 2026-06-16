@@ -1,7 +1,7 @@
 # asset-cloud — 이벤트 & 데이터 흐름 맵
 
 > 발행자 / 채널 / 구독자 / 반응 동작을 전체 정리한 문서.  
-> 마지막 갱신: 2026-06-15
+> 마지막 갱신: 2026-06-16
 
 ---
 
@@ -87,20 +87,26 @@ Redis asyncio pubsub
 |------|:--------------:|:-----------------:|:---------------:|:---------------------:|-----------|
 | `dashboard.py` | ✅ | ✅ | ✅ | ✅ | 총자산·수익률·비중 등 전체 지표 재계산 |
 | `portfolio.py` | ✅ | ✅ | ✅ | ✅ | Redis 시세 재조회 → 종목별 평가액·등락률 갱신 |
-| `accounts.py` | ✅ | ✅ | ✗ | ✅ | Redis 시세 재조회 → 계좌별 평가액·손익 갱신 |
+| `accounts.py` | ✅ | ✗ | ✗ | ✅ | Redis 시세 재조회 → 계좌별 평가액·손익 갱신 |
 | `history.py` (today_row) | ✅ | ✅ | ✗ | ✅ | `recalc_today_row()` → Redis today_row 갱신 → 행 갱신 |
 | `history.py` (전체 테이블) | ✅ | ✅ | ✗ | ✅ | DB에 새 행 추가됐으므로 전체 테이블 재전송 |
 | `settings.py` | ✅ | ✗ | ✅ | ✗ | Redis 시세 재조회 → 티커 목록 현재가 갱신 |
 
+> **accounts.py 비고**: `position_signal`/`ticker_signal`은 `_send_update`에서 직접 구독하지 않음.  
+> 구조 변경(종목 추가·삭제 등)은 `accounts.py` 내부 `refresh` (계층 B)로 즉시 처리하고,  
+> 타 모듈에서 발생한 `position_signal`/`ticker_signal`에는 반응하지 않음.
+
 ### 2-8. DB 조회 트리거 매핑
 
-각 화면의 DB 조회는 데이터가 실제로 바뀌는 signal에만 연결됨. `price_updated`는 Redis 시세 조회만 유발.
+각 화면의 DB 조회(`@reactive.calc`)는 데이터가 실제로 바뀌는 signal에만 연결됨. `price_updated`는 Redis 시세 조회만 유발.
 
 | 데이터 | DB 재조회 트리거 | 해당 화면 |
 |--------|-----------------|-----------|
 | `daily_summary` 전체 이력 | `daily_insert_signal` | `dashboard.py` |
 | `positions` + `tickers` 메타 (수량·레버리지·마켓) | `position_signal` + `ticker_signal` | `dashboard.py`, `portfolio.py` |
+| `accounts` 목록 + `positions` 상세 | `refresh` (accounts 내부) | `accounts.py` |
 | `tickers` 목록 | `ticker_signal` + `refresh` | `settings.py` |
+| 드릴다운 계좌 목록 | `position_signal` + `ticker_signal` + `selected_ticker` | `portfolio.py` |
 
 ### 2-9. 발행 시나리오별 흐름
 
@@ -128,6 +134,7 @@ price_updater_common.py (closing 상태 감지)
   → DB write (positions)
   → recalc_today_row()          ← Redis today_row 즉시 갱신
   → refresh.set(refresh() + 1)  ← accounts 화면 내부 즉시 갱신 (계층 B)
+      → _db_accounts() / _db_detail() calc 무효화 → DB 재조회
   → publish_position_changed()  ← 타 화면 갱신 (계층 A)
       → position_signal.set()
       → dashboard / portfolio / history(today_row) 재실행
@@ -141,8 +148,9 @@ price_updater_common.py (closing 상태 감지)
   → refresh.set(refresh() + 1)  ← settings 화면 내부 즉시 갱신 (계층 B)
   → publish_ticker_changed()    ← 타 화면 갱신 (계층 A)
       → ticker_signal.set()
-      → dashboard / portfolio / accounts 재실행
+      → dashboard / portfolio 재실행
         (tickers DB 캐시 무효화 → DB 재조회)
+      ※ accounts.py는 ticker_signal 미구독 → 반응 없음
 ```
 
 #### 시나리오 5. daily_inserter 자동 실행
@@ -163,10 +171,11 @@ daily_inserter.py (매일 daily_insert_time KST)
 
 ### 3-1. 트리거 목록
 
-| 트리거 | 모듈 | 발생 시점 | 반응 대상 렌더러 |
-|--------|------|-----------|-----------------|
-| `refresh` | `accounts.py` | 종목/현금 CRUD 완료 후 | 계좌 목록·상세 전체 재렌더 |
-| `selected_account` | `accounts.py` | 계좌 카드 클릭 / 삭제 후 초기화 | 계좌 상세 뷰 전환 |
+| 트리거 | 모듈 | 발생 시점 | 반응 대상 |
+|--------|------|-----------|-----------|
+| `refresh` | `accounts.py` | 종목/현금 CRUD 완료 후 | `_db_accounts()` / `_db_detail()` calc 무효화 → 계좌 목록·상세 재렌더 |
+| `selected_account` | `accounts.py` | 계좌 카드 클릭 / 삭제 후 초기화 | `_db_detail()` calc 무효화 → 계좌 상세 뷰 전환 |
+| `selected_ticker` | `portfolio.py` | 종목 클릭 / 뒤로가기 | `_db_ticker_accounts()` calc 무효화 → 드릴다운 뷰 전환 |
 | `refresh` | `settings.py` | 티커 CRUD 완료 후 | 티커 목록 재렌더 (DB 캐시도 무효화) |
 | `today_cf_trigger` | `history.py` | 오늘 입출금 저장 후 | today_row 렌더러 강제 갱신 |
 | `_reload_trigger` | `history.py` | 과거 입출금 수정 후 | DB rows 전체 재로드 |
@@ -178,15 +187,26 @@ daily_inserter.py (매일 daily_insert_time KST)
 ```
 사용자 CRUD (계좌/종목/현금 추가·수정·삭제)
   → DB write
-  → refresh.set(refresh() + 1)         ← 계좌 화면 즉시 갱신
+  → refresh.set(refresh() + 1)         ← _db_accounts()/_db_detail() calc 무효화
+                                           → 계좌 화면 즉시 갱신
   → [동시에] publish_position_changed() ← 타 화면 갱신 (계층 A로 상승)
 
 계좌 카드 클릭
-  → selected_account.set(acc_id)       ← 상세 뷰 전환
+  → selected_account.set(acc_id)       ← _db_detail() calc 무효화 → 상세 뷰 전환
 
 계좌 삭제
   → selected_account.set(None)         ← 상세 뷰 초기화
   → refresh.set(refresh() + 1)
+```
+
+#### portfolio.py
+```
+종목 클릭
+  → selected_ticker.set(ticker)        ← _db_ticker_accounts() calc 무효화
+                                           → 드릴다운 뷰 전환
+
+뒤로가기
+  → selected_ticker.set(None)          ← 목록 뷰 복원
 ```
 
 #### history.py
