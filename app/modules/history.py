@@ -53,13 +53,13 @@ def history_ui():
                         ui.tags.th("전일대비"),
                         ui.tags.th("Exp"),
                         ui.tags.th("현금"),
-                        ui.tags.th("입출금"),
-                        ui.tags.th("x3"),
-                        ui.tags.th("x2"),
-                        ui.tags.th("x1"),
                         ui.tags.th("TWR"),
                         ui.tags.th("나스닥"),
                         ui.tags.th("환율"),
+                        ui.tags.th("x3"),
+                        ui.tags.th("x2"),
+                        ui.tags.th("x1"),
+                        ui.tags.th("입출금"),
                     )
                 ),
                 ui.tags.tbody(id="history-tbody"),
@@ -184,11 +184,14 @@ def history_ui():
               '<td style="text-align:right">' + diffCell + '</td>' +
               '<td style="text-align:right">' + (exp * 100).toFixed(1) + '%</td>' +
               '<td style="text-align:right">' + (cash * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + cfCell + '</td>' +
-              '<td style="text-align:right">' + (x3 * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + (x2 * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + (x1 * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + fmtKrw(twr) + '</td>' +
+              '<td style="text-align:right">' + (function() {
+                if (!twr) return '-';
+                var twrChg = parseFloat(r.twr_change_pct);
+                if (isNaN(twrChg) || r.twr_change_pct === '') return fmtKrw(twr);
+                var sign = twrChg >= 0 ? '+' : '';
+                var cls  = twrChg >= 0 ? 'positive' : 'negative';
+                return fmtKrw(twr) + '<br><span class="' + cls + '" style="font-size:11px">' + sign + twrChg.toFixed(2) + '%</span>';
+              })() + '</td>' +
               '<td style="text-align:right">' + (function() {
                 if (!ndx) return '-';
                 var ndxChg = parseFloat(r.ndx_change_pct);
@@ -197,7 +200,11 @@ def history_ui():
                 var cls  = ndxChg >= 0 ? 'positive' : 'negative';
                 return ndx.toFixed(2) + '<br><span class="' + cls + '" style="font-size:11px">' + sign + ndxChg.toFixed(2) + '%</span>';
               })() + '</td>' +
-              '<td style="text-align:right">' + (usd_krw ? usd_krw.toFixed(2) : '-') + '</td>';
+              '<td style="text-align:right">' + (usd_krw ? usd_krw.toFixed(2) : '-') + '</td>' +
+              '<td style="text-align:right">' + (x3 * 100).toFixed(1) + '%</td>' +
+              '<td style="text-align:right">' + (x2 * 100).toFixed(1) + '%</td>' +
+              '<td style="text-align:right">' + (x1 * 100).toFixed(1) + '%</td>' +                       
+              '<td style="text-align:right">' + cfCell + '</td>';
             tr.addEventListener('click', function() {
               Shiny.setInputValue('history-selected_date', date, {priority: 'event'});
             });
@@ -456,10 +463,12 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             if r[0] == today:
                 prev       = float(rows[-1][1] or 0) if rows else None
                 prev_ndx   = float(rows[-1][3] or 0) if rows else None
+                prev_twr = float(rows[-1][2] or 0) if rows else None
             else:
                 idx        = index_map.get(r[0])
                 prev       = float(rows[idx - 1][1] or 0) if idx is not None and idx > 0 else None
                 prev_ndx   = float(rows[idx - 1][3] or 0) if idx is not None and idx > 0 else None
+                prev_twr   = float(rows[idx - 1][2] or 0) if idx is not None and idx > 0 else None
 
             # ndx 등락률
             cur_ndx = float(r[3] or 0)
@@ -467,6 +476,13 @@ def history_server(input, output, session, active_tab: reactive.value = None):
                 ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100
             else:
                 ndx_change_pct = None
+
+            # twr 전일 대비 등락률
+            cur_twr = float(r[2] or 0)
+            if prev_twr and cur_twr:
+                twr_change_pct = (cur_twr - prev_twr) / prev_twr * 100
+            else:
+                twr_change_pct = None
 
             data.append({
                 "date":           str(r[0]),
@@ -483,6 +499,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
                 "usd_krw":        str(r[11]),
                 "prev_total":     str(prev) if prev is not None else '',
                 "ndx_change_pct": str(ndx_change_pct) if ndx_change_pct is not None else '',
+                "twr_change_pct": str(twr_change_pct) if twr_change_pct is not None else '',
             })
 
         print(f"[history] sending history_data rows={len(data)}, first_date={data[0]['date'] if data else None}", flush=True)
@@ -513,6 +530,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         today = _today_kst()
         prev     = float(rows[-1][1] or 0) if rows else None
         prev_ndx = float(rows[-1][3] or 0) if rows else None
+        prev_twr = float(rows[-1][2] or 0) if rows else None
 
         # twr_pct, ndx_pct 계산 (차트 끝단 업데이트용)
         # 기준: DB 첫 번째 행의 twr_asset, ndx100
@@ -529,6 +547,10 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         # ndx 전일 대비 등락률
         cur_ndx = float(t.get("ndx100") or 0)
         ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100 if prev_ndx and cur_ndx else None
+
+        # twr 전일 대비 등락률
+        cur_twr  = float(t.get("twr_asset") or 0)
+        twr_change_pct = (cur_twr - prev_twr) / prev_twr * 100 if prev_twr and cur_twr else None
 
         row = {
             "date":           str(t.get("date", str(today))),
@@ -547,6 +569,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             "twr_pct":        str(twr_pct),
             "ndx_pct":        str(ndx_pct),
             "ndx_change_pct": str(ndx_change_pct) if ndx_change_pct is not None else '',
+            "twr_change_pct": str(twr_change_pct) if twr_change_pct is not None else '',
         }
 
         await session.send_custom_message("today_row_update", row)
