@@ -388,7 +388,7 @@ def portfolio_ui():
                 ui.div(
                     ui.span("–", id="pf-pnl", class_="summary-delta"),
                     ui.span(
-                        {"id": "pf-usd-wrap", "style": "display:none;"},
+                        {"id": "pf-usd-wrap", "style": "display:none; margin-left:auto;"},
                         ui.span({"id": "pf-usd-text", "class": "summary-usd"}),
                     ),
                     ui.span(

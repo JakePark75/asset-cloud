@@ -246,7 +246,7 @@ def accounts_ui():
             ui.div(
                 ui.span("–", id="ac-summary-pnl", class_="summary-delta"),
                 ui.span(
-                    {"id": "ac-usd-wrap", "style": "display:none;"},
+                    {"id": "ac-usd-wrap", "style": "display:none; margin-left:auto;"},
                     ui.span({"id": "ac-usd-text", "class": "summary-usd"}),
                 ),
                 class_="summary-delta-row",
