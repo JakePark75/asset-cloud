@@ -210,6 +210,71 @@ def build_ticker_row_values(
     }
 
 
+# ── 계좌 행 (드릴다운 전용) ────────────────────────────────────────────────────
+#
+# 포트폴리오 종목 행(build_ticker_row_*)과는 정보 구조가 다르다.
+# 드릴다운은 "선택된 종목 하나"의 계좌별 보유 현황이므로:
+#   - 종목 단위 정보(현재가/등락률/레버리지뱃지/시장상태)는 행마다 반복할 필요 없음
+#     → 드릴다운 헤더에 이미 1회 표시됨
+#   - 계좌 단위 정보(수량/평단가/평가금액/계좌별 손익)만 행에 표시
+# 드릴다운은 cash(KRW/USD) 종목에선 열리지 않으므로 is_cash 분기도 불필요.
+
+def build_account_row_skeleton(
+    display_name: str,   # 계좌명 (+ alias)
+    qty_text: str,       # 보유수량 고정 텍스트. 구조 변경(계좌 추가/삭제) 시에만 재생성
+    row_id: str,          # acc_id
+    id_prefix: str = "pfd",
+) -> str:
+    SEP = '<span style="color:var(--text-dim);margin:0 4px;">·</span>'
+    return (
+        f'<div>'
+        f'  <div class="ticker-row" id="{id_prefix}-row-{row_id}">'
+        f'    <div>'
+        f'      <div class="lev-name-wrap">'
+        f'        <span class="ticker-name">{display_name}</span>'
+        f'      </div>'
+        f'      <div class="ticker-qty">'
+        f'        {qty_text}'
+        f'        {SEP}'
+        f'        <span id="{id_prefix}-avgprice-{row_id}"></span>'
+        f'      </div>'
+        f'    </div>'
+        f'    <div>'
+        f'      <div class="ticker-amount" id="{id_prefix}-amount-{row_id}"></div>'
+        f'      <div class="ticker-change">'
+        f'        <span id="{id_prefix}-pnl-{row_id}"></span>'
+        f'      </div>'
+        f'    </div>'
+        f'  </div>'
+        f'</div>'
+    )
+
+
+def build_account_row_values(
+    avg_price: float,
+    amount: float,        # 평가금액 (호출자가 계산해서 전달)
+    pnl_amount: float,    # 이 계좌 포지션의 손익액 (호출자가 계산해서 전달)
+    pnl_pct: float,       # 이 계좌 포지션의 수익률
+    currency: str | None,  # get_market_currency 결과 ("USD" / "KRW")
+    row_id: str,
+) -> dict:
+    avg_f = float(avg_price or 0)
+
+    avgprice_str = ""
+    if avg_f > 0:
+        avgprice_str = f"${avg_f:,.2f}" if currency == "USD" else _fmt_amount_short(avg_f)
+
+    pnl_text, pnl_css = fmt_pnl(pnl_amount, pnl_pct)
+
+    return {
+        "id":       row_id,
+        "amount":   fmt_krw(amount),
+        "avgprice": avgprice_str,
+        "pnl_text": pnl_text,
+        "pnl_css":  pnl_css,
+    }
+
+
 # ── 공통 요약 헤더 ────────────────────────────────────────────────────────────
 #
 # DOM 골격과 페이로드(tick값)를 분리해 JS DOM 패치 방식에 대응.

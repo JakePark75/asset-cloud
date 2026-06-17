@@ -6,6 +6,7 @@ from app.price_signal import price_signal, position_signal, ticker_signal
 from app.modules.components import (
     fmt_krw, fmt_usd, fmt_pct, fmt_change, fmt_pnl,
     build_ticker_row_skeleton, build_ticker_row_values,
+    build_account_row_skeleton, build_account_row_values,
     build_summary_header_dom, build_summary_payload,
 )
 from scheduler.price_updater_common import get_market_status
@@ -130,46 +131,38 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
     )
 
 
-def _build_drilldown_row_skeleton(acc_id, ticker, acc_name, alias, is_watch, qty, avg_price, market, leverage):
-    """드릴다운 계좌 행 골격 — 종목명 자리에 계좌명"""
-    qty_f        = float(qty or 0)
-    leverage     = int(leverage) if leverage else 1
-    display_name = acc_name + (f" ({alias})" if alias else "")
-    qty_fixed    = f"≈{qty_f:.2f}주" if qty_f != int(qty_f) else f"{qty_f:g}주"
+def _build_drilldown_row_skeleton(acc_id, acc_name, alias, qty):
+    """드릴다운 계좌 행 골격 — 계좌명·수량만. 종목 단위 정보(레버리지/시장상태)는 헤더에 1회만 표시"""
+    qty_f         = float(qty or 0)
+    display_name  = acc_name + (f" ({alias})" if alias else "")
+    qty_text      = f"≈{qty_f:.2f}주" if qty_f != int(qty_f) else f"{qty_f:g}주"
 
-    return build_ticker_row_skeleton(
-        ticker       = ticker,
+    return build_account_row_skeleton(
         display_name = display_name,
-        market       = market,
-        leverage     = leverage,
-        id_prefix    = "pfd",
+        qty_text     = qty_text,
         row_id       = str(acc_id),
-        qty_fixed    = qty_fixed,
-        onclick_attr = "",
-        data_attrs   = "",
+        id_prefix    = "pfd",
     )
 
 
-def _build_drilldown_row_values(acc_id, ticker, qty, avg_price, price, chg_pct, market, leverage, usd_rate):
-    """드릴다운 계좌 행 tick 값"""
-    qty_f   = float(qty   or 0)
-    price_f = float(price or 0)
-    # 드릴다운 행은 ticker 원천값 기반으로 is_cash 판단 (components 내부)
-    amount = _calc_amount(ticker, qty_f, price_f, market, usd_rate)
+def _build_drilldown_row_values(acc_id, ticker, qty, avg_price, price, market, usd_rate):
+    """드릴다운 계좌 행 tick 값 — 평가금액 + 이 계좌 포지션의 손익액/수익률"""
+    qty_f   = float(qty       or 0)
+    avg_f   = float(avg_price or 0)
+    price_f = float(price     or 0)
 
-    return build_ticker_row_values(
-        ticker                 = ticker,
-        amount                 = amount,
-        qty                    = qty,
-        price                  = price,
-        chg_pct                = chg_pct,
-        market                 = market,
-        avg_price              = avg_price,
-        id_prefix              = "pfd",
-        row_id                 = str(acc_id),
-        get_market_currency_fn = get_market_currency,
-        get_market_status_fn   = get_market_status,
-        qty_in_values          = False,
+    amount     = _calc_amount(ticker, qty_f, price_f, market, usd_rate)
+    cost_basis = _calc_amount(ticker, qty_f, avg_f,   market, usd_rate)
+    pnl_amount = amount - cost_basis
+    pnl_pct    = ((price_f - avg_f) / avg_f * 100) if avg_f else 0.0
+
+    return build_account_row_values(
+        avg_price  = avg_f,
+        amount     = amount,
+        pnl_amount = pnl_amount,
+        pnl_pct    = pnl_pct,
+        currency   = get_market_currency(market),
+        row_id     = str(acc_id),
     )
 
 
@@ -341,27 +334,11 @@ def portfolio_ui():
     var amountEl = document.getElementById('pfd-amount-' + r.id);
     if (amountEl) amountEl.textContent = r.amount;
 
-    var priceEl = document.getElementById('pfd-price-' + r.id);
-    if (priceEl) {
-      priceEl.textContent = r.price;
-      priceEl.className   = r.chg_css;
-      priceEl.style.marginRight = r.price ? '4px' : '0';
-    }
-
-    var chgEl = document.getElementById('pfd-chg-' + r.id);
-    if (chgEl) { chgEl.textContent = r.chg; chgEl.className = r.chg_css; }
-
     var avgEl = document.getElementById('pfd-avgprice-' + r.id);
     if (avgEl) avgEl.textContent = r.avgprice || '';
 
-    var pnlEl = document.getElementById('pfd-pnlpct-' + r.id);
-    if (pnlEl) { pnlEl.textContent = r.pnlpct || ''; pnlEl.className = r.pnlpct_css || ''; }
-
-    var stEl = document.getElementById('pfd-status-' + r.id);
-    if (stEl) {
-      stEl.textContent = r.status_dot ? r.status_dot + ' ' + r.status_txt : '';
-      stEl.className   = 'ticker-status ' + r.status_cls;
-    }
+    var pnlEl = document.getElementById('pfd-pnl-' + r.id);
+    if (pnlEl) { pnlEl.textContent = r.pnl_text; pnlEl.className = r.pnl_css; }
   }
 
 })();
@@ -644,7 +621,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
             row_values = {
                 str(acc_id): _build_drilldown_row_values(
-                    acc_id, ticker, qty, avg_price, p, c, market, leverage, usd_rate
+                    acc_id, ticker, qty, avg_price, p, market, usd_rate
                 )
                 for acc_id, _, _, _, qty, avg_price, market, leverage, p, c, _ in acc_rows
             }
@@ -661,9 +638,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
                 def _section(rows_subset):
                     return "".join(
-                        _build_drilldown_row_skeleton(
-                            acc_id, ticker, acc_name, alias, is_watch, qty, avg_price, market, leverage
-                        )
+                        _build_drilldown_row_skeleton(acc_id, acc_name, alias, qty)
                         for acc_id, acc_name, alias, is_watch, qty, avg_price, market, leverage, p, c, _
                         in rows_subset
                     )
