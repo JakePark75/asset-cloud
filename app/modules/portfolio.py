@@ -6,6 +6,7 @@ from app.price_signal import price_signal, position_signal, ticker_signal
 from app.modules.components import (
     fmt_krw, fmt_usd, fmt_pct, fmt_change, fmt_pnl,
     build_ticker_row_skeleton, build_ticker_row_values,
+    build_summary_header_dom, build_summary_payload,
 )
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
@@ -184,10 +185,10 @@ def portfolio_ui():
   Shiny.addCustomMessageHandler('pf_init', function(m) {
     var el;
 
-    el = document.getElementById('pf-total-asset');
-    if (el) el.textContent = m.summary.total_asset;
+    el = document.getElementById('pf-summary-total');
+    if (el) el.textContent = m.summary.total;
 
-    el = document.getElementById('pf-pnl');
+    el = document.getElementById('pf-summary-pnl');
     if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
 
     el = document.getElementById('pf-usd-wrap');
@@ -214,10 +215,10 @@ def portfolio_ui():
   Shiny.addCustomMessageHandler('pf_tick', function(m) {
     if (m.summary) {
       var el;
-      el = document.getElementById('pf-total-asset');
-      if (el) el.textContent = m.summary.total_asset;
+      el = document.getElementById('pf-summary-total');
+      if (el) el.textContent = m.summary.total;
 
-      el = document.getElementById('pf-pnl');
+      el = document.getElementById('pf-summary-pnl');
       if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
 
       el = document.getElementById('pf-usd-wrap');
@@ -235,9 +236,9 @@ def portfolio_ui():
   Shiny.addCustomMessageHandler('pfd_init', function(m) {
     var el;
 
-    el = document.getElementById('pf-total-asset');
-    if (el) el.textContent = m.summary.total_asset;
-    el = document.getElementById('pf-pnl');
+    el = document.getElementById('pf-summary-total');
+    if (el) el.textContent = m.summary.total;
+    el = document.getElementById('pf-summary-pnl');
     if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
     el = document.getElementById('pf-usd-wrap');
     if (el) el.style.display = 'none';
@@ -267,9 +268,9 @@ def portfolio_ui():
   Shiny.addCustomMessageHandler('pfd_tick', function(m) {
     if (m.summary) {
       var el;
-      el = document.getElementById('pf-total-asset');
-      if (el) el.textContent = m.summary.total_asset;
-      el = document.getElementById('pf-pnl');
+      el = document.getElementById('pf-summary-total');
+      if (el) el.textContent = m.summary.total;
+      el = document.getElementById('pf-summary-pnl');
       if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
       el = document.getElementById('pf-header-price');
       if (el) { el.textContent = m.summary.price_text; el.className = m.summary.chg_css; }
@@ -370,34 +371,14 @@ def portfolio_ui():
             {"class": "page-inner", "style": "position:relative;"},
 
             # ── 공통 헤더 ─────────────────────────────────────────────────────
-            ui.div(
-                {"class": "total-summary"},
-                ui.div(
-                    ui.tags.button(
-                        "‹",
-                        id="pf-back-btn",
-                        class_="summary-label",
-                        style="display:none; background:none; border:none; padding:0; margin-right:6px; cursor:pointer; vertical-align:middle; line-height:1; font-family:inherit;",
-                        onclick="pfGoBack();",
-                    ),
-                    ui.span("포트폴리오", id="pf-summary-label", class_="summary-label",
-                            style="vertical-align:middle;"),
-                    style="display:flex; align-items:center; height:20px; margin-bottom:4px;",
-                ),
-                ui.div("–", id="pf-total-asset", class_="summary-amount"),
-                ui.div(
-                    ui.span("–", id="pf-pnl", class_="summary-delta"),
-                    ui.span(
-                        {"id": "pf-usd-wrap", "style": "display:none; margin-left:auto; align-items:baseline; gap:4px;"},
-                        ui.span("USD", style="font-size:11px; color:#888888;"),
-                        ui.span("–", id="pf-usd-text", style="font-size:13px;"),
-                    ),
-                    ui.span(
-                        {"id": "pf-header-price-wrap", "style": "display:none; margin-left:auto;"},
-                        ui.span("", id="pf-header-price", style="margin-right:4px;"),
-                        ui.span("", id="pf-header-chg"),
-                    ),
-                    class_="summary-delta-row",
+            build_summary_header_dom(
+                id_prefix        = "pf",
+                label_text       = "포트폴리오",
+                back_btn_onclick = "pfGoBack();",
+                delta_row_extra  = ui.span(
+                    {"id": "pf-header-price-wrap", "style": "display:none; margin-left:auto;"},
+                    ui.span("", id="pf-header-price", style="margin-right:4px;"),
+                    ui.span("", id="pf-header-chg"),
                 ),
             ),
 
@@ -585,29 +566,13 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
             total_pnl = total_asset - yesterday_total
             pnl_pct   = (total_pnl / yesterday_total * 100) if yesterday_total else 0
-            pnl_text, pnl_class = fmt_pnl(total_pnl, pnl_pct)
-
-            usd_text = ""
-            if usd_rate and usd_chg is not None:
-                usd_text = f'{usd_rate:,.2f} ({fmt_pct(usd_chg)})'
 
             rows_sorted   = _sort_rows(rows, usd_rate)
             ticker_values = {
                 t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
                 for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
             }
-            usd_css = (
-                "positive" if usd_chg is not None and usd_chg > 0
-                else "negative" if usd_chg is not None and usd_chg < 0
-                else "neutral"
-            ) if usd_rate and usd_chg is not None else ""
-            summary = {
-                "total_asset": fmt_krw(total_asset),
-                "pnl_text":    pnl_text,
-                "pnl_class":   pnl_class,
-                "usd_text":    usd_text,
-                "usd_css":     usd_css,
-            }
+            summary = build_summary_payload(total_asset, total_pnl, pnl_pct, usd_rate, usd_chg)
 
             current_tickers   = [r[0] for r in rows_sorted]
             structure_changed = (current_tickers != _last_tickers)
@@ -669,7 +634,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             price_text, chg_text, chg_css = fmt_change(price, chg_pct, currency=currency)
 
             summary = {
-                "total_asset": fmt_krw(total_asset),
+                "total":       fmt_krw(total_asset),
                 "pnl_text":    pnl_text,
                 "pnl_class":   pnl_class,
                 "price_text":  price_text,

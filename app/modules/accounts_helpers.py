@@ -2,6 +2,7 @@ from app.db import get_market_currency
 from app.modules.components import (
     fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change,
     build_ticker_row_skeleton, build_ticker_row_values,
+    build_summary_payload,
 )
 from scheduler.price_updater_common import get_market_status
 
@@ -136,18 +137,7 @@ def _build_position_row_values(pos, usd_rate):
 # ── 요약 헤더 ─────────────────────────────────────────────────────────────────
 
 def _build_summary_html(label, total_asset, pnl, pnl_pct, usd_rate=None, usd_chg=None):
-    """summary header 값 dict"""
-    pnl_text, pnl_class = fmt_pnl(pnl, pnl_pct)
-    usd_text = ""
-    usd_css  = ""
-    if usd_rate and usd_chg is not None:
-        usd_text = f'{usd_rate:,.2f} ({fmt_pct(usd_chg)})'
-        usd_css  = "positive" if usd_chg > 0 else "negative" if usd_chg < 0 else "neutral"
-    return {
-        "label":     label,
-        "total":     fmt_krw(total_asset),
-        "pnl_text":  pnl_text,
-        "pnl_class": pnl_class,
-        "usd_text":  usd_text,
-        "usd_css":   usd_css,
-    }
+    """summary header 값 dict — build_summary_payload 위임"""
+    payload = build_summary_payload(total_asset, pnl, pnl_pct, usd_rate, usd_chg)
+    payload["label"] = label
+    return payload

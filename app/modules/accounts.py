@@ -14,7 +14,7 @@ from app.modules.accounts_helpers import (
 )
 from app.modules.accounts_modals import modal_edit_position_html, modal_edit_position_js
 from app.db import get_db, get_usd_krw, get_market_map, get_market_label, get_market_currency
-from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
+from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change, build_summary_header_dom
 from app.price_signal import price_signal, daily_insert_signal
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
@@ -229,30 +229,10 @@ def accounts_ui():
         """),
 
         # ── Summary 헤더 ──────────────────────────────────────────────────────
-        ui.div(
-            {"class": "total-summary"},
-            ui.div(
-                ui.tags.button(
-                    "‹",
-                    id="ac-back-btn",
-                    class_="summary-label",
-                    style="display:none; background:none; border:none; padding:0; margin-right:6px; cursor:pointer; vertical-align:middle; line-height:1; font-family:inherit;",
-                    onclick="Shiny.setInputValue('accounts-btn_back', Math.random(), {priority: 'event'});",
-                ),
-                ui.span("총자산", id="ac-summary-label", class_="summary-label",
-                        style="vertical-align:middle;"),
-                style="display:flex; align-items:center; height:20px; margin-bottom:4px;",
-            ),
-            ui.div("–", id="ac-summary-total", class_="summary-amount"),
-            ui.div(
-                ui.span("–", id="ac-summary-pnl", class_="summary-delta"),
-                ui.span(
-                    {"id": "ac-usd-wrap", "style": "display:none; margin-left:auto; align-items:baseline; gap:4px;"},
-                    ui.span("USD", style="font-size:11px; color:#888888;"),
-                    ui.span("–", id="ac-usd-text", style="font-size:13px;"),
-                ),
-                class_="summary-delta-row",
-            ),
+        build_summary_header_dom(
+            id_prefix        = "ac",
+            label_text       = "총자산",
+            back_btn_onclick = "Shiny.setInputValue('accounts-btn_back', Math.random(), {priority: 'event'});",
         ),
 
         # ── 계좌 목록 화면 ────────────────────────────────────────────────────

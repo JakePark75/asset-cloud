@@ -210,28 +210,80 @@ def build_ticker_row_values(
     }
 
 
-# ── 공통 헤더 컴포넌트 ────────────────────────────────────────────────────────
+# ── 공통 요약 헤더 ────────────────────────────────────────────────────────────
+#
+# DOM 골격과 페이로드(tick값)를 분리해 JS DOM 패치 방식에 대응.
+#
+# build_summary_header_dom(id_prefix, back_btn_onclick)
+#   → Shiny UI 골격. 최초 1회 렌더링.
+#   id_prefix      : DOM id 접두사. 예) "pf", "ac"
+#   label_text     : 초기 레이블 텍스트. 예) "포트폴리오", "총자산"
+#   back_btn_onclick: 뒤로가기 버튼 onclick JS. None이면 버튼 미생성.
+#
+# build_summary_payload(total_asset, pnl, pnl_pct, usd_rate, usd_chg)
+#   → tick마다 JS로 전송할 값 dict.
+#   키: total, pnl_text, pnl_class, usd_text, usd_css
 
-def render_summary_header(label: str, total_asset: float, pnl: float, pnl_pct: float,
-                          usd_rate: float | None, usd_chg: float | None):
-    pnl_text, pnl_class = fmt_pnl(pnl, pnl_pct)
+def build_summary_header_dom(
+    id_prefix: str,
+    label_text: str,
+    back_btn_onclick: str | None = None,
+    delta_row_extra: ui.Tag | None = None,
+) -> ui.Tag:
+    back_btn = ui.tags.button(
+        "‹",
+        id=f"{id_prefix}-back-btn",
+        class_="summary-label",
+        style="display:none; background:none; border:none; padding:0; margin-right:6px; cursor:pointer; vertical-align:middle; line-height:1; font-family:inherit;",
+        onclick=back_btn_onclick,
+    ) if back_btn_onclick else None
 
-    usd_elem = None
-    if usd_rate is not None and usd_chg is not None:
-        usd_css = "positive" if usd_chg >= 0 else "negative"
-        usd_elem = ui.span(
-            ui.span("USD ", style="color:#888888;"),
-            ui.span(f"{usd_rate:,.2f} ({fmt_pct(usd_chg)})", class_=usd_css),
-            class_="summary-usd",
-        )
+    label_row_children = []
+    if back_btn:
+        label_row_children.append(back_btn)
+    label_row_children.append(
+        ui.span(label_text, id=f"{id_prefix}-summary-label", class_="summary-label",
+                style="vertical-align:middle;")
+    )
 
     return ui.div(
-        ui.div(label, class_="summary-label"),
-        ui.div(fmt_krw(total_asset), class_="summary-amount"),
+        {"class": "total-summary"},
         ui.div(
-            ui.span(pnl_text, class_=f"summary-delta {pnl_class}"),
-            usd_elem,
+            *label_row_children,
+            style="display:flex; align-items:center; height:20px; margin-bottom:4px;",
+        ),
+        ui.div("–", id=f"{id_prefix}-summary-total", class_="summary-amount"),
+        ui.div(
+            ui.span("–", id=f"{id_prefix}-summary-pnl", class_="summary-delta"),
+            ui.span(
+                {"id": f"{id_prefix}-usd-wrap",
+                 "style": "display:none; margin-left:auto; align-items:baseline; gap:4px;"},
+                ui.span("USD", style="font-size:11px; color:#888888;"),
+                ui.span("–", id=f"{id_prefix}-usd-text", style="font-size:13px;"),
+            ),
+            *(([delta_row_extra]) if delta_row_extra is not None else []),
             class_="summary-delta-row",
         ),
-        class_="total-summary",
     )
+
+
+def build_summary_payload(
+    total_asset: float,
+    pnl: float,
+    pnl_pct: float,
+    usd_rate: float | None = None,
+    usd_chg: float | None = None,
+) -> dict:
+    pnl_text, pnl_class = fmt_pnl(pnl, pnl_pct)
+    usd_text = ""
+    usd_css  = ""
+    if usd_rate and usd_chg is not None:
+        usd_text = f'{usd_rate:,.2f} ({fmt_pct(usd_chg)})'
+        usd_css  = "positive" if usd_chg > 0 else "negative" if usd_chg < 0 else "neutral"
+    return {
+        "total":     fmt_krw(total_asset),
+        "pnl_text":  pnl_text,
+        "pnl_class": pnl_class,
+        "usd_text":  usd_text,
+        "usd_css":   usd_css,
+    }
