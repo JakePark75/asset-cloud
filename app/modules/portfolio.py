@@ -584,9 +584,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
             total_pnl = total_asset - yesterday_total
             pnl_pct   = (total_pnl / yesterday_total * 100) if yesterday_total else 0
-            pnl_sign  = "+" if total_pnl >= 0 else ""
-            pnl_text  = f"{pnl_sign}{fmt_krw(abs(total_pnl))} ({fmt_pct(pnl_pct)})"
-            pnl_class = "positive" if total_pnl >= 0 else "negative"
+            pnl_text, pnl_class = fmt_pnl(total_pnl, pnl_pct)
 
             usd_html = ""
             if usd_rate and usd_chg is not None:
