@@ -4,7 +4,8 @@ import yfinance as yf
 from shiny import ui, module, reactive
 
 from app.modules.accounts_DAL import (
-    fetch_accounts_summary, fetch_account_details,
+    fetch_accounts_summary, calc_accounts_summary,
+    fetch_account_details, calc_account_details,
     execute_buy, execute_sell,
 )
 from app.modules.accounts_helpers import (
@@ -468,12 +469,12 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
     _last_positions: list = []
     _last_display:   dict = {}
 
-    # ── DB 캐시 (price_signal 비의존) ────────────────────────────────────────
+    # ── DB 캐시 (price_signal 비의존, 구조만) ───────────────────────────────
 
     @reactive.calc
     def _db_accounts():
         refresh()
-        return fetch_accounts_summary()
+        return fetch_accounts_summary()  # 시세 없음, 구조만
 
     @reactive.calc
     def _db_detail():
@@ -481,7 +482,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         acc_id = selected_account()
         if acc_id is None:
             return None
-        return fetch_account_details(acc_id)
+        return fetch_account_details(acc_id)  # 시세 없음, 구조만
 
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 
@@ -498,7 +499,10 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         acc_id = selected_account()
 
         if acc_id is None:
-            accounts = _db_accounts()
+            from common.redis_store import get_all_prices
+            prices   = get_all_prices()
+            accounts = calc_accounts_summary(_db_accounts(), prices, usd_rate_val)
+            # accounts: [(id, name, alias, total, cash, is_watch, prev_total), ...]
             normal   = [a for a in accounts if not a[5]]
             watch    = [a for a in accounts if a[5]]
 
@@ -539,10 +543,14 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
                     await session.send_custom_message("ac_list_tick", diff)
 
         else:
-            detail = _db_detail()
-            if detail is None:
+            db_detail = _db_detail()
+            if db_detail is None:
                 return
-            acc, positions, usd_rate = detail
+            acc_row, db_rows = db_detail
+
+            from common.redis_store import get_all_prices
+            prices = get_all_prices()
+            acc, positions, usd_rate = calc_account_details(acc_row, db_rows, prices, usd_rate_val)
 
             prev_total = float(acc[3])
             total_sum  = 0
