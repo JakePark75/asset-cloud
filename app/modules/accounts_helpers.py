@@ -138,17 +138,16 @@ def _build_position_row_values(pos, usd_rate):
 def _build_summary_html(label, total_asset, pnl, pnl_pct, usd_rate=None, usd_chg=None):
     """summary header 값 dict"""
     pnl_text, pnl_class = fmt_pnl(pnl, pnl_pct)
-    usd_html = ""
+    usd_text = ""
+    usd_css  = ""
     if usd_rate and usd_chg is not None:
-        usd_css  = "positive" if usd_chg >= 0 else "negative"
-        usd_html = (
-            f'<span style="color:#888888;">USD </span>'
-            f'<span class="{usd_css}">{usd_rate:,.2f} ({fmt_pct(usd_chg)})</span>'
-        )
+        usd_text = f'{usd_rate:,.2f} ({fmt_pct(usd_chg)})'
+        usd_css  = "positive" if usd_chg > 0 else "negative" if usd_chg < 0 else "neutral"
     return {
         "label":     label,
         "total":     fmt_krw(total_asset),
         "pnl_text":  pnl_text,
         "pnl_class": pnl_class,
-        "usd_html":  usd_html,
+        "usd_text":  usd_text,
+        "usd_css":   usd_css,
     }

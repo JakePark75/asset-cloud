@@ -163,8 +163,9 @@ def accounts_ui():
     setText('ac-summary-total', s.total);
     var pnlEl = acGetEl('ac-summary-pnl');
     if (pnlEl) { pnlEl.textContent = s.pnl_text; pnlEl.className = 'summary-delta ' + s.pnl_class; }
-    setDisplay('ac-usd-wrap', s.usd_html ? '' : 'none');
-    setHtml('ac-usd-text', s.usd_html);
+    setDisplay('ac-usd-wrap', s.usd_text ? 'flex' : 'none');
+    var usdEl = acGetEl('ac-usd-text');
+    if (usdEl) { usdEl.textContent = s.usd_text; usdEl.className = s.usd_css; }
   }
 
   // ── 현금 모달 ──────────────────────────────────────────────────────────
@@ -246,8 +247,9 @@ def accounts_ui():
             ui.div(
                 ui.span("–", id="ac-summary-pnl", class_="summary-delta"),
                 ui.span(
-                    {"id": "ac-usd-wrap", "style": "display:none; margin-left:auto;"},
-                    ui.span({"id": "ac-usd-text", "class": "summary-usd"}),
+                    {"id": "ac-usd-wrap", "style": "display:none; margin-left:auto; align-items:baseline; gap:4px;"},
+                    ui.span("USD", style="font-size:11px; color:#888888;"),
+                    ui.span("–", id="ac-usd-text", style="font-size:13px;"),
                 ),
                 class_="summary-delta-row",
             ),

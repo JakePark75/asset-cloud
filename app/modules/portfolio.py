@@ -191,9 +191,9 @@ def portfolio_ui():
     if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
 
     el = document.getElementById('pf-usd-wrap');
-    if (el) el.style.display = m.summary.usd_html ? '' : 'none';
+    if (el) el.style.display = m.summary.usd_text ? 'flex' : 'none';
     el = document.getElementById('pf-usd-text');
-    if (el) el.innerHTML = m.summary.usd_html;
+    if (el) { el.textContent = m.summary.usd_text; el.className = m.summary.usd_css; }
 
     el = document.getElementById('pf-ticker-list');
     if (el) el.innerHTML = m.ticker_list_html;
@@ -221,9 +221,9 @@ def portfolio_ui():
       if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
 
       el = document.getElementById('pf-usd-wrap');
-      if (el) el.style.display = m.summary.usd_html ? '' : 'none';
+      if (el) el.style.display = m.summary.usd_text ? 'flex' : 'none';
       el = document.getElementById('pf-usd-text');
-      if (el) el.innerHTML = m.summary.usd_html;
+      if (el) { el.textContent = m.summary.usd_text; el.className = m.summary.usd_css; }
     }
     Object.keys(m).forEach(function(key) {
       if (key === 'summary') return;
@@ -388,8 +388,9 @@ def portfolio_ui():
                 ui.div(
                     ui.span("–", id="pf-pnl", class_="summary-delta"),
                     ui.span(
-                        {"id": "pf-usd-wrap", "style": "display:none; margin-left:auto;"},
-                        ui.span({"id": "pf-usd-text", "class": "summary-usd"}),
+                        {"id": "pf-usd-wrap", "style": "display:none; margin-left:auto; align-items:baseline; gap:4px;"},
+                        ui.span("USD", style="font-size:11px; color:#888888;"),
+                        ui.span("–", id="pf-usd-text", style="font-size:13px;"),
                     ),
                     ui.span(
                         {"id": "pf-header-price-wrap", "style": "display:none; margin-left:auto;"},
@@ -586,24 +587,26 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             pnl_pct   = (total_pnl / yesterday_total * 100) if yesterday_total else 0
             pnl_text, pnl_class = fmt_pnl(total_pnl, pnl_pct)
 
-            usd_html = ""
+            usd_text = ""
             if usd_rate and usd_chg is not None:
-                usd_css  = "positive" if usd_chg >= 0 else "negative"
-                usd_html = (
-                    f'<span style="color:#888888;">USD </span>'
-                    f'<span class="{usd_css}">{usd_rate:,.2f} ({fmt_pct(usd_chg)})</span>'
-                )
+                usd_text = f'{usd_rate:,.2f} ({fmt_pct(usd_chg)})'
 
             rows_sorted   = _sort_rows(rows, usd_rate)
             ticker_values = {
                 t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
                 for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
             }
+            usd_css = (
+                "positive" if usd_chg is not None and usd_chg > 0
+                else "negative" if usd_chg is not None and usd_chg < 0
+                else "neutral"
+            ) if usd_rate and usd_chg is not None else ""
             summary = {
                 "total_asset": fmt_krw(total_asset),
                 "pnl_text":    pnl_text,
                 "pnl_class":   pnl_class,
-                "usd_html":    usd_html,
+                "usd_text":    usd_text,
+                "usd_css":     usd_css,
             }
 
             current_tickers   = [r[0] for r in rows_sorted]
