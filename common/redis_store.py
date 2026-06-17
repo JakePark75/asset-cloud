@@ -271,7 +271,7 @@ def recalc_today_row() -> None:
         else:
             prev_total = to_f(prev[0])
             prev_twr   = to_f(prev[1])
-            denom = prev_total
+            denom = prev_total + cash_flow
             twr_asset = prev_twr * ((total_asset - cash_flow) / denom) if denom else prev_twr
 
         # 10. Redis 저장
