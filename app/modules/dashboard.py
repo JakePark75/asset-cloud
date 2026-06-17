@@ -11,7 +11,7 @@ from app.utils.metrics import (
     calculate_daily_profit, calculate_retirement_asset,
     calculate_exposure_and_ratios,
 )
-from app.modules.components import fmt_krw
+from app.modules.components import fmt_krw, fmt_pct
 from app.utils.display_diff import diff_display
 
 
@@ -62,6 +62,7 @@ def _load_summary_data(rows, raw_rows) -> dict:
     # usd_krw: prices hash 우선, 없으면 fallback
     fx_data = prices.get("USDKRW=X")
     usd_krw = float(fx_data["price"]) if fx_data else 1300.0
+    usd_chg = float(fx_data["change_pct"]) if fx_data else 0.0
 
     # ^NDX: prices hash 우선, 없으면 None (live_ndx100 = None → prev 사용)
     ndx_data    = prices.get("^NDX")
@@ -186,6 +187,8 @@ def _load_summary_data(rows, raw_rows) -> dict:
         "retirement_asset": retirement_asset,
         "retirement_date":  retirement_date,
         "chart_data":       chart_data,
+        "usd_krw":          usd_krw,
+        "usd_chg":          usd_chg,
     }
 
 
@@ -450,6 +453,8 @@ def _dashboard_ui_dom_patch():
       setText('db-hero-amount',      m.hero_text.total_asset);
       setText('db-hero-delta-text',  m.hero_text.delta_text);
       setClass('db-hero-delta-text', 'db-hero-delta', pnlClass(m.hero_text.delta_val));
+      setText('db-hero-usd-text', m.hero_text.usd_text);
+      setClass('db-hero-usd-text', '', pnlClass(m.hero_text.usd_chg_val));
     }
     // ── 히어로 (차트 SVG) ─────────────────────────────
     if (m.hero_chart_svg !== undefined) {
@@ -532,7 +537,12 @@ def _dashboard_ui_dom_patch():
                     ui.div(
                         {"class": "db-hero-delta-row"},
                         ui.span("–", id="db-hero-delta-text", class_="db-hero-delta"),
-                        ui.span("전일 대비", class_="db-hero-delta-tag"),
+                        ui.span(
+                            {"id": "db-hero-usd-wrap",
+                             "style": "margin-left:auto; display:flex; align-items:baseline; gap:4px;"},
+                            ui.span("USD", style="font-size:11px; color:#888888;"),
+                            ui.span("–", id="db-hero-usd-text", style="font-size:13px;"),
+                        ),
                     ),
                 ),
             ),
@@ -765,6 +775,8 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
                 "delta_text":  f"{_arrow(delta)}{fmt_krw(abs(delta))}  ({_fmt_pct(pct)})",
                 "delta_val":   delta,
                 "chart_svg":   chart_svg,
+                "usd_text":    f"{d['usd_krw']:,.2f} ({fmt_pct(d['usd_chg'])})",
+                "usd_chg_val": d["usd_chg"],
             }
 
             # ── Exposure ─────────────────────────────────────
@@ -874,6 +886,8 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
                     "total_asset": hero["total_asset"],
                     "delta_text":  hero["delta_text"],
                     "delta_val":   hero["delta_val"],
+                    "usd_text":    hero["usd_text"],
+                    "usd_chg_val": hero["usd_chg_val"],
                 },
                 "hero_chart_svg": hero["chart_svg"],
                 "exposure": exposure_payload,
