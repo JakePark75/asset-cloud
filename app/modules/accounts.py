@@ -125,6 +125,19 @@ def accounts_ui():
     Object.values(positions).forEach(function(p) { _applyOnePosition(p); });
   }
   function _applyOnePosition(p) {
+    var nameEl = document.getElementById('ac-name-' + p.id);
+    if (nameEl && p.name != null) nameEl.textContent = p.name;
+
+    var levEl = document.getElementById('ac-lev-' + p.id);
+    if (levEl && p.leverage != null) {
+      levEl.textContent = 'x' + p.leverage;
+      levEl.className   = 'lev-badge lev-x' + p.leverage;
+      levEl.style.display = p.leverage > 1 ? '' : 'none';
+    }
+
+    var qtyEl = document.getElementById('ac-qty-' + p.id);
+    if (qtyEl) qtyEl.textContent = p.qty || '';
+
     var amountEl = document.getElementById('ac-amount-' + p.id);
     if (amountEl) amountEl.textContent = p.amount;
     var priceEl = document.getElementById('ac-price-' + p.id);
@@ -146,7 +159,7 @@ def accounts_ui():
       stEl.textContent = p.status_dot ? p.status_dot + ' ' + p.status_txt : '';
       stEl.className   = 'ticker-status ' + p.status_cls;
     }
-    // ── data-* 속성 갱신 (모달 오픈 시 최신값 반영) ──
+    // ── data-* 속성 갱신 (모달을 같은 세션에서 다시 열 때 최신값이 채워지도록) ──
     if (amountEl) {
       var parentEl = amountEl.closest('[data-pos-id]');
       if (parentEl) {
@@ -156,6 +169,11 @@ def accounts_ui():
         if (p.cash_amount !== undefined && p.cash_amount !== null) {
           parentEl.setAttribute('data-amount', p.cash_amount);
         }
+        if (p.name != null)     parentEl.setAttribute('data-name', p.name);
+        if (p.market != null)   parentEl.setAttribute('data-market', p.market);
+        if (p.leverage != null) parentEl.setAttribute('data-leverage', p.leverage);
+        if (p.currency != null) parentEl.setAttribute('data-currency', p.currency);
+        if (p.raw_qty != null)  parentEl.setAttribute('data-qty', p.raw_qty);
       }
     }
   }

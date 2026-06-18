@@ -73,7 +73,12 @@ def build_ticker_row_skeleton(
     is_cash  = ticker in ('KRW', 'USD')
     leverage = int(leverage) if leverage else 1
 
-    lev_html = f'<span class="lev-badge lev-x{leverage}">x{leverage}</span>' if leverage > 1 else ""
+    # 레버리지는 종목 수정 후에도 바뀔 수 있으므로 항상 렌더링해두고 표시 여부만 토글.
+    # (id를 부여해 tick에서 텍스트/표시여부를 갱신할 수 있게 함)
+    lev_html = (
+        f'<span id="{id_prefix}-lev-{row_id}" class="lev-badge lev-x{leverage}" '
+        f'style="{"" if leverage > 1 else "display:none;"}">x{leverage}</span>'
+    )
 
     SEP = '<span style="color:var(--text-dim);margin:0 4px;">·</span>'
 
@@ -82,8 +87,8 @@ def build_ticker_row_skeleton(
         qty_html    = ""
         change_html = ""
     elif is_cash:
-        # USD: 수량 고정 표시, 시세 없음
-        qty_html    = qty_fixed or ""
+        # USD: 수량(잔액)도 바뀔 수 있으므로 span으로 감싸 tick에서 갱신 가능하게 함
+        qty_html    = f'<span id="{id_prefix}-qty-{row_id}">{qty_fixed or ""}</span>'
         change_html = ""
     else:
         if qty_fixed is None:
@@ -124,7 +129,7 @@ def build_ticker_row_skeleton(
         f'    <div>'
         f'      <div class="lev-name-wrap">'
         f'        {lev_html}'
-        f'        <span class="ticker-name">{display_name}</span>'
+        f'        <span id="{id_prefix}-name-{row_id}" class="ticker-name">{display_name}</span>'
         f'        {status_html}'
         f'      </div>'
         f'      <div class="ticker-qty">{qty_html}</div>'
@@ -150,13 +155,16 @@ def build_ticker_row_values(
     row_id: str,
     get_market_currency_fn,   # app.db.get_market_currency 주입
     get_market_status_fn,     # scheduler.price_updater_common.get_market_status 주입
+    name: str | None = None,     # 종목명/표시명 — tick으로 동적 갱신
+    leverage: int = 1,           # 레버리지 — tick으로 동적 갱신
     qty_in_values: bool = True,  # portfolio: True, accounts/드릴다운: False(골격에 고정)
 ) -> dict:
-    is_cash = ticker in ('KRW', 'USD')
-    qty_f   = float(qty      or 0)
-    price_f = float(price    or 0)
-    chg_f   = float(chg_pct  or 0)
-    avg_f   = float(avg_price or 0)
+    is_cash  = ticker in ('KRW', 'USD')
+    qty_f    = float(qty      or 0)
+    price_f  = float(price    or 0)
+    chg_f    = float(chg_pct  or 0)
+    avg_f    = float(avg_price or 0)
+    leverage = int(leverage) if leverage else 1
 
     amount_str = fmt_krw(amount)
 
@@ -172,6 +180,8 @@ def build_ticker_row_values(
     qty_str = ""
     if not is_cash and qty_f > 0 and qty_in_values:
         qty_str = f"≈{qty_f:.2f}주" if qty_f != int(qty_f) else f"{qty_f:g}주"
+    elif ticker == 'USD':
+        qty_str = fmt_usd(qty_f)
 
     # ── 평단가 / 수익률 ───────────────────────────────────────
     avgprice_str = pnlpct_str = pnlpct_css = ""
@@ -196,6 +206,9 @@ def build_ticker_row_values(
 
     return {
         "id":          row_id,
+        "name":        name,
+        "leverage":    leverage,
+        "currency":    currency,
         "amount":      amount_str,
         "qty":         qty_str,
         "price":       price_str,

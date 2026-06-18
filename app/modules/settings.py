@@ -54,7 +54,11 @@ def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
     tid      = _ticker_to_id(ticker)
     leverage = int(leverage) if leverage else 1
 
-    lev_html = f'<span class="lev-badge lev-x{leverage}">x{leverage}</span>' if leverage > 1 else ""
+    # 레버리지는 종목 정보 수정 후 바뀔 수 있으므로 항상 렌더링해두고 표시 여부만 토글
+    lev_html = (
+        f'<span id="st-lev-{tid}" class="lev-badge lev-x{leverage}" '
+        f'style="{"" if leverage > 1 else "display:none;"}">x{leverage}</span>'
+    )
 
     delete_html = (
         f'<button class="btn-danger-sm" '
@@ -68,10 +72,10 @@ def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
         f'  <div>'
         f'    <div class="lev-name-wrap">'
         f'      {lev_html}'
-        f'      <span class="ticker-name">{name}</span>'
+        f'      <span id="st-name-{tid}" class="ticker-name">{name}</span>'
         f'      <span id="st-status-{tid}" class="ticker-status"></span>'
         f'    </div>'
-        f'    <div class="ticker-qty">{ticker} / {market}</div>'
+        f'    <div class="ticker-qty">{ticker} / <span id="st-market-{tid}">{market}</span></div>'
         f'  </div>'
         f'  <div class="ticker-row-btn" style="display:flex; flex-direction:column; align-items:flex-end; gap:0;">'
         f'    {delete_html}'
@@ -80,9 +84,10 @@ def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
         f'</div>'
     )
 
-def _build_tick_values(ticker, market, price, change_pct):
+def _build_tick_values(ticker, name, market, leverage, price, change_pct):
     """시세 갱신 시마다 전송하는 값 dict."""
-    tid = _ticker_to_id(ticker)
+    tid      = _ticker_to_id(ticker)
+    leverage = int(leverage) if leverage else 1
 
     currency = get_market_currency(market)
     price_str, chg_str, chg_css = fmt_change(price, change_pct, currency=currency)
@@ -97,6 +102,9 @@ def _build_tick_values(ticker, market, price, change_pct):
 
     return {
         "id":         tid,
+        "name":       name,
+        "leverage":   leverage,
+        "market":     market,
         "price":      price_str,
         "chg":        chg_str,
         "chg_css":    chg_css,
@@ -169,6 +177,19 @@ def settings_ui():
   }
 
   function _applyOneTicker(t) {
+    var nameEl = document.getElementById('st-name-' + t.id);
+    if (nameEl && t.name != null) nameEl.textContent = t.name;
+
+    var levEl = document.getElementById('st-lev-' + t.id);
+    if (levEl && t.leverage != null) {
+      levEl.textContent = 'x' + t.leverage;
+      levEl.className   = 'lev-badge lev-x' + t.leverage;
+      levEl.style.display = t.leverage > 1 ? '' : 'none';
+    }
+
+    var marketEl = document.getElementById('st-market-' + t.id);
+    if (marketEl && t.market != null) marketEl.textContent = t.market;
+
     var stEl = document.getElementById('st-status-' + t.id);
     if (stEl) {
       stEl.textContent = t.status_dot ? t.status_dot + ' ' + t.status_txt : '';
@@ -387,7 +408,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             p_data     = prices.get(ticker)
             price      = float(p_data["price"])      if p_data else 0.0
             change_pct = float(p_data["change_pct"]) if p_data else 0.0
-            ticker_values[ticker] = _build_tick_values(ticker, market, price, change_pct)
+            ticker_values[ticker] = _build_tick_values(ticker, name, market, leverage, price, change_pct)
 
         # 구조 변경 감지
         current_tickers = [r[0] for r in rows]

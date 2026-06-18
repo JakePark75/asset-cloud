@@ -74,7 +74,7 @@ def _build_position_row_skeleton(pos, ns_str):
         data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
     else:
         display_name  = tname or ticker
-        qty_fixed     = f"{qty_f:g}주"
+        qty_fixed     = None  # span으로 비워둠 — tick에서 채움(매수/매도 직후 즉시 반영)
         onclick_attr  = "acOpenEditPositionModal(this);"
         avg_price_val = float(avg_price) if avg_price is not None else ""
         currency      = get_market_currency(t_market) if t_market else "KRW"
@@ -104,16 +104,20 @@ def _build_position_row_values(pos, usd_rate):
     pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price = pos
     qty_f   = float(qty   or 0)
     price_f = float(price or 0)
+    is_cash = ticker in ('KRW', 'USD')
 
-    # 평가액 계산 (통화/환율 분기는 호출자 책임)
+    # 평가액 계산 + 표시명 (호출자 책임 분기 — skeleton과 동일 기준)
     if ticker == 'KRW':
-        amount = qty_f
+        amount       = qty_f
+        display_name = "현금(KRW)"
     elif ticker == 'USD':
-        amount = qty_f * usd_rate
+        amount       = qty_f * usd_rate
+        display_name = "현금(USD)"
     else:
-        currency = get_market_currency(t_market)
-        rate     = usd_rate if currency == "USD" else 1
-        amount   = qty_f * price_f * rate
+        currency     = get_market_currency(t_market)
+        rate         = usd_rate if currency == "USD" else 1
+        amount       = qty_f * price_f * rate
+        display_name = tname or ticker
 
     result = build_ticker_row_values(
         ticker                 = ticker,
@@ -127,12 +131,19 @@ def _build_position_row_values(pos, usd_rate):
         row_id                 = str(pos_id),
         get_market_currency_fn = get_market_currency,
         get_market_status_fn   = get_market_status,
-        qty_in_values          = False,  # 수량은 골격에 고정
+        name                   = display_name,
+        leverage               = leverage,
+        qty_in_values          = True,  # 수량도 tick으로 갱신 (매수/매도 직후 즉시 반영)
     )
 
-    # accounts 전용 추가 필드 (모달 data-* 갱신용)
+    # accounts 전용 추가 필드 — 종목 수정 모달을 같은 세션에서 다시 열 때
+    # data-* 프리필 값(이름/시장/레버리지/평단가/통화/수량)이 최신 상태를 유지하도록
+    # raw 값을 같이 보냄 (JS에서 closest('[data-pos-id]')로 찾은 wrap div의
+    # data-* 속성을 갱신하는 데 사용)
     result["avg_price"]   = float(avg_price) if avg_price is not None else None
-    result["cash_amount"] = qty_f if ticker in ('KRW', 'USD') else None
+    result["cash_amount"] = qty_f if is_cash else None
+    result["raw_qty"]     = qty_f if not is_cash else None
+    result["market"]      = t_market if not is_cash else None
 
     return result
 

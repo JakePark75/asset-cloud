@@ -115,6 +115,13 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
 
     amount = _calc_amount(ticker, qty_f, price_f, market, usd_rate)
 
+    if ticker == 'KRW':
+        display_name = "현금(KRW)"
+    elif ticker == 'USD':
+        display_name = "현금(USD)"
+    else:
+        display_name = name or ticker
+
     return build_ticker_row_values(
         ticker                 = ticker,
         amount                 = amount,
@@ -127,6 +134,8 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
         row_id                 = tid,
         get_market_currency_fn = get_market_currency,
         get_market_status_fn   = get_market_status,
+        name                   = display_name,
+        leverage               = leverage,
         qty_in_values          = True,
     )
 
@@ -297,6 +306,16 @@ def portfolio_ui():
   }
 
   function _applyOneTicker(t) {
+    var nameEl = document.getElementById('pf-name-' + t.id);
+    if (nameEl && t.name != null) nameEl.textContent = t.name;
+
+    var levEl = document.getElementById('pf-lev-' + t.id);
+    if (levEl && t.leverage != null) {
+      levEl.textContent = 'x' + t.leverage;
+      levEl.className   = 'lev-badge lev-x' + t.leverage;
+      levEl.style.display = t.leverage > 1 ? '' : 'none';
+    }
+
     var amountEl = document.getElementById('pf-amount-' + t.id);
     if (amountEl) amountEl.textContent = t.amount;
 
