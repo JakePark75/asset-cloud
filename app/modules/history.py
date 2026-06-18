@@ -65,7 +65,7 @@ def history_ui():
                 ui.tags.tbody(id="history-tbody"),
                 class_="history-table",
             ),
-            ui.div("▼ 더 보기", id="history-load-more", class_="history-load-more"),
+
             class_="history-table-wrap",
         ),
 
@@ -115,8 +115,6 @@ def history_ui():
 
           // ── 테이블 JS 렌더링 ─────────────────────────────────────────────
           var _allRows = [];
-          var _rendered = 0;
-          var PAGE = 50;
 
           function fmtKrw(v) {
             var n = parseFloat(v) || 0;
@@ -219,21 +217,12 @@ def history_ui():
             });
           }
 
-          function loadMore() {
-            var next = _allRows.slice(_rendered, _rendered + PAGE);
-            renderRows(next);
-            _rendered += next.length;
-            var btn = document.getElementById('history-load-more');
-            if (btn) btn.style.display = _rendered >= _allRows.length ? 'none' : 'block';
-          }
-
           // ── 초기 전체 로드 ────────────────────────────────────────────────
           Shiny.addCustomMessageHandler('history_data', function(data) {
             _allRows = data;
-            _rendered = 0;
             var tbody = document.getElementById('history-tbody');
             if (tbody) tbody.innerHTML = '';
-            loadMore();
+            renderRows(_allRows);
           });
 
           // ── today_row 갱신 — 최상단 행 교체 + 차트 끝단 업데이트 ──────────
@@ -347,12 +336,6 @@ def history_ui():
           function formatKrwFull(n) {
             return Math.round(n).toLocaleString();
           }
-
-          document.addEventListener('click', function(e) {
-            if (e.target && e.target.id === 'history-load-more') {
-              loadMore();
-            }
-          });
 
         })();
         """),
