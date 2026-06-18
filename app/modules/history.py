@@ -7,10 +7,10 @@ KST = ZoneInfo("Asia/Seoul")
 
 def _today_kst() -> datetime.date:
     return datetime.datetime.now(KST).date()
+
 from app.price_signal import price_signal, daily_insert_signal, position_signal
 from app.db import get_db
 from .history_DAL import load_history, load_today_row, save_cash_flow
-from .history_charts import make_chart_asset, make_chart_twr
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -32,14 +32,14 @@ def history_ui():
         # 그래프 1: 총자산 추이
         ui.div(
             ui.p("총자산 추이", class_="chart-title"),
-            ui.output_ui("chart_asset"),
+            ui.div(id="chart-asset", style="height:220px; width:100%; overflow:hidden;"),
             class_="chart-section",
         ),
 
         # 그래프 2: TWR vs NDX100
         ui.div(
             ui.p("운용 수익률 vs NDX100", class_="chart-title"),
-            ui.output_ui("chart_twr"),
+            ui.div(id="chart-twr", style="height:220px; width:100%; overflow:hidden;"),
             class_="chart-section",
         ),
 
@@ -65,13 +65,44 @@ def history_ui():
                 ui.tags.tbody(id="history-tbody"),
                 class_="history-table",
             ),
-
             class_="history-table-wrap",
         ),
 
         # ── JS ──────────────────────────────────────────────────────────────
         ui.tags.script("""
         (function() {
+
+          // ── 상태 ─────────────────────────────────────────────────────────
+          var _allRows   = [];
+          var _chartData = null;   // history_data 수신 시 저장
+          var _pendingDraw = false; // 숨겨진 상태에서 데이터 수신 시 true
+
+          // ── 포맷 헬퍼 ────────────────────────────────────────────────────
+          function fmtKrw(v) {
+            var n = parseFloat(v) || 0;
+            var abs = Math.abs(n);
+            if (abs >= 1e8)      return (n / 1e8).toFixed(1) + "억";
+            if (abs >= 1e4)      return Math.round(n / 1e4) + "만";
+            return Math.round(n).toLocaleString();
+          }
+
+          function fmtKrw2(v) {
+            var n = parseFloat(v) || 0;
+            var abs = Math.abs(n);
+            if (abs >= 1e8) return (n / 1e8).toFixed(2) + "억";
+            if (abs >= 1e4) return Math.round(n / 1e4) + "만";
+            return Math.round(n).toLocaleString();
+          }
+
+          function formatKrwFull(n) {
+            return Math.round(n).toLocaleString();
+          }
+
+          // ── 가시성 체크 ──────────────────────────────────────────────────
+          function isHistoryVisible() {
+            var tab = document.getElementById('tab-history');
+            return tab && tab.style.display !== 'none';
+          }
 
           // ── 기간 버튼 ────────────────────────────────────────────────────
           window.setChartPeriod = function(period, el) {
@@ -113,27 +144,196 @@ def history_ui():
             });
           };
 
-          // ── 테이블 JS 렌더링 ─────────────────────────────────────────────
-          var _allRows = [];
+          // ── 차트 공통 레이아웃 ───────────────────────────────────────────
+          var BASE_LAYOUT = {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor:  '#111111',
+            font:          {color: '#aaaaaa', size: 11},
+            margin:        {l: 8, r: 8, t: 8, b: 8},
+            legend: {
+              orientation: 'h',
+              yanchor: 'bottom', y: 1.02,
+              xanchor: 'right',  x: 1,
+              font: {size: 11},
+              bgcolor: 'rgba(0,0,0,0)',
+            },
+            xaxis: {
+              gridcolor:   '#222222',
+              linecolor:   '#333333',
+              tickfont:    {size: 10},
+              tickformat:  '%-m\\n%Y',
+              dtick:       'M1',
+              showspikes:  true,
+              spikecolor:  '#444444',
+              spikemode:   'across',
+              spikesnap:   'cursor',
+              fixedrange:  true,
+              automargin:  true,
+            },
+            yaxis: {
+              gridcolor:  '#222222',
+              linecolor:  '#333333',
+              tickfont:   {size: 10},
+              fixedrange: true,
+              automargin: true,
+            },
+            hovermode:  'x unified',
+            hoverlabel: {
+              bgcolor:     '#1a1a1a',
+              bordercolor: '#333333',
+              font:        {color: '#ffffff', size: 12},
+              namelength:  -1,
+            },
+            dragmode: false,
+            height:   220,
+            autosize: true,
+          };
 
-          function fmtKrw(v) {
-            var n = parseFloat(v) || 0;
-            var abs = Math.abs(n);
-            var s;
-            if (abs >= 1e8)      s = (n / 1e8).toFixed(1) + "억";
-            else if (abs >= 1e4) s = Math.round(n / 1e4) + "만";
-            else                 s = Math.round(n).toLocaleString();
-            return s;
+          // 초기 x범위: 최근 3개월
+          function initRange(dates) {
+            if (!dates || dates.length === 0) return undefined;
+            var last  = dates[dates.length - 1];
+            var first = dates[0];
+            var end   = new Date(last);
+            var start = new Date(end);
+            start.setMonth(start.getMonth() - 3);
+            if (start < new Date(first)) start = new Date(first);
+            return [start.toISOString().slice(0,10), last];
           }
 
-          function fmtKrw2(v) {
-            var n = parseFloat(v) || 0;
-            var abs = Math.abs(n);
-            if (abs >= 1e8) return (n / 1e8).toFixed(2) + "억";
-            if (abs >= 1e4) return Math.round(n / 1e4) + "만";
-            return Math.round(n).toLocaleString();
+          // ── 차트 그리기 ──────────────────────────────────────────────────
+          function drawCharts(data) {
+            if (!data || data.length === 0) return;
+
+            // 오름차순 정렬 (data는 내림차순으로 수신됨)
+            var asc = data.slice().reverse();
+
+            var dates  = asc.map(function(r) { return r.date; });
+            var assets = asc.map(function(r) { return parseFloat(r.total_asset) || 0; });
+            var cflows = asc.map(function(r) { return parseFloat(r.cash_flow) || 0; });
+            var notes  = asc.map(function(r) { return r.cash_flow_note || ''; });
+            var twrRaw = asc.map(function(r) { return parseFloat(r.twr_asset) || 0; });
+            var ndxRaw = asc.map(function(r) { return parseFloat(r.ndx100) || 0; });
+
+            // TWR / NDX 기준점 대비 % 계산
+            var baseTwr = twrRaw[0] || 1;
+            var baseNdx = ndxRaw[0] || 1;
+            var twrPct  = twrRaw.map(function(v) { return (v / baseTwr - 1) * 100; });
+            var ndxPct  = ndxRaw.map(function(v) { return (v / baseNdx - 1) * 100; });
+
+            // ── chart-asset ──────────────────────────────────────────────
+            var gdAsset = document.getElementById('chart-asset');
+            if (gdAsset) {
+              var traceLine = {
+                x:    dates,
+                y:    assets,
+                mode: 'lines',
+                name: '총자산',
+                line: {color: '#00c073', width: 2},
+                hovertemplate: '%{customdata[0]}<extra></extra>',
+                customdata: assets.map(function(a, i) {
+                  return [formatKrwFull(a) + '원', cflows[i], notes[i]];
+                }),
+              };
+
+              var tracesAsset = [traceLine];
+
+              // 입금 마커
+              var depIdx = cflows.map(function(c, i) { return c > 0 ? i : -1; }).filter(function(i) { return i >= 0; });
+              if (depIdx.length > 0) {
+                tracesAsset.push({
+                  x:    depIdx.map(function(i) { return dates[i]; }),
+                  y:    depIdx.map(function(i) { return assets[i] * 1.012; }),
+                  mode: 'markers',
+                  name: '입금',
+                  marker: {symbol: 'triangle-up', size: 10, color: '#ff4d4d', line: {color: '#ffffff', width: 1}},
+                  hovertemplate: '%{customdata}<extra>입금</extra>',
+                  customdata: depIdx.map(function(i) {
+                    return '+' + formatKrwFull(cflows[i]) + '원' + (notes[i] ? String.fromCharCode(10) + notes[i] : '');
+                  }),
+                });
+              }
+
+              // 출금 마커
+              var wdIdx = cflows.map(function(c, i) { return c < 0 ? i : -1; }).filter(function(i) { return i >= 0; });
+              if (wdIdx.length > 0) {
+                tracesAsset.push({
+                  x:    wdIdx.map(function(i) { return dates[i]; }),
+                  y:    wdIdx.map(function(i) { return assets[i] * 0.988; }),
+                  mode: 'markers',
+                  name: '출금',
+                  marker: {symbol: 'triangle-down', size: 10, color: '#4d9fff', line: {color: '#ffffff', width: 1}},
+                  hovertemplate: '%{customdata}<extra>출금</extra>',
+                  customdata: wdIdx.map(function(i) {
+                    return formatKrwFull(cflows[i]) + '원' + (notes[i] ? String.fromCharCode(10) + notes[i] : '');
+                  }),
+                });
+              }
+
+              var yMin = Math.min.apply(null, assets);
+              var yMax = Math.max.apply(null, assets);
+              var tickVals = [0,1,2,3,4].map(function(i) { return yMin + (yMax - yMin) * i / 4; });
+              var tickText = tickVals.map(function(v) {
+                var abs = Math.abs(v);
+                if (abs >= 1e8) return (v / 1e8).toFixed(1) + '억';
+                if (abs >= 1e4) return Math.round(v / 1e4) + '만';
+                return Math.round(v).toLocaleString();
+              });
+
+              var layoutAsset = Object.assign({}, BASE_LAYOUT, {
+                xaxis: Object.assign({}, BASE_LAYOUT.xaxis, {range: initRange(dates)}),
+                yaxis: Object.assign({}, BASE_LAYOUT.yaxis, {
+                  tickmode: 'array',
+                  tickvals: tickVals,
+                  ticktext: tickText,
+                }),
+              });
+
+              Plotly.react(gdAsset, tracesAsset, layoutAsset, {displayModeBar: false});
+              attachTouch(gdAsset);
+            }
+
+            // ── chart-twr ────────────────────────────────────────────────
+            var gdTwr = document.getElementById('chart-twr');
+            if (gdTwr) {
+              var tracesTwr = [
+                {
+                  x:    dates,
+                  y:    twrPct,
+                  mode: 'lines',
+                  name: '내 수익률',
+                  line: {color: '#00c073', width: 2},
+                  hovertemplate: '%{y:.2f}%<extra>내 수익률</extra>',
+                },
+                {
+                  x:    dates,
+                  y:    ndxPct,
+                  mode: 'lines',
+                  name: 'NDX100',
+                  line: {color: '#4d9fff', width: 2, dash: 'dot'},
+                  hovertemplate: '%{y:.2f}%<extra>NDX100</extra>',
+                },
+              ];
+
+              var layoutTwr = Object.assign({}, BASE_LAYOUT, {
+                xaxis: Object.assign({}, BASE_LAYOUT.xaxis, {range: initRange(dates)}),
+                yaxis: Object.assign({}, BASE_LAYOUT.yaxis, {
+                  ticksuffix: '%',
+                  zeroline:   false,
+                }),
+                shapes: [{
+                  type: 'line', xref: 'paper', x0: 0, x1: 1,
+                  y0: 0, y1: 0,
+                  line: {color: '#333333', width: 1},
+                }],
+              });
+
+              Plotly.react(gdTwr, tracesTwr, layoutTwr, {displayModeBar: false});
+              attachTouch(gdTwr);
+            }
           }
 
+          // ── 테이블 행 생성 ───────────────────────────────────────────────
           function buildTr(r) {
             var date    = r.date;
             var total   = parseFloat(r.total_asset) || 0;
@@ -201,7 +401,7 @@ def history_ui():
               '<td style="text-align:right">' + (usd_krw ? usd_krw.toFixed(2) : '-') + '</td>' +
               '<td style="text-align:right">' + (x3 * 100).toFixed(1) + '%</td>' +
               '<td style="text-align:right">' + (x2 * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + (x1 * 100).toFixed(1) + '%</td>' +                       
+              '<td style="text-align:right">' + (x1 * 100).toFixed(1) + '%</td>' +
               '<td style="text-align:right">' + cfCell + '</td>';
             tr.addEventListener('click', function() {
               Shiny.setInputValue('history-selected_date', date, {priority: 'event'});
@@ -209,55 +409,69 @@ def history_ui():
             return tr;
           }
 
-          function renderRows(rows) {
+          function drawTable(rows) {
             var tbody = document.getElementById('history-tbody');
             if (!tbody) return;
-            rows.forEach(function(r) {
-              tbody.appendChild(buildTr(r));
-            });
+            tbody.innerHTML = '';
+            rows.forEach(function(r) { tbody.appendChild(buildTr(r)); });
           }
 
-          // ── 초기 전체 로드 ────────────────────────────────────────────────
+          // ── history_data: 데이터 수신 ────────────────────────────────────
+          // 탭이 visible이면 즉시 렌더링, hidden이면 데이터만 저장 후 _pendingDraw 표시
           Shiny.addCustomMessageHandler('history_data', function(data) {
-            _allRows = data;
-            var tbody = document.getElementById('history-tbody');
-            if (tbody) tbody.innerHTML = '';
-            renderRows(_allRows);
+            _allRows   = data;
+            _chartData = data;
+
+            if (isHistoryVisible()) {
+              drawTable(_allRows);
+              drawCharts(_chartData);
+              _pendingDraw = false;
+            } else {
+              _pendingDraw = true;
+            }
+          });
+
+          // ── active_tab 변경 감지: history 탭 진입 시 pending draw 처리 ──
+          $(document).on('shiny:inputchanged', function(e) {
+            if (e.name === 'active_tab' && e.value === 'history') {
+              if (_pendingDraw && _chartData) {
+                drawTable(_allRows);
+                drawCharts(_chartData);
+                _pendingDraw = false;
+              }
+            }
           });
 
           // ── today_row 갱신 — 최상단 행 교체 + 차트 끝단 업데이트 ──────────
           Shiny.addCustomMessageHandler('today_row_update', function(r) {
 
-            // ── 1. 테이블 최상단 행 교체 ──────────────────────────────────
+            // 1. 테이블 최상단 행 교체
             var tbody = document.getElementById('history-tbody');
             if (tbody) {
-              var newTr = buildTr(r);
-              var today = r.date;
+              var newTr   = buildTr(r);
+              var today   = r.date;
               var existing = tbody.querySelector('tr[data-date="' + today + '"]');
               if (existing) {
                 tbody.replaceChild(newTr, existing);
               } else {
                 _allRows.unshift(r);
-                _rendered += 1;
                 tbody.insertBefore(newTr, tbody.firstChild);
               }
             }
 
-            // ── 2. chart-asset 끝단 업데이트 ─────────────────────────────
+            // 2. chart-asset 끝단 업데이트
             var gdAsset = document.getElementById('chart-asset');
             if (gdAsset && gdAsset.data) {
-              var date      = r.date;
-              var total     = parseFloat(r.total_asset) || 0;
-              var cf        = parseFloat(r.cash_flow) || 0;
-              var cf_note   = r.cash_flow_note || '';
+              var date    = r.date;
+              var total   = parseFloat(r.total_asset) || 0;
+              var cf      = parseFloat(r.cash_flow) || 0;
+              var cf_note = r.cash_flow_note || '';
 
-              // trace 0 (총자산 라인) — x/y/customdata 끝단 교체
-              var xs0  = gdAsset.data[0].x.slice();
-              var ys0  = gdAsset.data[0].y.slice();
-              var cd0  = (gdAsset.data[0].customdata || []).slice();
+              var xs0 = gdAsset.data[0].x.slice();
+              var ys0 = gdAsset.data[0].y.slice();
+              var cd0 = (gdAsset.data[0].customdata || []).slice();
 
               if (xs0[xs0.length - 1] === date) {
-                xs0[xs0.length - 1] = date;
                 ys0[ys0.length - 1] = total;
                 cd0[cd0.length - 1] = [formatKrwFull(total) + '원', cf, cf_note];
               } else {
@@ -267,31 +481,23 @@ def history_ui():
               }
               Plotly.restyle(gdAsset, {x: [xs0], y: [ys0], customdata: [cd0]}, [0]);
 
-              // 입금/출금 마커 트레이스 처리
-              // 기존 오늘 마커 트레이스 제거 (traceIdx >= 1 이고 x가 [date]인 것)
+              // 오늘 마커 트레이스 제거
               var toDelete = [];
               for (var ti = gdAsset.data.length - 1; ti >= 1; ti--) {
                 var tx = gdAsset.data[ti].x;
-                if (tx && tx.length === 1 && tx[0] === date) {
-                  toDelete.push(ti);
-                }
+                if (tx && tx.length === 1 && tx[0] === date) toDelete.push(ti);
               }
-              if (toDelete.length > 0) {
-                Plotly.deleteTraces(gdAsset, toDelete);
-              }
+              if (toDelete.length > 0) Plotly.deleteTraces(gdAsset, toDelete);
 
-              // 오늘 cf 있으면 마커 트레이스 추가
+              // 오늘 cf 있으면 마커 추가
               if (cf !== 0) {
                 var markerColor  = cf > 0 ? '#ff4d4d' : '#4d9fff';
                 var markerSymbol = cf > 0 ? 'triangle-up' : 'triangle-down';
                 var markerName   = cf > 0 ? '입금' : '출금';
                 var markerY      = cf > 0 ? total * 1.012 : total * 0.988;
-                var cdStr        = (cf > 0 ? '+' : '') + Math.round(cf).toLocaleString() + '원' + (cf_note ? '\\n' + cf_note : '');
+                var cdStr        = (cf > 0 ? '+' : '') + Math.round(cf).toLocaleString() + '원' + (cf_note ? String.fromCharCode(10) + cf_note : '');
                 Plotly.addTraces(gdAsset, {
-                  x: [date],
-                  y: [markerY],
-                  mode: 'markers',
-                  name: markerName,
+                  x: [date], y: [markerY], mode: 'markers', name: markerName,
                   marker: {symbol: markerSymbol, size: 10, color: markerColor, line: {color: '#ffffff', width: 1}},
                   hovertemplate: '%{customdata}<extra>' + markerName + '</extra>',
                   customdata: [cdStr],
@@ -299,19 +505,10 @@ def history_ui():
               }
             }
 
-            // ── 3. chart-twr 끝단 업데이트 ───────────────────────────────
+            // 3. chart-twr 끝단 업데이트
             var gdTwr = document.getElementById('chart-twr');
             if (gdTwr && gdTwr.data && gdTwr.data.length >= 2) {
-              var date    = r.date;
-              var twrRaw  = parseFloat(r.twr_asset) || 0;
-              var ndxRaw  = parseFloat(r.ndx100) || 0;
-
-              // 기준값 (첫 번째 데이터 포인트) 으로 % 계산
-              var twrBase = gdTwr.data[0].y[0];  // 이미 % 값
-              var ndxBase = gdTwr.data[1].y[0];
-
-              // twr_asset / ndx100 은 절대값이므로 최초 기준값 필요
-              // → 서버에서 % 계산해서 넘겨줌 (r[13], r[14])
+              var date   = r.date;
               var twrPct = parseFloat(r.twr_pct);
               var ndxPct = parseFloat(r.ndx_pct);
 
@@ -332,9 +529,211 @@ def history_ui():
             }
           });
 
-          // 숫자 → 원화 문자열 (차트 customdata용)
-          function formatKrwFull(n) {
-            return Math.round(n).toLocaleString();
+          // ── 터치 이벤트 (pan + long-press hover) ─────────────────────────
+          function attachTouch(gd) {
+            if (gd._touchAttached) return;
+            gd._touchAttached = true;
+
+            gd.style.touchAction = 'pan-y';
+            gd.on('plotly_beforehover', function() { return false; });
+            if (getComputedStyle(gd).position === 'static') {
+              gd.style.position = 'relative';
+            }
+
+            var touchStartX     = null;
+            var touchStartY     = null;
+            var touchStartRange = null;
+            var isPanning       = false;
+            var isHovering      = false;
+            var longTimer       = null;
+            var LONG_MS         = 500;
+            var PAN_THRESHOLD   = 8;
+            var LONG_THRESHOLD  = 6;
+
+            var toMs  = function(s) { return new Date(s).getTime(); };
+            var toStr = function(ms) { return new Date(ms).toISOString().slice(0,10); };
+
+            function getCurrentRange() {
+              return gd.layout.xaxis.range.map(toMs);
+            }
+
+            function getDataRange() {
+              var xs = gd.data[0].x;
+              return [toMs(xs[0]), toMs(xs[xs.length - 1])];
+            }
+
+            // 커스텀 팝업
+            var popup = document.createElement('div');
+            popup.style.cssText = [
+              'position:absolute', 'background:#1a1a1a', 'border:1px solid #444',
+              'border-radius:6px', 'padding:7px 10px', 'font-size:12px',
+              'color:#fff', 'pointer-events:none', 'white-space:nowrap',
+              'display:none', 'z-index:999', 'line-height:1.7',
+            ].join(';');
+            gd.appendChild(popup);
+
+            // 수직 보조선
+            var vline = document.createElement('div');
+            vline.style.cssText = [
+              'position:absolute', 'top:0', 'width:1px', 'height:100%',
+              'background:#666', 'pointer-events:none', 'display:none', 'z-index:998',
+            ].join(';');
+            gd.appendChild(vline);
+
+            // 수평 보조선 (동적 생성)
+            var hlines = [];
+
+            function clientXToIndex(clientX) {
+              var range = getCurrentRange();
+              var r0    = range[0];
+              var r1    = range[1];
+              var plot  = gd.querySelector('.nsewdrag');
+              if (!plot) return 0;
+              var plotRect = plot.getBoundingClientRect();
+              var px = Math.max(0, Math.min(clientX - plotRect.left, plotRect.width));
+              var ratio    = px / plotRect.width;
+              var targetMs = r0 + ratio * (r1 - r0);
+              var xs = gd.data[0].x;
+              var best = 0;
+              var bestDiff = Math.abs(toMs(xs[0]) - targetMs);
+              for (var i = 1; i < xs.length; i++) {
+                var diff = Math.abs(toMs(xs[i]) - targetMs);
+                if (diff < bestDiff) { bestDiff = diff; best = i; } else { break; }
+              }
+              return best;
+            }
+
+            function showPopup(clientX) {
+              var idx     = clientXToIndex(clientX);
+              var xs      = gd.data[0].x;
+              var dateStr = String(xs[idx]);
+              var parts   = dateStr.split('-');
+              var label   = parts[0] + '년 ' + parseInt(parts[1]) + '월 ' + parseInt(parts[2]) + '일';
+
+              var lines = ['<b>' + label + '</b>'];
+              for (var t = 0; t < gd.data.length; t++) {
+                var trace = gd.data[t];
+                if (!trace.y || trace.mode === 'markers') continue;
+                var yVal = trace.y[idx];
+                if (yVal === undefined || yVal === null) continue;
+                var name  = trace.name || ('trace' + t);
+                var color = (trace.line && trace.line.color) || '#aaa';
+                var valStr;
+                if (trace.hovertemplate && trace.hovertemplate.indexOf(':.2f') !== -1) {
+                  valStr = yVal.toFixed(2) + '%';
+                } else {
+                  valStr = Math.round(yVal).toLocaleString() + '원';
+                }
+                lines.push('<span style="color:' + color + '">■</span> ' + name + ': ' + valStr);
+              }
+              var cd0 = gd.data[0].customdata && gd.data[0].customdata[idx];
+              if (Array.isArray(cd0)) {
+                var cf   = cd0[1];
+                var note = cd0[2];
+                if (cf !== 0) {
+                  var cfColor = cf > 0 ? '#ff4d4d' : '#4d9fff';
+                  lines.push('<span style="color:' + cfColor + '">■</span> 입출금: ' +
+                    (cf > 0 ? '+' : '') + Math.round(cf).toLocaleString() + '원');
+                  if (note) lines.push('<span style="color:' + cfColor + '">■</span> 내역: ' + note);
+                }
+              }
+              popup.innerHTML = lines.join('<br>');
+              popup.style.display = 'block';
+
+              var gdRect = gd.getBoundingClientRect();
+              var localX = clientX - gdRect.left;
+              var popX   = localX + 12;
+              popup.style.left = popX + 'px';
+              popup.style.top  = '8px';
+              var popW = popup.offsetWidth;
+              if (popX + popW > gdRect.width - 4) popup.style.left = (localX - popW - 12) + 'px';
+
+              var plot = gd.querySelector('.nsewdrag');
+              if (plot) {
+                var plotRect = plot.getBoundingClientRect();
+                vline.style.left = (plotRect.left - gdRect.left + (clientX - plotRect.left)) + 'px';
+              } else {
+                vline.style.left = localX + 'px';
+              }
+              vline.style.display = 'block';
+
+              hlines.forEach(function(hl) { if (hl.parentNode) hl.parentNode.removeChild(hl); });
+              hlines = [];
+              if (plot) {
+                var plotRect2  = plot.getBoundingClientRect();
+                var plotTop    = plotRect2.top - gdRect.top;
+                var plotHeight = plotRect2.height;
+                for (var t = 0; t < gd.data.length; t++) {
+                  var trace = gd.data[t];
+                  if (!trace.y || trace.mode === 'markers') continue;
+                  var yVal2 = trace.y[idx];
+                  if (yVal2 === undefined || yVal2 === null) continue;
+                  var yRange  = gd.layout.yaxis.range;
+                  var yRatio  = 1 - (yVal2 - yRange[0]) / (yRange[1] - yRange[0]);
+                  var yPx     = plotTop + yRatio * plotHeight;
+                  var color   = (trace.line && trace.line.color) || '#666';
+                  var hl = document.createElement('div');
+                  hl.style.cssText = [
+                    'position:absolute', 'left:0', 'width:100%', 'height:1px',
+                    'background:' + color, 'opacity:0.5', 'pointer-events:none', 'z-index:997',
+                  ].join(';');
+                  hl.style.top = yPx + 'px';
+                  gd.appendChild(hl);
+                  hlines.push(hl);
+                }
+              }
+            }
+
+            function hidePopup() {
+              popup.style.display = 'none';
+              vline.style.display = 'none';
+              hlines.forEach(function(hl) { if (hl.parentNode) hl.parentNode.removeChild(hl); });
+              hlines = [];
+            }
+
+            gd.addEventListener('touchstart', function(e) {
+              if (e.touches.length !== 1) return;
+              var t = e.touches[0];
+              touchStartX     = t.clientX;
+              touchStartY     = t.clientY;
+              touchStartRange = getCurrentRange();
+              isPanning       = false;
+              isHovering      = false;
+              longTimer = setTimeout(function() {
+                if (!isPanning) { isHovering = true; showPopup(touchStartX); }
+              }, LONG_MS);
+            }, {passive: true});
+
+            gd.addEventListener('touchmove', function(e) {
+              if (e.touches.length !== 1 || touchStartX === null) return;
+              var t  = e.touches[0];
+              var dx = t.clientX - touchStartX;
+              var dy = t.clientY - touchStartY;
+              if (longTimer && Math.abs(dx) > LONG_THRESHOLD) { clearTimeout(longTimer); longTimer = null; }
+              if (isHovering) { e.preventDefault(); showPopup(t.clientX); return; }
+              if (!isPanning && Math.abs(dx) < PAN_THRESHOLD) return;
+              isPanning = true;
+              e.preventDefault();
+              var r0      = touchStartRange[0];
+              var r1      = touchStartRange[1];
+              var rangeMs = r1 - r0;
+              var msPerPx = rangeMs / gd.getBoundingClientRect().width;
+              var shiftMs = -dx * msPerPx;
+              var dr      = getDataRange();
+              var newR0   = r0 + shiftMs;
+              var newR1   = r1 + shiftMs;
+              if (newR0 < dr[0]) { newR0 = dr[0]; newR1 = dr[0] + rangeMs; }
+              if (newR1 > dr[1]) { newR1 = dr[1]; newR0 = dr[1] - rangeMs; }
+              Plotly.relayout(gd, {'xaxis.range': [toStr(newR0), toStr(newR1)]});
+            }, {passive: false});
+
+            gd.addEventListener('touchend', function(e) {
+              if (longTimer) { clearTimeout(longTimer); longTimer = null; }
+              hidePopup();
+              touchStartX = null;
+              isPanning   = false;
+              isHovering  = false;
+            }, {passive: true});
           }
 
         })();
@@ -353,77 +752,30 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     today_cf_trigger = reactive.value(0)  # 오늘 입출금 저장 시 강제 갱신용
     _reload_trigger  = reactive.value(0)  # 입출금 수정(과거) 시 DB rows 재로드용
 
-    # ── 과거 DB rows 캐시 — 세션 시작 시 1회 로드, 입출금 수정 시 재로드 ──
+    # ── 과거 DB rows 캐시 ────────────────────────────────────────────────────
+    # _reload_trigger / daily_insert_signal 시에만 DB 재조회.
+    # 탭 조건 없이 항상 로드 (미리 패치 의도 유지, history_data 전송 조건에서 제어).
     @reactive.calc
     def _db_rows():
-        _reload_trigger.get()        # 입출금 수정 시 무효화
-        daily_insert_signal.get()    # daily insert 완료 시 무효화
-        if initialized_historytable.get() and active_tab and active_tab.get() != "history":
-            return None
+        _reload_trigger.get()
+        daily_insert_signal.get()
         return load_history()
 
-    # ── 차트용 rows 계산 — DB rows + today_row 합산 ──────────────────────────
-    # @reactive.calc 로 캐싱: _db_rows(), load_today_row() 결과가 바뀔 때만 재계산.
-    # price_signal → recalc_today_row() → Redis today_row 갱신 → 이 함수 재실행 순서로
-    # 시세 업데이트마다 차트 데이터가 갱신된다.
-    @reactive.calc
-    def _all_rows_for_chart():
-        if initialized_historytable.get() and active_tab and active_tab.get() != "history":
-            return None
-        db_rows = _db_rows()
-        rows = list(db_rows) if db_rows else []
-        t = load_today_row()
-        if t:
-            today = _today_kst()
-            if not rows or rows[-1][0] < today:
-                rows.append((
-                    today,
-                    t.get("total_asset"),
-                    t.get("twr_asset"),
-                    t.get("ndx100"),
-                    t.get("cash_flow", 0),
-                    t.get("cash_flow_note"),
-                    t.get("exposure"),
-                    t.get("cash_ratio"),
-                    t.get("x1_ratio"),
-                    t.get("x2_ratio"),
-                    t.get("x3_ratio"),
-                    t.get("usd_krw"),
-                ))
-        return rows
-
-    # ── 차트 렌더링 ───────────────────────────────────────────────────────────
-    # render.ui 는 반환값을 Shiny가 받아서 output_ui DOM에 통째로 교체한다.
-    # _all_rows_for_chart() 의존성으로 인해 시세 업데이트마다 차트 전체가 재렌더링되므로,
-    # 탭 비활성 시 스킵해 불필요한 연산과 DOM 교체를 방지한다.
-    # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 한 번 실행된다.
-    @render.ui
-    def chart_asset():
-        if active_tab and active_tab.get() != "history":
-            return ui.HTML("")
-        return ui.HTML(make_chart_asset(_all_rows_for_chart()))
-
-    @render.ui
-    def chart_twr():
-        if active_tab and active_tab.get() != "history":
-            return ui.HTML("")
-        return ui.HTML(make_chart_twr(_all_rows_for_chart()))
-
-    # ── 초기 테이블 전송 ─────────────────────────────────────────────────────
-    # daily_insert_signal 수신 시 DB에 새 행이 추가됐으므로 전체 테이블을 다시 전송한다.
-    # JS는 수신한 데이터로 테이블을 전체 교체한다 (history_data 핸들러).
-    # 탭 비활성 시 스킵: 어차피 보이지 않는 DOM에 데이터를 쏘는 건 낭비이고,
-    # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 재실행된다.
+    # ── 초기 테이블 + 차트 데이터 전송 ──────────────────────────────────────
+    # JS가 수신 시점에 탭 가시성을 체크해 렌더링 여부를 결정함.
+    # 서버는 데이터 준비만 담당.
     @reactive.effect
     async def _send_history_table():
-        print(f"[history] _send_history_table called, initialized={initialized_historytable.get()}, tab={active_tab.get() if active_tab else None}", flush=True)
+        _reload_trigger.get()
+        daily_insert_signal.get()
+
         if initialized_historytable.get() and active_tab and active_tab.get() != "history":
             return
+
         db_rows = _db_rows()
-        rows = list(db_rows) if db_rows is not None else []
-        t = load_today_row()
-        today = _today_kst()
-        print(f"[history] rows_last={rows[-1][0] if rows else None}, today_row_date={t.get('date') if t else None}, today={today}", flush=True)
+        rows    = list(db_rows) if db_rows is not None else []
+        t       = load_today_row()
+        today   = _today_kst()
 
         # today_row를 맨 앞에 붙여서 내림차순으로 전송
         if t and (not rows or rows[-1][0] < today):
@@ -442,30 +794,21 @@ def history_server(input, output, session, active_tab: reactive.value = None):
 
         data = []
         for r in rows_desc:
-            # 전일 total: DB rows 기준으로 계산 (today_row의 전일은 DB 마지막 행)
             if r[0] == today:
-                prev       = float(rows[-1][1] or 0) if rows else None
-                prev_ndx   = float(rows[-1][3] or 0) if rows else None
+                prev     = float(rows[-1][1] or 0) if rows else None
+                prev_ndx = float(rows[-1][3] or 0) if rows else None
                 prev_twr = float(rows[-1][2] or 0) if rows else None
             else:
-                idx        = index_map.get(r[0])
-                prev       = float(rows[idx - 1][1] or 0) if idx is not None and idx > 0 else None
-                prev_ndx   = float(rows[idx - 1][3] or 0) if idx is not None and idx > 0 else None
-                prev_twr   = float(rows[idx - 1][2] or 0) if idx is not None and idx > 0 else None
+                idx      = index_map.get(r[0])
+                prev     = float(rows[idx - 1][1] or 0) if idx is not None and idx > 0 else None
+                prev_ndx = float(rows[idx - 1][3] or 0) if idx is not None and idx > 0 else None
+                prev_twr = float(rows[idx - 1][2] or 0) if idx is not None and idx > 0 else None
 
-            # ndx 등락률
             cur_ndx = float(r[3] or 0)
-            if prev_ndx and cur_ndx:
-                ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100
-            else:
-                ndx_change_pct = None
+            ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100 if prev_ndx and cur_ndx else None
 
-            # twr 전일 대비 등락률
             cur_twr = float(r[2] or 0)
-            if prev_twr and cur_twr:
-                twr_change_pct = (cur_twr - prev_twr) / prev_twr * 100
-            else:
-                twr_change_pct = None
+            twr_change_pct = (cur_twr - prev_twr) / prev_twr * 100 if prev_twr and cur_twr else None
 
             data.append({
                 "date":           str(r[0]),
@@ -485,22 +828,16 @@ def history_server(input, output, session, active_tab: reactive.value = None):
                 "twr_change_pct": str(twr_change_pct) if twr_change_pct is not None else '',
             })
 
-        print(f"[history] sending history_data rows={len(data)}, first_date={data[0]['date'] if data else None}", flush=True)
         await session.send_custom_message("history_data", data)
         initialized_historytable.set(True)
 
-    # ── 시세/daily insert/입출금 수정 시 today_row 갱신 ────────────────────
-    # price_signal 마다 recalc_today_row() 가 Redis today_row 를 갱신하므로
-    # 이 함수가 트리거되면 최신 today_row 를 읽어 JS 테이블 최상단 행만 교체한다.
-    # 테이블 전체를 다시 보내지 않고 오늘 행만 패치하므로 효율적이다.
-    # 탭 비활성 시 스킵: 보이지 않는 DOM을 패치하는 건 낭비이고,
-    # 탭 활성화 순간 active_tab 이 "history"로 바뀌면서 자동으로 재실행된다.
+    # ── 시세/daily insert/입출금 수정 시 today_row 갱신 ─────────────────────
     @reactive.effect
     async def _send_today_row_update():
-        price_signal.get()           # 시세 업데이트 시 갱신
-        daily_insert_signal.get()    # daily insert 완료 시 갱신
-        position_signal.get()        # 포지션 CRUD 시 today_row 재계산 반영
-        today_cf_trigger.get()       # 오늘 입출금 수정 시 갱신
+        price_signal.get()
+        daily_insert_signal.get()
+        position_signal.get()
+        today_cf_trigger.get()
 
         if initialized_today_row.get() and active_tab and active_tab.get() != "history":
             return
@@ -510,13 +847,11 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             return
 
         rows = _db_rows()
-        today = _today_kst()
+        today    = _today_kst()
         prev     = float(rows[-1][1] or 0) if rows else None
         prev_ndx = float(rows[-1][3] or 0) if rows else None
         prev_twr = float(rows[-1][2] or 0) if rows else None
 
-        # twr_pct, ndx_pct 계산 (차트 끝단 업데이트용)
-        # 기준: DB 첫 번째 행의 twr_asset, ndx100
         twr_pct = 0.0
         ndx_pct = 0.0
         if rows:
@@ -527,12 +862,10 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             if base_ndx:
                 ndx_pct = (float(t.get("ndx100") or 0) / base_ndx - 1) * 100
 
-        # ndx 전일 대비 등락률
-        cur_ndx = float(t.get("ndx100") or 0)
+        cur_ndx        = float(t.get("ndx100") or 0)
         ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100 if prev_ndx and cur_ndx else None
 
-        # twr 전일 대비 등락률
-        cur_twr  = float(t.get("twr_asset") or 0)
+        cur_twr        = float(t.get("twr_asset") or 0)
         twr_change_pct = (cur_twr - prev_twr) / prev_twr * 100 if prev_twr and cur_twr else None
 
         row = {
@@ -567,7 +900,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             return
 
         today_str = str(_today_kst())
-        is_today = (date_str == today_str)
+        is_today  = (date_str == today_str)
 
         if is_today:
             cf, note = 0, ""
@@ -632,7 +965,6 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             today_cf_trigger.set(today_cf_trigger.get() + 1)
         else:
             save_cash_flow(date_str, cf, note)
-            # 과거 입출금 수정 → DB rows 재로드 + 차트 갱신
             _reload_trigger.set(_reload_trigger.get() + 1)
 
         ui.modal_remove()
