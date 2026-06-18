@@ -6,7 +6,7 @@ from shiny import module, ui, render, reactive
 from app.db import get_db, get_market_currency
 from app.price_signal import price_signal as _price_signal, daily_insert_signal as _daily_insert_signal, position_signal as _position_signal, ticker_signal as _ticker_signal
 from app.utils.metrics import (
-    to_f, calculate_xirr, calculate_monthly_irr,
+    to_f, calculate_xirr, calculate_monthly_irr, calculate_period_irr,
     calculate_alpha, calculate_beta,
     calculate_daily_profit, calculate_retirement_asset,
     calculate_exposure_and_ratios,
@@ -135,6 +135,19 @@ def _load_summary_data(rows, raw_rows) -> dict:
     annual_irr   = calculate_xirr(cash_flows)
     monthly_irr  = calculate_monthly_irr(cash_flows)
 
+    # 최근 30일 IRR: 30일 이전 시점 자산을 초기 투자금(유출)으로, 이후 cash_flow + 현재 자산
+    cutoff_irr = today - datetime.timedelta(days=30)
+    row_30_irr = next((r for r in rows if r[0] >= cutoff_irr), rows[0])
+    cf_30_xirr = [(row_30_irr[0], -to_f(row_30_irr[1]))]
+    cf_30_xirr += [(r[0], -to_f(r[2])) for r in rows if r[0] > row_30_irr[0] and to_f(r[2]) != 0]
+    if today_cash_flow != 0 and today >= cutoff_irr:
+        cf_30_xirr.append((today, -today_cash_flow))
+    cf_30_xirr.append((today, total_asset))
+    irr_30 = calculate_period_irr(cf_30_xirr)
+
+    # 총 입출금 누적 (rows의 cash_flow 합 + 오늘)
+    total_cash_flow = sum(to_f(r[2]) for r in rows) + today_cash_flow
+
     start_row    = (to_f(rows[0][9]), to_f(rows[0][3]))
     end_row      = (live_twr, live_ndx)
     cumul_alpha  = calculate_alpha(start_row, end_row)
@@ -179,6 +192,8 @@ def _load_summary_data(rows, raw_rows) -> dict:
         "x3_ratio":         x3_ratio,
         "annual_irr":       annual_irr,
         "monthly_irr":      monthly_irr,
+        "irr_30":           irr_30,
+        "total_cash_flow":  total_cash_flow,
         "cumul_alpha":      cumul_alpha,
         "monthly_alpha":    monthly_alpha,
         "alpha_30":         alpha_30,
@@ -486,12 +501,18 @@ def _dashboard_ui_dom_patch():
       if (annEl) { annEl.textContent = m.irr.annual_text; annEl.className = 'db-metric-value ' + pnlClass(m.irr.annual_val); }
       var monEl = document.getElementById('db-monthly-irr');
       if (monEl) { monEl.textContent = m.irr.monthly_text; monEl.className = 'db-metric-value ' + pnlClass(m.irr.monthly_val); }
+      var irr30El = document.getElementById('db-irr-30');
+      if (irr30El) { irr30El.textContent = m.irr.irr30_text; irr30El.className = 'db-metric-value ' + pnlClass(m.irr.irr30_val); }
+      var cfEl = document.getElementById('db-cash-flow-val');
+      if (cfEl) { cfEl.textContent = m.irr.cash_flow_text; cfEl.className = 'db-cashflow-val ' + pnlClass(m.irr.cash_flow_sign); }
     }
 
     // ── 알파 ─────────────────────────────────────────
     if (m.alpha) {
       var caEl = document.getElementById('db-cumul-alpha');
       if (caEl) { caEl.textContent = m.alpha.cumul_text; caEl.className = 'db-metric-value ' + pnlClass(m.alpha.cumul_val); }
+      var maEl = document.getElementById('db-monthly-alpha');
+      if (maEl) { maEl.textContent = m.alpha.monthly_text; maEl.className = 'db-metric-value ' + pnlClass(m.alpha.monthly_val); }
       var a30El = document.getElementById('db-alpha-30');
       if (a30El) { a30El.textContent = m.alpha.alpha30_text; a30El.className = 'db-metric-value ' + pnlClass(m.alpha.alpha30_val); }
     }
@@ -550,7 +571,6 @@ def _dashboard_ui_dom_patch():
             # ── 오늘 ──────────────────────────────────────
             ui.div(
                 {"class": "db-section"},
-                ui.div("오늘", class_="db-section-title"),
                 ui.div(
                     {"class": "db-exposure-card"},
                     # 상단: Exposure + 현금/투자 비중
@@ -597,7 +617,6 @@ def _dashboard_ui_dom_patch():
             # ── 수익률 ────────────────────────────────────
             ui.div(
                 {"class": "db-section"},
-                ui.div("수익률", class_="db-section-title"),
                 ui.div(
                     {"class": "db-grid-2"},
                     ui.div(
@@ -610,19 +629,33 @@ def _dashboard_ui_dom_patch():
                         ui.div("월평균 IRR", class_="db-metric-label"),
                         ui.span("–", id="db-monthly-irr", class_="db-metric-value"),
                     ),
+                    ui.div(
+                        {"class": "db-metric-card"},
+                        ui.div("30일 IRR", class_="db-metric-label"),
+                        ui.span("–", id="db-irr-30", class_="db-metric-value"),
+                    ),
+                ),
+                ui.div(
+                    {"class": "db-cashflow-row"},
+                    ui.span("총 입출금", class_="db-cashflow-label"),
+                    ui.span("–", id="db-cash-flow-val", class_="db-cashflow-val"),
                 ),
             ),
 
             # ── 알파 / 베타 ───────────────────────────────
             ui.div(
                 {"class": "db-section"},
-                ui.div("알파 / 베타  (vs NDX100)", class_="db-section-title"),
                 ui.div(
                     {"class": "db-grid-2"},
                     ui.div(
                         {"class": "db-metric-card"},
                         ui.div("누적 알파", class_="db-metric-label"),
                         ui.span("–", id="db-cumul-alpha", class_="db-metric-value"),
+                    ),
+                    ui.div(
+                        {"class": "db-metric-card"},
+                        ui.div("월평균 알파", class_="db-metric-label"),
+                        ui.span("–", id="db-monthly-alpha", class_="db-metric-value"),
                     ),
                     ui.div(
                         {"class": "db-metric-card"},
@@ -825,19 +858,26 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             }
 
             # ── 수익률 ───────────────────────────────────────
+            total_cash_flow = d["total_cash_flow"]
             irr = {
-                "annual_text":  _fmt_pct(d["annual_irr"]),
-                "annual_val":   d["annual_irr"],
-                "monthly_text": _fmt_pct(d["monthly_irr"]),
-                "monthly_val":  d["monthly_irr"],
+                "annual_text":       _fmt_pct(d["annual_irr"]),
+                "annual_val":        d["annual_irr"],
+                "monthly_text":      _fmt_pct(d["monthly_irr"]),
+                "monthly_val":       d["monthly_irr"],
+                "irr30_text":        _fmt_pct(d["irr_30"]),
+                "irr30_val":         d["irr_30"],
+                "cash_flow_text":    fmt_krw(total_cash_flow),
+                "cash_flow_sign":    total_cash_flow,
             }
 
             # ── 알파 ─────────────────────────────────────────
             alpha = {
-                "cumul_text":   _fmt_pct(d["cumul_alpha"]),
-                "cumul_val":    d["cumul_alpha"],
-                "alpha30_text": _fmt_pct(d["alpha_30"]),
-                "alpha30_val":  d["alpha_30"],
+                "cumul_text":    _fmt_pct(d["cumul_alpha"]),
+                "cumul_val":     d["cumul_alpha"],
+                "monthly_text":  _fmt_pct(d["monthly_alpha"]),
+                "monthly_val":   d["monthly_alpha"],
+                "alpha30_text":  _fmt_pct(d["alpha_30"]),
+                "alpha30_val":   d["alpha_30"],
             }
 
             # ── 베타 ─────────────────────────────────────────

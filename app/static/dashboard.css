@@ -110,7 +110,7 @@
 .db-lev-legend-dot.cash { background: #000000; border: 1px solid #444; }
 
 /*  /   */
-.db-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.db-grid-2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px; }
 .db-metric-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; min-height: 80px; }
 .db-metric-label { font-size: 12px; font-weight: 600; color: var(--db-text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
 .db-metric-value { font-size: 22px; font-weight: 700; color: var(--db-text); display: block; }
@@ -145,3 +145,7 @@
 .db-retirement-compound { font-size: 12px; color: #6650a4; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
 
 /*     base.css   */
+/* 총 입출금 */
+.db-cashflow-row { display: flex; align-items: center; justify-content: space-between; background: var(--db-surface); border-radius: 4px; padding: 10px 16px; margin-bottom: 10px; }
+.db-cashflow-label { font-size: 12px; font-weight: 600; color: var(--db-text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.db-cashflow-val { font-size: 16px; font-weight: 700; color: var(--db-text); }

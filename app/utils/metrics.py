@@ -61,11 +61,27 @@ def calculate_exposure_and_ratios(db_rows: list[tuple], usd_krw: float) -> dict:
     }
 
 def calculate_xirr(cash_flows: list[tuple]) -> float:
+    """연환산 IRR (XIRR)"""
     if not cash_flows or len(cash_flows) < 2: return 0.0
     dates = [cf[0] for cf in cash_flows]
     amounts = [to_f(cf[1]) for cf in cash_flows]
     t0 = dates[0]
     t = np.array([(d - t0).days / 365.0 for d in dates])
+    vals = np.array(amounts)
+    f = lambda r: np.sum(vals / ((1 + r) ** t))
+    try: return float(optimize.newton(f, 0.1, maxiter=100))
+    except: return 0.0
+
+def calculate_period_irr(cash_flows: list[tuple]) -> float:
+    """기간 수익률 IRR (연환산 없음)"""
+    if not cash_flows or len(cash_flows) < 2: return 0.0
+    dates = [cf[0] for cf in cash_flows]
+    amounts = [to_f(cf[1]) for cf in cash_flows]
+    t0 = dates[0]
+    t = np.array([(d - t0).days for d in dates], dtype=float)
+    total_days = t[-1]
+    if total_days == 0: return 0.0
+    t = t / total_days
     vals = np.array(amounts)
     f = lambda r: np.sum(vals / ((1 + r) ** t))
     try: return float(optimize.newton(f, 0.1, maxiter=100))
