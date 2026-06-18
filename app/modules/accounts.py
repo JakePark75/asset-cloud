@@ -96,7 +96,7 @@ def accounts_ui():
     var totalEl = document.getElementById('ac-card-total-' + c.id);
     if (totalEl) totalEl.textContent = c.total;
     var pnlEl = document.getElementById('ac-card-pnl-' + c.id);
-    if (pnlEl) { pnlEl.textContent = c.pnl_text; pnlEl.className = 'summary-delta ' + c.pnl_class; }
+    if (pnlEl) { pnlEl.textContent = c.pnl_text; pnlEl.className = c.pnl_class; }
     var cashEl = document.getElementById('ac-card-cash-' + c.id);
     if (cashEl) cashEl.textContent = c.cash;
   }
@@ -241,7 +241,7 @@ def accounts_ui():
             {"id": "ac-list-view"},
             ui.div(
                 ui.h4("계좌 목록", class_="section-heading"),
-                ui.div({"id": "ac-account-list"}),
+                ui.div({"id": "ac-account-list", "class": "ticker-list"}),
                 ui.tags.button(
                     "+ 계좌 추가",
                     class_="btn-add",
