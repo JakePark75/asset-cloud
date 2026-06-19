@@ -133,6 +133,7 @@ def _build_position_row_values(pos, usd_rate):
         get_market_status_fn   = get_market_status,
         name                   = display_name,
         leverage               = leverage,
+        usd_rate               = usd_rate,
         qty_in_values          = True,  # 수량도 tick으로 갱신 (매수/매도 직후 즉시 반영)
     )
 

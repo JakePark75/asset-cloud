@@ -66,7 +66,7 @@ def build_ticker_row_skeleton(
     leverage: int,
     id_prefix: str,
     row_id: str,
-    qty_fixed: str | None = None,
+    qty_fixed: str | None = None,  # 하위 호환성 유지 (내부적으로는 ticker로 분기)
     onclick_attr: str = "",
     data_attrs: str = "",
 ) -> str:
@@ -74,73 +74,66 @@ def build_ticker_row_skeleton(
     leverage = int(leverage) if leverage else 1
 
     # 레버리지는 종목 수정 후에도 바뀔 수 있으므로 항상 렌더링해두고 표시 여부만 토글.
-    # (id를 부여해 tick에서 텍스트/표시여부를 갱신할 수 있게 함)
     lev_html = (
         f'<span id="{id_prefix}-lev-{row_id}" class="lev-badge lev-x{leverage}" '
         f'style="{"" if leverage > 1 else "display:none;"}">x{leverage}</span>'
     )
 
-    SEP = '<span style="color:var(--text-dim);margin:0 4px;">·</span>'
-
-    if is_cash and qty_fixed == "":
-        # KRW: 수량 영역 없음, 시세 없음
-        qty_html    = ""
-        change_html = ""
-    elif is_cash:
-        # USD: 수량(잔액)도 바뀔 수 있으므로 span으로 감싸 tick에서 갱신 가능하게 함
-        qty_html    = f'<span id="{id_prefix}-qty-{row_id}">{qty_fixed or ""}</span>'
-        change_html = ""
-    else:
-        if qty_fixed is None:
-            # portfolio: 수량도 span으로 비워둠 (tick에서 채움)
-            qty_html = (
-                f'<span id="{id_prefix}-qty-{row_id}"></span>'
-                f'{SEP}'
-                f'<span id="{id_prefix}-avgprice-{row_id}"></span>'
-                f'{SEP}'
-                f'<span id="{id_prefix}-pnlpct-{row_id}"></span>'
-            )
-        else:
-            # accounts/드릴다운: 수량은 고정, 평단가/수익률은 span으로 비워둠
-            qty_html = (
-                f'{qty_fixed}'
-                f'{SEP}'
-                f'<span id="{id_prefix}-avgprice-{row_id}"></span>'
-                f'{SEP}'
-                f'<span id="{id_prefix}-pnlpct-{row_id}"></span>'
-            )
-        change_html = (
-            f'<div class="ticker-change">'
-            f'<span id="{id_prefix}-price-{row_id}" style="margin-right:4px;"></span>'
-            f'<span id="{id_prefix}-chg-{row_id}"></span>'
-            f'</div>'
-        )
-
-    status_html = (
-        "" if is_cash
-        else f'<span id="{id_prefix}-status-{row_id}" class="ticker-status"></span>'
-    )
-
+    status_html = f'<span id="{id_prefix}-status-{row_id}" class="ticker-status" style="white-space:nowrap; flex-shrink:0;"></span>'
     onclick_str = f'onclick="{onclick_attr}" style="cursor:pointer;"' if onclick_attr else ""
 
-    return (
-        f'<div {onclick_str} {data_attrs}>'
-        f'  <div class="ticker-row" id="{id_prefix}-row-{row_id}">'
-        f'    <div>'
-        f'      <div class="lev-name-wrap">'
-        f'        {lev_html}'
-        f'        <span id="{id_prefix}-name-{row_id}" class="ticker-name">{display_name}</span>'
-        f'        {status_html}'
-        f'      </div>'
-        f'      <div class="ticker-qty">{qty_html}</div>'
-        f'    </div>'
-        f'    <div>'
-        f'      <div class="ticker-amount" id="{id_prefix}-amount-{row_id}"></div>'
-        f'      {change_html}'
-        f'    </div>'
-        f'  </div>'
-        f'</div>'
-    )
+    if is_cash:
+        # KRW / USD 현금: 1행. 금액만 우측에 표시 (USD는 amount_str에 원화+달러 포맷 통합)
+        return (
+            f'<div {onclick_str} {data_attrs}>'
+            f'  <div class="ticker-row" id="{id_prefix}-row-{row_id}">'
+            f'    <div>'
+            f'      <div class="lev-name-wrap">'
+            f'        <span id="{id_prefix}-name-{row_id}" class="ticker-name">{display_name}</span>'
+            f'      </div>'
+            f'    </div>'
+            f'    <div>'
+            f'      <div class="ticker-amount" id="{id_prefix}-amount-{row_id}"></div>'
+            f'    </div>'
+            f'  </div>'
+            f'</div>'
+        )
+    else:
+        # 일반 종목: 3행, 행마다 좌우 폭 비율을 독립적으로 지정 (1행 7:3 / 2행 5:5 / 3행 6:4)
+        # 한 행의 좌우는 서로의 길이에 영향을 주지만, 다른 행과는 폭을 공유하지 않는다.
+        # 좌: [레버리지뱃지][종목명][시장상태] / 보유수량 [qty] / 평균단가 [avgprice]
+        # 우: [평가금액] / [손익액(수익률%)] / [현재가 / 등락률]
+        return (
+            f'<div {onclick_str} {data_attrs}>'
+            f'  <div class="ticker-row ticker-row-3line" id="{id_prefix}-row-{row_id}">'
+            f'    <div class="t-row t-row-1">'
+            f'      <div class="t-row-left lev-name-wrap">'
+            f'        {lev_html}'
+            f'        <span id="{id_prefix}-name-{row_id}" class="ticker-name">{display_name}</span>'
+            f'        {status_html}'
+            f'      </div>'
+            f'      <div class="t-row-right ticker-amount" id="{id_prefix}-amount-{row_id}"></div>'
+            f'    </div>'
+            f'    <div class="t-row t-row-2">'
+            f'      <div class="t-row-left">'
+            f'        <span class="ticker-label">보유수량</span>'
+            f'        <span id="{id_prefix}-qty-{row_id}"></span>'
+            f'      </div>'
+            f'      <div class="t-row-right"><span id="{id_prefix}-pnl-{row_id}"></span></div>'
+            f'    </div>'
+            f'    <div class="t-row t-row-3">'
+            f'      <div class="t-row-left">'
+            f'        <span class="ticker-label">평균단가</span>'
+            f'        <span id="{id_prefix}-avgprice-{row_id}"></span>'
+            f'      </div>'
+            f'      <div class="t-row-right">'
+            f'        <span id="{id_prefix}-price-{row_id}" style="margin-right:4px;"></span>'
+            f'        <span id="{id_prefix}-chg-{row_id}"></span>'
+            f'      </div>'
+            f'    </div>'
+            f'  </div>'
+            f'</div>'
+        )
 
 
 def build_ticker_row_values(
@@ -157,6 +150,7 @@ def build_ticker_row_values(
     get_market_status_fn,     # scheduler.price_updater_common.get_market_status 주입
     name: str | None = None,     # 종목명/표시명 — tick으로 동적 갱신
     leverage: int = 1,           # 레버리지 — tick으로 동적 갱신
+    usd_rate: float = 1.0,       # 손익액 KRW 환산용 (USD 종목일 때 사용)
     qty_in_values: bool = True,  # portfolio: True, accounts/드릴다운: False(골격에 고정)
 ) -> dict:
     is_cash  = ticker in ('KRW', 'USD')
@@ -166,9 +160,14 @@ def build_ticker_row_values(
     avg_f    = float(avg_price or 0)
     leverage = int(leverage) if leverage else 1
 
-    amount_str = fmt_krw(amount)
-
     currency = get_market_currency_fn(market) if not is_cash else None
+
+    # ── amount_str: 현금은 원화환산 표기, 종목은 원화 평가금액 ──
+    if ticker == 'USD':
+        # "₩1,234,567 ($1,234.56)" 형태로 원화+달러 통합 표시
+        amount_str = f"{fmt_krw(amount)} ({fmt_usd(qty_f)})"
+    else:
+        amount_str = fmt_krw(amount)
 
     # ── 현재가 / 등락률 ───────────────────────────────────────
     if is_cash:
@@ -178,19 +177,22 @@ def build_ticker_row_values(
 
     # ── 수량 ─────────────────────────────────────────────────
     qty_str = ""
-    if not is_cash and qty_f > 0 and qty_in_values:
+    if not is_cash and qty_in_values:
         qty_str = f"≈{qty_f:.2f}주" if qty_f != int(qty_f) else f"{qty_f:g}주"
-    elif ticker == 'USD':
-        qty_str = fmt_usd(qty_f)
 
-    # ── 평단가 / 수익률 ───────────────────────────────────────
-    avgprice_str = pnlpct_str = pnlpct_css = ""
-    if not is_cash and avg_f > 0 and price_f > 0:
+    # ── 평단가 ────────────────────────────────────────────────
+    avgprice_str = ""
+    if not is_cash and avg_f > 0:
         avgprice_str = f"${avg_f:,.2f}" if currency == "USD" else _fmt_amount_short(avg_f)
-        pnl_pct      = (price_f - avg_f) / avg_f * 100
-        sign         = "+" if pnl_pct >= 0 else ""
-        pnlpct_str   = f"{sign}{pnl_pct:.2f}%"
-        pnlpct_css   = "positive" if pnl_pct >= 0 else "negative"
+
+    # ── 손익액 + 수익률 (우측 2행) ───────────────────────────
+    # 평단가·수량·현재가 모두 있을 때만 계산
+    pnl_str = pnl_css = ""
+    if not is_cash and avg_f > 0 and price_f > 0 and qty_f > 0:
+        rate       = usd_rate if currency == "USD" else 1.0
+        pnl_amount = (price_f - avg_f) * qty_f * rate   # KRW 환산 손익액
+        pnl_pct    = (price_f - avg_f) / avg_f * 100
+        pnl_str, pnl_css = fmt_pnl(pnl_amount, pnl_pct)
 
     # ── 시장 상태 ─────────────────────────────────────────────
     status_dot = status_text = status_cls = ""
@@ -215,8 +217,8 @@ def build_ticker_row_values(
         "chg":         chg_str,
         "chg_css":     chg_css,
         "avgprice":    avgprice_str,
-        "pnlpct":      pnlpct_str,
-        "pnlpct_css":  pnlpct_css,
+        "pnl":         pnl_str,
+        "pnl_css":     pnl_css,
         "status_dot":  status_dot,
         "status_txt":  status_text,
         "status_cls":  status_cls,

@@ -84,7 +84,7 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
         qty_fixed    = ""
     elif ticker == 'USD':
         display_name = "현금(USD)"
-        qty_fixed    = fmt_usd(qty_f)
+        qty_fixed    = None  # 1행 구조 — 달러 잔액은 amount_str에 통합 표시
     else:
         display_name = name or ticker
         qty_fixed    = None  # span으로 비워둠 (tick에서 채움)
@@ -136,6 +136,7 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
         get_market_status_fn   = get_market_status,
         name                   = display_name,
         leverage               = leverage,
+        usd_rate               = usd_rate,
         qty_in_values          = True,
     )
 
@@ -337,8 +338,8 @@ def portfolio_ui():
     var avgEl = document.getElementById('pf-avgprice-' + t.id);
     if (avgEl) avgEl.textContent = t.avgprice || '';
 
-    var pnlEl = document.getElementById('pf-pnlpct-' + t.id);
-    if (pnlEl) { pnlEl.textContent = t.pnlpct || ''; pnlEl.className = t.pnlpct_css || ''; }
+    var pnlEl = document.getElementById('pf-pnl-' + t.id);
+    if (pnlEl) { pnlEl.textContent = t.pnl || ''; pnlEl.className = t.pnl_css || ''; }
 
     var stEl = document.getElementById('pf-status-' + t.id);
     if (stEl) {

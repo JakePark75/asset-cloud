@@ -161,8 +161,8 @@ def accounts_ui():
     var avgEl = document.getElementById('ac-avgprice-' + p.id);
     if (avgEl) avgEl.textContent = p.avgprice || '';
 
-    var pnlEl = document.getElementById('ac-pnlpct-' + p.id);
-    if (pnlEl) { pnlEl.textContent = p.pnlpct || ''; pnlEl.className = p.pnlpct_css || ''; }
+    var pnlEl = document.getElementById('ac-pnl-' + p.id);
+    if (pnlEl) { pnlEl.textContent = p.pnl || ''; pnlEl.className = p.pnl_css || ''; }
 
     var stEl = document.getElementById('ac-status-' + p.id);
     if (stEl) {

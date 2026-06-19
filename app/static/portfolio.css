@@ -12,10 +12,24 @@
     border-bottom: 1px solid #1e1e1e;
 }
 
+.ticker-row > div:first-child {
+    flex: 1;
+    min-width: 0;
+}
+
+.ticker-row > div:last-child {
+    flex-shrink: 0;
+}
+
 .ticker-name {
     font-size: 15px;
     font-weight: 500;
     color: var(--text-bright);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    max-width: 100%;
 }
 
 .ticker-qty {
@@ -52,7 +66,53 @@
 
 .ticker-list { }
 
-/*    드릴다운 헤더: 좌(total-summary) / 우(현재가·등락률) 배치  */
+/* ──────────────────────────────────────────────────────────────────
+   종목 행 3줄 레이아웃: 줄마다 좌우 폭 비율을 독립적으로 고정.
+   (이름 줄 7:3 / 손익률 줄 5:5 / 평단가 줄 6:4)
+   같은 줄의 좌우끼리만 공간을 다투고, 다른 줄에는 영향을 주지 않는다.
+   넘치는 텍스트는 줄바꿈 대신 ...으로 처리(각 줄에 overflow:hidden 적용).
+   ────────────────────────────────────────────────────────────────── */
+.ticker-row-3line {
+    display: block;
+}
+
+.t-row {
+    display: flex;
+    align-items: center;
+}
+
+.t-row + .t-row {
+    margin-top: 3px;
+}
+
+.t-row-left,
+.t-row-right {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.t-row-right {
+    text-align: right;
+}
+
+.t-row-1 .t-row-left  { flex: 7; overflow: visible; }
+.t-row-1 .t-row-right { flex: 3; }
+
+.t-row-2 .t-row-left  { flex: 5; font-size: 13px; color: var(--text-muted); }
+.t-row-2 .t-row-right { flex: 5; font-size: 13px; }
+
+.t-row-3 .t-row-left  { flex: 6; font-size: 13px; color: var(--text-muted); }
+.t-row-3 .t-row-right { flex: 4; font-size: 13px; }
+
+.t-row-1 .t-row-right.ticker-amount {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+
 .pf-header-row {
     display: flex;
     justify-content: space-between;
@@ -67,7 +127,10 @@
 /*     */
 .lev-name-wrap {
     position: relative;
-    display: inline-block;
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    min-width: 0;
 }
 
 .lev-badge {
