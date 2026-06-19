@@ -553,7 +553,13 @@ def _dashboard_ui_dom_patch():
                 ui.div({"id": "db-hero-chart-inner", "class": "db-hero-chart"}),
                 ui.div(
                     {"class": "db-hero-content"},
-                    ui.div("총 자산", class_="db-hero-label"),
+                    ui.div(
+                        ui.div(
+                            {"class": "summary-badge"},
+                            ui.span("총자산", class_="summary-badge-text"),
+                        ),
+                        style="display:flex; align-items:center; height:20px; margin-bottom:4px;",
+                    ),
                     ui.div("–", id="db-hero-amount", class_="db-hero-amount"),
                     ui.div(
                         {"class": "db-hero-delta-row"},

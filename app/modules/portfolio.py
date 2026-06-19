@@ -261,6 +261,7 @@ def portfolio_ui():
     document.getElementById('pf-list-view').style.display      = 'none';
     document.getElementById('pf-drilldown-view').style.display = '';
     document.getElementById('pf-back-btn').style.display       = 'inline-block';
+    document.getElementById('pf-summary-badge').classList.add('is-active');
     document.getElementById('pf-force-btn-wrap').style.display = 'none';
 
     _applyDrilldownRows(m.rows);
@@ -295,6 +296,7 @@ def portfolio_ui():
     document.getElementById('pf-list-view').style.display      = '';
     document.getElementById('pf-drilldown-view').style.display = 'none';
     document.getElementById('pf-back-btn').style.display       = 'none';
+    document.getElementById('pf-summary-badge').classList.remove('is-active');
     document.getElementById('pf-header-price-wrap').style.display = 'none';
     var labelEl = document.getElementById('pf-summary-label');
     if (labelEl) labelEl.textContent = '포트폴리오';

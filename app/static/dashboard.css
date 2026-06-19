@@ -33,8 +33,7 @@
 /*  HERO  */
 .db-hero {
     position: relative;
-    padding: 24px 0 10px 0;
-    background: var(--db-surface);
+    padding: 24px 0 16px 0;
     border-bottom: 1px solid var(--db-border);
     overflow: hidden;
     border-radius: 4px;
@@ -63,7 +62,7 @@
 .db-section-title { font-size: 11px; font-weight: 500; color: #4a4a4a; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
 
 /* HERO    */
-.db-hero-label { font-size: 14px; color: #888888; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+/* HERO 타이틀은 base.css의 .summary-badge로 통일 (db-hero-label 제거) */
 .db-hero-amount { font-size: 36px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px; line-height: 1.15; }
 .db-hero-delta { font-size: 16px; font-weight: 600; }
 .db-hero-delta-tag { font-size: 12px; color: #888888; background: var(--db-surface2); border: 1px solid var(--db-border2); border-radius: 4px; padding: 2px 8px; }

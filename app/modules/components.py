@@ -309,26 +309,35 @@ def build_summary_header_dom(
     back_btn_onclick: str | None = None,
     delta_row_extra: ui.Tag | None = None,
 ) -> ui.Tag:
-    back_btn = ui.tags.button(
+    # 뒤로가기 화살표 — 평소 display:none, 상세/드릴다운 진입 시 JS가 'inline'으로 토글.
+    # 배지 자체의 클릭 가능 여부는 이 요소의 display 상태로 판단(아래 onclick 가드).
+    arrow_span = ui.span(
         "‹",
         id=f"{id_prefix}-back-btn",
-        class_="summary-label",
-        style="display:none; background:none; border:none; padding:0; margin-right:6px; cursor:pointer; vertical-align:middle; line-height:1; font-family:inherit;",
-        onclick=back_btn_onclick,
-    ) if back_btn_onclick else None
+        class_="summary-badge-arrow",
+        style="display:none;",
+    )
 
-    label_row_children = []
-    if back_btn:
-        label_row_children.append(back_btn)
-    label_row_children.append(
-        ui.span(label_text, id=f"{id_prefix}-summary-label", class_="summary-label",
-                style="vertical-align:middle;")
+    badge_attrs = {
+        "id": f"{id_prefix}-summary-badge",
+        "class": "summary-badge",
+    }
+    if back_btn_onclick:
+        # 화살표가 보일 때(=뒤로가기 가능 상태)만 실제로 동작하도록 가드.
+        badge_attrs["onclick"] = (
+            f"if(document.getElementById('{id_prefix}-back-btn').style.display!=='none'){{{back_btn_onclick}}}"
+        )
+
+    badge = ui.div(
+        badge_attrs,
+        arrow_span,
+        ui.span(label_text, id=f"{id_prefix}-summary-label", class_="summary-badge-text"),
     )
 
     return ui.div(
         {"class": "total-summary"},
         ui.div(
-            *label_row_children,
+            badge,
             style="display:flex; align-items:center; height:20px; margin-bottom:4px;",
         ),
         ui.div("–", id=f"{id_prefix}-summary-total", class_="summary-amount"),

@@ -80,6 +80,7 @@ def accounts_ui():
     setText('ac-summary-label', m.summary.label);
     setHtml('ac-account-list', m.account_list_html);
     setDisplay('ac-back-btn', 'none');
+    acGetEl('ac-summary-badge').classList.remove('is-active');
     setDisplay('ac-list-view', '');
     setDisplay('ac-detail-view', 'none');
     _applyAccountCards(m.cards);
@@ -115,6 +116,7 @@ def accounts_ui():
     setText('ac-summary-label', m.title);
     setHtml('ac-position-list', m.position_list_html);
     setDisplay('ac-back-btn', 'inline-block');
+    acGetEl('ac-summary-badge').classList.add('is-active');
     setDisplay('ac-list-view', 'none');
     setDisplay('ac-detail-view', '');
     _applyPositions(m.positions);
@@ -282,7 +284,7 @@ def accounts_ui():
         # ── Summary 헤더 ──────────────────────────────────────────────────────
         build_summary_header_dom(
             id_prefix        = "ac",
-            label_text       = "총자산",
+            label_text       = "계좌",
             back_btn_onclick = "Shiny.setInputValue('accounts-btn_back', Math.random(), {priority: 'event'});",
         ),
 
@@ -290,7 +292,6 @@ def accounts_ui():
         ui.div(
             {"id": "ac-list-view"},
             ui.div(
-                ui.h4("계좌 목록", class_="section-heading"),
                 ui.div({"id": "ac-account-list", "class": "ticker-list"}),
                 ui.tags.button(
                     "+ 계좌 추가",

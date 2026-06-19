@@ -141,6 +141,7 @@ body {
 /*    (components.py)  */
 .total-summary {
     padding: 24px 0 16px 0;
+    border-bottom: 1px solid var(--border);
 }
 
 .total-summary-pnl {
@@ -268,10 +269,30 @@ body {
 /*    */
 #screen-login .shiny-input-container { width: 100%; }
 /* render_summary_header — 대시보드 히어로 스타일 */
-.summary-label {
+.summary-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 20px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    width: fit-content;
+    cursor: default;
+}
+.summary-badge.is-active {
+    cursor: pointer;
+}
+.summary-badge-arrow {
+    font-size: 14px;
+    line-height: 1;
+    color: var(--text-muted);
+}
+.summary-badge-text {
     font-size: 14px;
     color: var(--text-muted);
-    margin-bottom: 4px;
+    white-space: nowrap;
 }
 .summary-amount {
     font-size: 36px;
