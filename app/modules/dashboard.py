@@ -544,17 +544,21 @@ def _dashboard_ui_dom_patch():
     }
 
     // ── 낙폭 분석 (MDD / Current DD / Recovery) ───────
+    // 색상은 절대값이 아니라 NDX 대비 우위(diff = 내 - NDX) 기준으로 빨강~초록 결정
     if (m.dd) {
+      var mddDiff = m.dd.mdd_mine_val - m.dd.mdd_ndx_val;
       var mddMineEl = document.getElementById('db-mdd-mine');
-      if (mddMineEl) { mddMineEl.textContent = m.dd.mdd_mine_text; mddMineEl.style.color = ddColor(m.dd.mdd_mine_val, -0.5, 0); }
+      if (mddMineEl) { mddMineEl.textContent = m.dd.mdd_mine_text; mddMineEl.style.color = ddColor(mddDiff, -0.10, 0.10); }
       setText('db-mdd-ndx', m.dd.mdd_ndx_text);
 
+      var cddDiff = m.dd.cdd_mine_val - m.dd.cdd_ndx_val;
       var cddMineEl = document.getElementById('db-cdd-mine');
-      if (cddMineEl) { cddMineEl.textContent = m.dd.cdd_mine_text; cddMineEl.style.color = ddColor(m.dd.cdd_mine_val, -0.3, 0); }
+      if (cddMineEl) { cddMineEl.textContent = m.dd.cdd_mine_text; cddMineEl.style.color = ddColor(cddDiff, -0.10, 0.10); }
       setText('db-cdd-ndx', m.dd.cdd_ndx_text);
 
+      var recDiff = m.dd.rec_mine_val - m.dd.rec_ndx_val;
       var recMineEl = document.getElementById('db-rec-mine');
-      if (recMineEl) { recMineEl.textContent = m.dd.rec_mine_text; recMineEl.style.color = ddColor(m.dd.rec_mine_val, 0, 1.0); }
+      if (recMineEl) { recMineEl.textContent = m.dd.rec_mine_text; recMineEl.style.color = ddColor(recDiff, -0.20, 0.20); }
       setText('db-rec-ndx', m.dd.rec_ndx_text);
     }
 

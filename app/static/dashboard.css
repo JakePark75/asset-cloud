@@ -127,7 +127,7 @@
 .db-dd-row { display: flex; align-items: center; justify-content: space-between; }
 .db-dd-row-label { font-size: 12px; color: var(--db-text-muted); min-width: 64px; flex-shrink: 0; }
 .db-dd-row .db-beta-values { flex: 1; justify-content: flex-end; }
-.db-dd-row .db-beta-value { min-width: 84px; text-align: right; font-size: 18px; }
+.db-dd-row .db-beta-value { min-width: 90px; text-align: right; font-size: 22px; }
 .db-dd-row .db-beta-sep { margin: 0 6px; }
 .db-dd-ndx { color: var(--db-text-muted) !important; }
 
