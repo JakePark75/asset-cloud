@@ -567,6 +567,12 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             total_pnl = total_asset - yesterday_total
             pnl_pct   = (total_pnl / yesterday_total * 100) if yesterday_total else 0
 
+            # [DEBUG-PF] 화면 갱신 시점 total_asset 로그
+            import datetime as _dt
+            from zoneinfo import ZoneInfo as _ZoneInfo
+            print(f"[DEBUG-PF] {_dt.datetime.now(_ZoneInfo('Asia/Seoul'))} "
+                  f"total_asset={total_asset} row_count={len(rows)} usd_rate={usd_rate}")
+
             rows_sorted   = _sort_rows(rows, usd_rate)
             ticker_values = {
                 t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)

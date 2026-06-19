@@ -57,7 +57,7 @@ US_IDX_PRICE      = 11
 US_IDX_CHANGE_PCT = 14
 
 # Yahoo 폴링 주기 (초)
-YAHOO_POLL_INTERVAL = 60
+YAHOO_POLL_INTERVAL = 10
 
 # 웹소켓 재연결 대기 (초)
 WS_RECONNECT_DELAY = 10
@@ -155,16 +155,12 @@ def _save_price(ticker: str, price: float, change_pct: float):
         log.error(f"[{ticker}] 저장 실패: {e}")
 
 
-# yahoo_poll_task가 "최근에 WS 쪽에서 이미 notify가 나갔는지" 확인하는 플래그.
-# - _notify() 호출 시 True로 세팅 (WS/Yahoo 어느 쪽 호출이든 동일)
-# - yahoo_poll_task가 자기 폴링 주기마다 확인 후 직접 False로 리셋 (test-and-clear)
-# - 단일 asyncio 이벤트 루프(단일 스레드)에서만 호출되므로 race condition 없음
-_ws_notified_recently = False
-
-
 def _notify():
-    global _ws_notified_recently
-    _ws_notified_recently = True
+    """
+    recalc_today_row() + publish_price_updated() 호출.
+    recalc_today_row() 내부의 _recalc_lock이 동시 호출 시 중복 실행을 막아주므로,
+    WS/Yahoo 어느 경로에서 호출되든 매번 그냥 호출한다 (별도 억제 로직 불필요).
+    """
     try:
         from common.redis_store import recalc_today_row, publish_price_updated
         recalc_today_row()
@@ -251,14 +247,10 @@ async def yahoo_poll_task(yahoo_rows: list):
             except Exception as e:
                 log.error(f"[{ticker}] Yahoo 폴링 실패: {e}")
 
-        # 장중(WS 동작 중)엔 KR/US 틱마다 0.2초 간격으로 이미 _notify() 호출됨.
-        # 그 경우 _ws_notified_recently가 True이므로 여기선 확인만 하고 끈 뒤 스킵.
-        # 장외(WS 미동작)엔 _notify()를 호출할 다른 경로가 없으므로 Yahoo가 직접 호출.
-        global _ws_notified_recently
-        if _ws_notified_recently:
-            _ws_notified_recently = False
-        else:
-            _notify()
+        # 매 폴링 사이클마다 항상 알림 발행.
+        # (recalc_today_row 내부 락이 WS와의 동시 호출 중복을 막아주므로
+        #  여기서 별도로 "최근에 WS가 알림 보냈는지" 따질 필요 없음)
+        _notify()
         await asyncio.sleep(YAHOO_POLL_INTERVAL)
 
 

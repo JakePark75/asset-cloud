@@ -187,7 +187,10 @@ def recalc_today_row() -> None:
     이미 계산 중이면 스킵 (blocking=False).
     실패해도 예외를 밖으로 내보내지 않는다.
     """
+    _t0 = datetime.datetime.now(KST)
+
     if not _recalc_lock.acquire(blocking=False):
+        print(f"[DEBUG-RECALC] {_t0} SKIP (lock busy)")
         return  # 이미 계산 중
 
     try:
@@ -294,7 +297,11 @@ def recalc_today_row() -> None:
         if r:
             r.set("today_row", json.dumps(today_row))
 
+        print(f"[DEBUG-RECALC] {_t0} DONE total_asset={total_asset} "
+              f"elapsed={(datetime.datetime.now(KST) - _t0).total_seconds():.3f}s")
+
     except Exception as e:
+        print(f"[DEBUG-RECALC] {_t0} FAILED: {e}")
         print(f"[redis_store] recalc_today_row 실패 (무시): {e}")
     finally:
         _recalc_lock.release()

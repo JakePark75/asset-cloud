@@ -909,6 +909,10 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             "twr_change_pct": str(twr_change_pct) if twr_change_pct is not None else '',
         }
 
+        # [DEBUG-HISTORY] 화면 갱신 시점 total_asset 로그
+        print(f"[DEBUG-HISTORY] {datetime.datetime.now(KST)} "
+              f"total_asset={row['total_asset']} date={row['date']}")
+
         await session.send_custom_message("today_row_update", row)
         _initialized_today_row = True
 
