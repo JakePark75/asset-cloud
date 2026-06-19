@@ -41,8 +41,17 @@ def modal_edit_position_html(market_options: str) -> ui.Tag:
 
             # ── 정보 탭 ───────────────────────────────────────────────────────
             ui.div(
-                ui.div(ui.tags.label("종목명"),
-                       ui.tags.input(id="ac-edit-pos-name", type="text", class_="form-control")),
+                ui.div(
+                    ui.tags.label("종목명"),
+                    ui.div(
+                        ui.tags.input(id="ac-edit-pos-name", type="text",
+                                      class_="form-control", style="flex:1;"),
+                        ui.tags.button("🔍", id="ac-edit-pos-lookup-btn",
+                                       style="margin-left:6px; padding:0; font-size:18px; background:none; border:none; outline:none; cursor:pointer; line-height:1; -webkit-appearance:none;",
+                                       onclick="acLookupTickerEdit();"),
+                        style="display:flex; align-items:center;",
+                    ),
+                ),
                 ui.div(ui.tags.label("시장"),
                        ui.tags.select(ui.HTML(market_options),
                                       id="ac-edit-pos-market", class_="form-control")),

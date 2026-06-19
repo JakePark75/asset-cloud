@@ -30,6 +30,14 @@ def _notify_position_changed():
         print(f"[accounts] position_changed 신호 발행 실패 (무시): {e}")
 
 
+def _notify_ticker_changed():
+    try:
+        from common.redis_store import publish_ticker_changed
+        publish_ticker_changed()
+    except Exception as e:
+        print(f"[accounts] ticker_changed 신호 발행 실패 (무시): {e}")
+
+
 # ── UI ────────────────────────────────────────────────────────────────────────
 
 @module.ui
@@ -225,7 +233,16 @@ def accounts_ui():
     if (!ticker) return;
     var btn = document.getElementById('ac-new-pos-lookup-btn');
     if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
-    Shiny.setInputValue('accounts-lookup_ticker', { ticker: ticker }, {priority: 'event'});
+    Shiny.setInputValue('accounts-lookup_ticker', { ticker: ticker, source: 'add' }, {priority: 'event'});
+  };
+
+  window.acLookupTickerEdit = function() {
+    var tickerEl = document.getElementById('ac-edit-pos-ticker');
+    var ticker = tickerEl ? tickerEl.textContent.trim() : '';
+    if (!ticker) return;
+    var btn = document.getElementById('ac-edit-pos-lookup-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    Shiny.setInputValue('accounts-lookup_ticker', { ticker: ticker, source: 'edit' }, {priority: 'event'});
   };
 
   Shiny.addCustomMessageHandler('ac_ticker_lookup_result', function(m) {
@@ -236,6 +253,21 @@ def accounts_ui():
       if (nameEl) nameEl.value = m.name;
       if (m.market) {
         var marketEl = document.getElementById('ac-new-pos-market');
+        if (marketEl) marketEl.value = m.market;
+      }
+    } else {
+      alert('종목명을 찾지 못했습니다: ' + m.ticker);
+    }
+  });
+
+  Shiny.addCustomMessageHandler('ac_ticker_lookup_result_edit', function(m) {
+    var btn = document.getElementById('ac-edit-pos-lookup-btn');
+    if (btn) { btn.textContent = '🔍'; btn.disabled = false; }
+    if (m.name) {
+      var nameEl = document.getElementById('ac-edit-pos-name');
+      if (nameEl) nameEl.value = m.name;
+      if (m.market) {
+        var marketEl = document.getElementById('ac-edit-pos-market');
         if (marketEl) marketEl.value = m.market;
       }
     } else {
@@ -375,6 +407,10 @@ def accounts_ui():
                 ui.div(ui.tags.label("수량"),
                        ui.tags.input(id="ac-new-pos-qty", type="number",
                                      value="0", min="0", step="any", class_="form-control")),
+                ui.div(ui.tags.label("매수 평단가"),
+                       ui.tags.input(id="ac-new-pos-avg-price", type="number",
+                                     min="0", step="any", placeholder="미입력 시 미설정",
+                                     class_="form-control")),
                 ui.tags.button(
                     "추가", class_="btn-add",
                     onclick=(
@@ -383,7 +419,8 @@ def accounts_ui():
                         "  ticker: document.getElementById('ac-new-pos-ticker').value,"
                         "  market: document.getElementById('ac-new-pos-market').value,"
                         "  leverage: document.getElementById('ac-new-pos-leverage').value,"
-                        "  qty: parseFloat(document.getElementById('ac-new-pos-qty').value) || 0"
+                        "  qty: parseFloat(document.getElementById('ac-new-pos-qty').value) || 0,"
+                        "  avg_price: parseFloat(document.getElementById('ac-new-pos-avg-price').value) || null"
                         "}, {priority: 'event'});"
                         "acHideModal('ac-modal-add-position');"
                     ),
@@ -642,6 +679,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
     async def _lookup_ticker():
         payload = input.lookup_ticker()
         ticker  = str(payload.get("ticker", "")).strip().upper()
+        source  = str(payload.get("source", "add"))  # "add" | "edit"
         if not ticker:
             return
 
@@ -676,7 +714,8 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         else:
             market = exchange_map.get(exchange, "")
 
-        await session.send_custom_message("ac_ticker_lookup_result", {
+        channel = "ac_ticker_lookup_result" if source == "add" else "ac_ticker_lookup_result_edit"
+        await session.send_custom_message(channel, {
             "ticker": ticker,
             "name":   name,
             "market": market,
@@ -735,8 +774,11 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         ticker   = str(payload.get("ticker", "")).strip().upper()
         market   = str(payload.get("market", ""))
         leverage = int(payload.get("leverage", 1))
-        qty      = float(payload.get("qty", 0))
-        acc_id   = selected_account()
+        qty       = float(payload.get("qty", 0))
+        avg_price = payload.get("avg_price")
+        if avg_price is not None:
+            avg_price = float(avg_price)
+        acc_id    = selected_account()
         if not ticker or not acc_id:
             return
         with get_db() as conn:
@@ -748,10 +790,16 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
                     "VALUES (%s, %s, %s, %s, false)",
                     (ticker, name or ticker, market, leverage)
                 )
-            cur.execute(
-                "INSERT INTO positions (account_id, ticker, quantity) VALUES (%s, %s, %s)",
-                (acc_id, ticker, qty)
-            )
+            if avg_price is not None:
+                cur.execute(
+                    "INSERT INTO positions (account_id, ticker, quantity, avg_price) VALUES (%s, %s, %s, %s)",
+                    (acc_id, ticker, qty, avg_price)
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO positions (account_id, ticker, quantity) VALUES (%s, %s, %s)",
+                    (acc_id, ticker, qty)
+                )
             conn.commit()
             cur.close()
         refresh.set(refresh() + 1)
@@ -818,6 +866,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             cur.close()
         refresh.set(refresh() + 1)
         _notify_position_changed()
+        _notify_ticker_changed()  # tickers 메타데이터(이름/시장/레버리지) 변경 → settings 화면 갱신
 
     # ── 매수 ──────────────────────────────────────────────────────────────────
 
