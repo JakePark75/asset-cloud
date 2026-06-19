@@ -514,8 +514,8 @@ def accounts_ui():
 
 @module.server
 def accounts_server(input, output, session, active_tab: reactive.value = None):
-
-    initialized      = reactive.value(False)
+    
+    _initialized     = False  # 일반 변수: effect 자기-재트리거 방지
     selected_account = reactive.value(None)
     refresh          = reactive.value(0)
 
@@ -545,10 +545,11 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
     @reactive.effect
     async def _send_update():
         nonlocal _last_accounts, _last_positions, _last_display
+        nonlocal _initialized
         price_signal.get()
         daily_insert_signal.get()
 
-        if initialized.get() and active_tab and active_tab.get() != "accounts":
+        if _initialized and active_tab and active_tab.get() != "accounts":
             return
 
         usd_rate_val, usd_chg = get_usd_krw()
@@ -649,7 +650,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
                 if diff:
                     await session.send_custom_message("ac_detail_tick", diff)
 
-        initialized.set(True)
+        _initialized = True
 
     # ── 계좌 카드 클릭 ────────────────────────────────────────────────────────
 

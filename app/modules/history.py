@@ -101,7 +101,7 @@ def history_ui():
           // ── 가시성 체크 ──────────────────────────────────────────────────
           function isHistoryVisible() {
             var tab = document.getElementById('tab-history');
-            return tab && tab.style.display !== 'none';
+            return !!tab && getComputedStyle(tab).display !== 'none';
           }
 
           // ── 기간 버튼 ────────────────────────────────────────────────────
@@ -289,7 +289,7 @@ def history_ui():
                 }),
               });
 
-              Plotly.react(gdAsset, tracesAsset, layoutAsset, {displayModeBar: false});
+              Plotly.react(gdAsset, tracesAsset, layoutAsset, {displayModeBar: false, responsive: true});
               attachTouch(gdAsset);
             }
 
@@ -328,7 +328,7 @@ def history_ui():
                 }],
               });
 
-              Plotly.react(gdTwr, tracesTwr, layoutTwr, {displayModeBar: false});
+              Plotly.react(gdTwr, tracesTwr, layoutTwr, {displayModeBar: false, responsive: true});
               attachTouch(gdTwr);
             }
           }
@@ -418,13 +418,18 @@ def history_ui():
 
           // ── history_data: 데이터 수신 ────────────────────────────────────
           // 탭이 visible이면 즉시 렌더링, hidden이면 데이터만 저장 후 _pendingDraw 표시
+          // drawCharts()는 requestAnimationFrame으로 한 프레임 미룬다:
+          // display:none → block 전환 직후엔 브라우저가 아직 reflow를
+          // 수행하지 않아 clientWidth가 0으로 읽히고, Plotly가 기본값(700)으로
+          // 그려지는 현상이 실측으로 확인됨 (react 호출 직전 clientWidth=0,
+          // _fullLayout.width=700; relayout 시점엔 정상폭).
           Shiny.addCustomMessageHandler('history_data', function(data) {
             _allRows   = data;
             _chartData = data;
 
             if (isHistoryVisible()) {
               drawTable(_allRows);
-              drawCharts(_chartData);
+              requestAnimationFrame(function() { drawCharts(_chartData); });
               _pendingDraw = false;
             } else {
               _pendingDraw = true;
@@ -436,7 +441,7 @@ def history_ui():
             if (e.name === 'active_tab' && e.value === 'history') {
               if (_pendingDraw && _chartData) {
                 drawTable(_allRows);
-                drawCharts(_chartData);
+                requestAnimationFrame(function() { drawCharts(_chartData); });
                 _pendingDraw = false;
               }
             }
@@ -747,8 +752,8 @@ def history_ui():
 @module.server
 def history_server(input, output, session, active_tab: reactive.value = None):
 
-    initialized_today_row    = reactive.value(False)
-    initialized_historytable = reactive.value(False)
+    _initialized_today_row    = False  # 일반 변수: effect 자기-재트리거 방지
+    _initialized_historytable = False  # 일반 변수: effect 자기-재트리거 방지
     today_cf_trigger = reactive.value(0)  # 오늘 입출금 저장 시 강제 갱신용
     _reload_trigger  = reactive.value(0)  # 입출금 수정(과거) 시 DB rows 재로드용
 
@@ -766,10 +771,11 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     # 서버는 데이터 준비만 담당.
     @reactive.effect
     async def _send_history_table():
+        nonlocal _initialized_historytable
         _reload_trigger.get()
         daily_insert_signal.get()
 
-        if initialized_historytable.get() and active_tab and active_tab.get() != "history":
+        if _initialized_historytable and active_tab and active_tab.get() != "history":
             return
 
         db_rows = _db_rows()
@@ -829,17 +835,18 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             })
 
         await session.send_custom_message("history_data", data)
-        initialized_historytable.set(True)
+        _initialized_historytable = True
 
     # ── 시세/daily insert/입출금 수정 시 today_row 갱신 ─────────────────────
     @reactive.effect
     async def _send_today_row_update():
+        nonlocal _initialized_today_row
         price_signal.get()
         daily_insert_signal.get()
         position_signal.get()
         today_cf_trigger.get()
 
-        if initialized_today_row.get() and active_tab and active_tab.get() != "history":
+        if _initialized_today_row and active_tab and active_tab.get() != "history":
             return
 
         t = load_today_row()
@@ -889,7 +896,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         }
 
         await session.send_custom_message("today_row_update", row)
-        initialized_today_row.set(True)
+        _initialized_today_row = True
 
     # ── 날짜 클릭 → 입출금 수정 모달 ────────────────────────────────────────
     @reactive.effect

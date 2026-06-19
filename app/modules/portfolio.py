@@ -408,7 +408,7 @@ def portfolio_ui():
 @module.server
 def portfolio_server(input, output, session, active_tab: reactive.value = None):
 
-    initialized     = reactive.value(False)
+    _initialized    = False  # 일반 변수: effect 자기-재트리거 방지
     selected_ticker = reactive.value(None)  # None: 목록 뷰, str: 드릴다운 뷰
 
     _last_tickers:     list = []
@@ -539,11 +539,12 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
     @reactive.effect
     async def _send_update():
         nonlocal _last_tickers, _last_display, _last_dd_accounts, _last_dd_display
+        nonlocal _initialized
         price_signal.get()
         position_signal.get()
         ticker_signal.get()
 
-        if initialized.get() and active_tab and active_tab.get() != "portfolio":
+        if _initialized and active_tab and active_tab.get() != "portfolio":
             return
 
         usd_rate, usd_chg = get_usd_krw()
@@ -681,4 +682,4 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
                 if diff:
                     await session.send_custom_message("pfd_tick", diff)
 
-        initialized.set(True)
+        _initialized = True

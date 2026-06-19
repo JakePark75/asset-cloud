@@ -705,7 +705,7 @@ def dashboard_ui():
 @module.server
 def dashboard_server(input, output, session, active_tab: reactive.value = None):
 
-    initialized = reactive.value(False)
+    _initialized = False  # 일반 변수: data()/position_data()/_send_update() 자기-재트리거 방지
     _last_display: dict = {}
 
     # ── DB 캐시 ──────────────────────────────────────────────────────────────
@@ -771,11 +771,12 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     # DB 파트(_db_summary_rows, _db_position_rows)는 각자의 signal에 의해서만 갱신됨.
     @reactive.calc
     def data():
+        nonlocal _initialized
         _price_signal.get()
         _daily_insert_signal.get()
         _position_signal.get()
         _ticker_signal.get()
-        if initialized.get() and active_tab and active_tab.get() != "dashboard":
+        if _initialized and active_tab and active_tab.get() != "dashboard":
             return None
         return _load_summary_data(_db_summary_rows(), _db_position_rows())
 
@@ -784,10 +785,11 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     # DB 파트(_db_position_detail_rows)는 position_changed / ticker_changed 시에만 갱신됨.
     @reactive.calc
     def position_data():
+        nonlocal _initialized
         _price_signal.get()
         _position_signal.get()
         _ticker_signal.get()
-        if initialized.get() and active_tab and active_tab.get() != "dashboard":
+        if _initialized and active_tab and active_tab.get() != "dashboard":
             return None
         return _load_position_data(_db_position_detail_rows())
 
@@ -798,7 +800,8 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     # 탭 활성화 순간 active_tab 이 "dashboard"로 바뀌면서 자동으로 재실행된다.
     @reactive.effect
     async def _send_update():
-            if initialized.get() and active_tab and active_tab.get() != "dashboard":
+            nonlocal _initialized
+            if _initialized and active_tab and active_tab.get() != "dashboard":
                 return
             d = data()
             positions = position_data()
@@ -951,4 +954,4 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             diff = diff_display(current, _last_display)
             if diff:
                 await session.send_custom_message("db_update", diff)
-            initialized.set(True)
+            _initialized = True

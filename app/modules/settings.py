@@ -350,7 +350,7 @@ def settings_ui():
 
 @module.server
 def settings_server(input, output, session, active_tab: reactive.value = None):
-    initialized = reactive.value(False)
+    _initialized = False  # 일반 변수: effect 자기-재트리거 방지
     refresh = reactive.value(0)
 
     # 종목 구성 캐시 — ticker 목록이 바뀌면 st_init 전송
@@ -399,9 +399,10 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
     @reactive.effect
     async def _send_update():
         nonlocal _last_tickers, _last_display
+        nonlocal _initialized
         price_signal.get()
 
-        if initialized.get() and active_tab and active_tab.get() != "settings":
+        if _initialized and active_tab and active_tab.get() != "settings":
             return
 
         reactive.invalidate_later(60)
@@ -441,7 +442,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             diff = diff_display(ticker_values, _last_display)
             if diff:
                 await session.send_custom_message("st_tick", diff)
-        initialized.set(True)
+        _initialized = True
 
     # ── 티커 삭제 ─────────────────────────────────────────────────────────────
 
