@@ -4,6 +4,11 @@ app/modules/export_DAL.py
   Sheet1: 계좌별 보유종목
   Sheet2: 보유종목 통합
   Sheet3: 실적기록
+
+퍼센트 컬럼 정책:
+  - 셀에는 원본 비율값(0.0~1.0)을 그대로 기록
+  - number_format='0.00%' (또는 '0.0%')으로 표시만 % 처리
+  - *100 같은 수동 변환을 하지 않는다 (값 왜곡/이중 변환 방지)
 """
 import io
 import datetime
@@ -31,6 +36,9 @@ _SECTION_FILL = PatternFill("solid", fgColor="1A252F")
 _TOTAL_FONT   = Font(bold=True, size=10)
 
 _META_FONT    = Font(italic=True, color="888888", size=9)
+
+_PCT_FMT_2 = "0.00%"   # 손익률, 비중, TWR, 일간증감 등 (2자리)
+_PCT_FMT_1 = "0.0%"    # exposure, cash_ratio, x1/x2/x3 (1자리, 원본 데이터 정밀도에 맞춤)
 
 
 # ── 공통 유틸 ─────────────────────────────────────────────────────────────────
@@ -67,6 +75,13 @@ def _write_header_row(ws, row: int, cols: list):
         c.alignment = _HEADER_ALIGN
 
 
+def _set_pct(ws, row: int, col: int, fmt: str = _PCT_FMT_2):
+    """해당 셀이 숫자일 때만 percent number_format 적용."""
+    cell = ws.cell(row=row, column=col)
+    if isinstance(cell.value, (int, float)):
+        cell.number_format = fmt
+
+
 def _auto_width(ws, min_w=8, max_w=28):
     for col in ws.columns:
         letter = get_column_letter(col[0].column)
@@ -89,8 +104,9 @@ def _eval_krw(ticker: str, qty_f: float, price: float, market: str, usd_krw: flo
 
 # ── Sheet 1: 계좌별 보유종목 ──────────────────────────────────────────────────
 
-_S1_COLS = ["종목명", "티커", "시장", "레버리지", "수량", "평단", "현재가", "평가액(원)", "손익(원)", "손익률(%)"]
+_S1_COLS = ["종목명", "티커", "시장", "레버리지", "수량", "평단", "현재가", "평가액(원)", "손익(원)", "손익률"]
 _S1_NCOLS = len(_S1_COLS)
+_S1_PNL_PCT_COL = _S1_NCOLS  # 10
 
 
 def _build_sheet1(wb, prices: dict, usd_krw: float, now_str: str):
@@ -121,7 +137,7 @@ def _build_sheet1(wb, prices: dict, usd_krw: float, now_str: str):
             c.font = _SECTION_FONT
             c.fill = _SECTION_FILL
 
-            # 컬럼 헤더
+            # 컬럼 헤더 (병합 행 바로 다음 행 — max_row 의존하지 않고 명시 계산)
             hdr_row = sec_row + 1
             _write_header_row(ws, hdr_row, _S1_COLS)
 
@@ -139,26 +155,26 @@ def _build_sheet1(wb, prices: dict, usd_krw: float, now_str: str):
 
             acct_total = 0.0
             for ticker, qty, avg_price, tname, market, leverage in positions:
-                qty_f  = float(qty or 0)
-                avg_f  = float(avg_price) if avg_price is not None else None
+                qty_f = float(qty or 0)
+                avg_f = float(avg_price) if avg_price is not None else None
 
                 if ticker == "KRW":
                     price, tname, display_market, display_lev = 1.0, "원화 현금", "-", "-"
-                    pnl, pnl_pct = None, None
+                    pnl, pnl_frac = None, None
                 elif ticker == "USD":
                     price, tname, display_market, display_lev = usd_krw, "달러 현금", "-", "-"
-                    pnl, pnl_pct = None, None
+                    pnl, pnl_frac = None, None
                 else:
                     p_data = prices.get(ticker)
                     price  = float(p_data["price"]) if p_data else 0.0
                     display_market = market
                     display_lev    = int(leverage) if leverage else 1
                     if avg_f and avg_f > 0 and price > 0:
-                        base = qty_f * usd_krw if is_us_market(market) else qty_f
+                        base    = qty_f * usd_krw if is_us_market(market) else qty_f
                         pnl     = (price - avg_f) * base
-                        pnl_pct = (price / avg_f - 1) * 100
+                        pnl_frac = round(price / avg_f - 1, 4)
                     else:
-                        pnl, pnl_pct = None, None
+                        pnl, pnl_frac = None, None
 
                 eval_krw = _eval_krw(ticker, qty_f, price, market, usd_krw)
                 acct_total += eval_krw
@@ -171,8 +187,9 @@ def _build_sheet1(wb, prices: dict, usd_krw: float, now_str: str):
                     _f(price, 2),
                     _f(eval_krw, 0),
                     _f(pnl, 0) if pnl is not None else "-",
-                    _f(pnl_pct, 2) if pnl_pct is not None else "-",
+                    pnl_frac if pnl_frac is not None else "-",
                 ])
+                _set_pct(ws, ws.max_row, _S1_PNL_PCT_COL, _PCT_FMT_2)
 
             # 소계
             ws.append(["소계", "", "", "", "", "", "", _f(acct_total, 0), "", ""])
@@ -189,14 +206,17 @@ def _build_sheet1(wb, prices: dict, usd_krw: float, now_str: str):
 # ── Sheet 2: 보유종목 통합 ────────────────────────────────────────────────────
 
 _S2_COLS = ["종목명", "티커", "시장", "레버리지", "수량", "평단", "현재가",
-            "평가액(원)", "손익(원)", "손익률(%)", "비중(%)"]
+            "평가액(원)", "손익(원)", "손익률", "비중"]
+_S2_NCOLS = len(_S2_COLS)
+_S2_PNL_PCT_COL = 10
+_S2_WEIGHT_COL  = 11
 
 
 def _build_sheet2(wb, prices: dict, usd_krw: float, now_str: str):
     ws = wb.create_sheet("보유종목 통합")
 
     ws.cell(1, 1, f"기준: {now_str}").font = _META_FONT
-    ws.append([""] * len(_S2_COLS))
+    ws.append([""] * _S2_NCOLS)
     _write_header_row(ws, 3, _S2_COLS)
 
     with get_db() as conn:
@@ -237,28 +257,28 @@ def _build_sheet2(wb, prices: dict, usd_krw: float, now_str: str):
         total_eval += e
 
     for i, (ticker, tname, market, leverage, qty, avg_price) in enumerate(rows):
-        qty_f  = float(qty or 0)
-        avg_f  = float(avg_price) if avg_price is not None else None
+        qty_f    = float(qty or 0)
+        avg_f    = float(avg_price) if avg_price is not None else None
         eval_krw = eval_list[i]
-        weight   = (eval_krw / total_eval * 100) if total_eval > 0 else 0.0
+        weight_frac = round(eval_krw / total_eval, 4) if total_eval > 0 else 0.0
 
         if ticker == "KRW":
             price, tname, display_market, display_lev = 1.0, "원화 현금", "-", "-"
-            pnl, pnl_pct = None, None
+            pnl, pnl_frac = None, None
         elif ticker == "USD":
             price, tname, display_market, display_lev = usd_krw, "달러 현금", "-", "-"
-            pnl, pnl_pct = None, None
+            pnl, pnl_frac = None, None
         else:
             p_data = prices.get(ticker)
             price  = float(p_data["price"]) if p_data else 0.0
             display_market = market
             display_lev    = int(leverage) if leverage else 1
             if avg_f and avg_f > 0 and price > 0:
-                base = qty_f * usd_krw if is_us_market(market) else qty_f
-                pnl     = (price - avg_f) * base
-                pnl_pct = (price / avg_f - 1) * 100
+                base     = qty_f * usd_krw if is_us_market(market) else qty_f
+                pnl      = (price - avg_f) * base
+                pnl_frac = round(price / avg_f - 1, 4)
             else:
-                pnl, pnl_pct = None, None
+                pnl, pnl_frac = None, None
 
         ws.append([
             tname, ticker,
@@ -268,16 +288,19 @@ def _build_sheet2(wb, prices: dict, usd_krw: float, now_str: str):
             _f(price, 2),
             _f(eval_krw, 0),
             _f(pnl, 0) if pnl is not None else "-",
-            _f(pnl_pct, 2) if pnl_pct is not None else "-",
-            _f(weight, 2),
+            pnl_frac if pnl_frac is not None else "-",
+            weight_frac,
         ])
+        _set_pct(ws, ws.max_row, _S2_PNL_PCT_COL, _PCT_FMT_2)
+        _set_pct(ws, ws.max_row, _S2_WEIGHT_COL, _PCT_FMT_2)
 
     # 합계
     ws.append(["합계", "", "", "", "", "", "",
-               _f(total_eval, 0), "", "", "100.00"])
+               _f(total_eval, 0), "", "", 1.0])
     tot_row = ws.max_row
-    for col in range(1, len(_S2_COLS) + 1):
+    for col in range(1, _S2_NCOLS + 1):
         ws.cell(tot_row, col).font = _TOTAL_FONT
+    _set_pct(ws, tot_row, _S2_WEIGHT_COL, _PCT_FMT_2)
 
     _auto_width(ws)
 
@@ -285,11 +308,19 @@ def _build_sheet2(wb, prices: dict, usd_krw: float, now_str: str):
 # ── Sheet 3: 실적기록 ─────────────────────────────────────────────────────────
 
 _S3_COLS = [
-    "날짜", "총자산(원)", "전일비(원)", "총자산증감(%)",
-    "TWR(%)", "NDX100", "NDX100증감(%)",
+    "날짜", "총자산(원)", "전일비(원)", "총자산증감",
+    "TWR", "NDX100", "NDX100증감",
     "입출금(원)", "입출금사유",
-    "Exposure(%)", "현금비중(%)", "x1(%)", "x2(%)", "x3(%)", "USD/KRW",
+    "Exposure", "현금비중", "x1", "x2", "x3", "USD/KRW",
 ]
+_S3_DAY_PCT_COL   = 4
+_S3_TWR_PCT_COL   = 5
+_S3_NDX_PCT_COL   = 7
+_S3_EXPOSURE_COL  = 10
+_S3_CASH_COL      = 11
+_S3_X1_COL        = 12
+_S3_X2_COL        = 13
+_S3_X3_COL        = 14
 
 
 def _build_sheet3(wb):
@@ -324,39 +355,56 @@ def _build_sheet3(wb):
     base_ndx = float(db_rows[0][3] or 0) if db_rows else None
 
     for i, row in enumerate(all_rows):
-        total    = float(row["total_asset"] or 0)
+        total     = float(row["total_asset"] or 0)
         twr_asset = float(row.get("twr_asset") or 0)
-        ndx      = float(row.get("ndx100") or 0)
-        cf       = int(row.get("cash_flow") or 0)
+        ndx       = float(row.get("ndx100") or 0)
+        cf        = int(row.get("cash_flow") or 0)
 
         # 전일비: 바로 아래 행(전일)과 비교
         if i < len(all_rows) - 1:
             prev_total = float(all_rows[i + 1]["total_asset"] or 0)
-            day_diff   = _f(total - prev_total, 0)
-            day_pct    = _f((total / prev_total - 1) * 100, 2) if prev_total else None
+            day_diff = _f(total - prev_total, 0)
+            day_pct_frac = round(total / prev_total - 1, 4) if prev_total else None
         else:
-            day_diff = day_pct = None
+            day_diff, day_pct_frac = None, None
 
-        twr_pct = _f((twr_asset / base_twr - 1) * 100, 2) if base_twr else None
-        ndx_pct = _f((ndx / base_ndx - 1) * 100, 2) if base_ndx else None
+        twr_pct_frac = round(twr_asset / base_twr - 1, 4) if base_twr else None
+        ndx_pct_frac = round(ndx / base_ndx - 1, 4) if base_ndx else None
+
+        # exposure/ratio류: DB/Redis 원본이 이미 0~1 비율 (psql 실측 확인됨, *100 하지 않음)
+        exposure   = row.get("exposure")
+        cash_ratio = row.get("cash_ratio")
+        x1_ratio   = row.get("x1_ratio")
+        x2_ratio   = row.get("x2_ratio")
+        x3_ratio   = row.get("x3_ratio")
 
         ws.append([
             row["date"],
             _f(total, 0),
             day_diff if day_diff is not None else "-",
-            day_pct  if day_pct  is not None else "-",
-            twr_pct  if twr_pct  is not None else "-",
+            day_pct_frac if day_pct_frac is not None else "-",
+            twr_pct_frac if twr_pct_frac is not None else "-",
             _f(ndx, 2),
-            ndx_pct  if ndx_pct  is not None else "-",
+            ndx_pct_frac if ndx_pct_frac is not None else "-",
             cf if cf else "-",
             row.get("cash_flow_note") or "",
-            _f(float(row.get("exposure")   or 0) * 100, 1),
-            _f(float(row.get("cash_ratio") or 0) * 100, 1),
-            _f(float(row.get("x1_ratio")   or 0) * 100, 1),
-            _f(float(row.get("x2_ratio")   or 0) * 100, 1),
-            _f(float(row.get("x3_ratio")   or 0) * 100, 1),
-            _f(float(row.get("usd_krw")    or 0), 2),
+            round(float(exposure),   4) if exposure   is not None else "-",
+            round(float(cash_ratio), 4) if cash_ratio is not None else "-",
+            round(float(x1_ratio),   4) if x1_ratio   is not None else "-",
+            round(float(x2_ratio),   4) if x2_ratio   is not None else "-",
+            round(float(x3_ratio),   4) if x3_ratio   is not None else "-",
+            _f(float(row.get("usd_krw") or 0), 2),
         ])
+
+        r_idx = ws.max_row
+        _set_pct(ws, r_idx, _S3_DAY_PCT_COL,  _PCT_FMT_2)
+        _set_pct(ws, r_idx, _S3_TWR_PCT_COL,  _PCT_FMT_2)
+        _set_pct(ws, r_idx, _S3_NDX_PCT_COL,  _PCT_FMT_2)
+        _set_pct(ws, r_idx, _S3_EXPOSURE_COL, _PCT_FMT_1)
+        _set_pct(ws, r_idx, _S3_CASH_COL,     _PCT_FMT_1)
+        _set_pct(ws, r_idx, _S3_X1_COL,       _PCT_FMT_1)
+        _set_pct(ws, r_idx, _S3_X2_COL,       _PCT_FMT_1)
+        _set_pct(ws, r_idx, _S3_X3_COL,       _PCT_FMT_1)
 
     _auto_width(ws)
 
@@ -364,9 +412,9 @@ def _build_sheet3(wb):
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
 def build_export_xlsx() -> bytes:
-    prices   = get_all_prices()
-    usd_krw  = _usd_krw_from_redis(prices)
-    now_str  = datetime.datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
+    prices  = get_all_prices()
+    usd_krw = _usd_krw_from_redis(prices)
+    now_str = datetime.datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
 
     wb = openpyxl.Workbook()
     _build_sheet1(wb, prices, usd_krw, now_str)
