@@ -4,6 +4,7 @@ from starlette.routing import Mount
 
 # app. 으로 시작하는 정석 경로
 from app.context_api import routes as context_routes
+from app.export_api import routes as export_routes
 from app.modules.dashboard import dashboard_ui, dashboard_server
 from app.modules.portfolio import portfolio_ui, portfolio_server
 from app.modules.accounts import accounts_ui, accounts_server
@@ -224,7 +225,7 @@ def server(input, output, session):
 
 shiny_app = App(app_ui, server)
 
-routes = context_routes + [
+routes = context_routes + export_routes + [
     Mount("/", app=shiny_app),
 ]
 

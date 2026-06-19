@@ -272,6 +272,15 @@ def settings_ui():
 
             ui.div({"id": "st-ticker-list"}),
 
+            # 내보내기
+            ui.div(
+                ui.tags.button(
+                    "📥 내보내기",
+                    style="background:none; border:none; color:#888; font-size:14px; padding: 20px 0; cursor:pointer; width:100%; text-align:center;",
+                    onclick="window.location.href='/api/export';",
+                ),
+            ),
+
             # 로그아웃
             ui.div(
                 ui.tags.button(
