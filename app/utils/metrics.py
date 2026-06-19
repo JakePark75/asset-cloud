@@ -143,3 +143,34 @@ def calculate_beta(rows: list[tuple]) -> float:
     if var_ndx == 0: return 0.0
     cov = np.cov(my_ret, ndx_ret, ddof=1)[0][1]
     return float(cov / var_ndx)
+
+def calculate_drawdown_metrics(values: list[float]) -> dict:
+    """
+    MDD / Current DD / Recovery 계산
+    values: 시계열 (오름차순, 마지막 = 현재값)
+
+    - MDD        : 전체 기간 중 최악의 (전고점 → 저점) 하락률
+    - Current DD : 전체 기간 최고치(running max) 대비 현재값의 위치
+    - Recovery   : MDD를 만든 그 (전고점, 저점) 쌍을 기준으로,
+                   저점에서 현재값까지 얼마나 회복했는지 (100% 초과 가능)
+    """
+    if not values or len(values) < 2:
+        return {"mdd": 0.0, "current_dd": 0.0, "recovery": 0.0}
+
+    arr = np.array(values, dtype=float)
+    running_max = np.maximum.accumulate(arr)
+    safe_max = np.where(running_max == 0, 1.0, running_max)
+    drawdowns = (arr - running_max) / safe_max
+
+    idx_trough   = int(np.argmin(drawdowns))
+    peak_value   = running_max[idx_trough]
+    trough_value = arr[idx_trough]
+    mdd = float(drawdowns[idx_trough]) if peak_value != 0 else 0.0
+
+    current_peak = running_max[-1]
+    current_dd = float((arr[-1] - current_peak) / current_peak) if current_peak != 0 else 0.0
+
+    denom = peak_value - trough_value
+    recovery = float((arr[-1] - trough_value) / denom) if denom != 0 else 0.0
+
+    return {"mdd": mdd, "current_dd": current_dd, "recovery": recovery}

@@ -7,7 +7,7 @@ from app.db import get_db, get_market_currency
 from app.price_signal import price_signal as _price_signal, daily_insert_signal as _daily_insert_signal, position_signal as _position_signal, ticker_signal as _ticker_signal
 from app.utils.metrics import (
     to_f, calculate_xirr, calculate_monthly_irr, calculate_period_irr,
-    calculate_alpha, calculate_beta,
+    calculate_alpha, calculate_beta, calculate_drawdown_metrics,
     calculate_daily_profit, calculate_retirement_asset,
     calculate_exposure_and_ratios,
 )
@@ -164,6 +164,12 @@ def _load_summary_data(rows, raw_rows) -> dict:
     beta_rows_30  = [(to_f(r[1]), to_f(r[3])) for r in rows_30] + [(total_asset, live_ndx)]
     beta_30       = calculate_beta(beta_rows_30) if len(beta_rows_30) >= 3 else 0.0
 
+    # MDD / Current DD / Recovery — 전체 기간, TWR(내 실적) vs NDX100 비교
+    my_series  = [to_f(r[9]) for r in rows] + [live_twr]
+    ndx_series = [to_f(r[3]) for r in rows] + [live_ndx]
+    dd_mine = calculate_drawdown_metrics(my_series)
+    dd_ndx  = calculate_drawdown_metrics(ndx_series)
+
     retirement_asset = calculate_retirement_asset(total_asset, monthly_irr, retirement_date)
 
     # 히어로 차트용: total_asset 이력 최대 100포인트 샘플링 (실시간 마지막 포인트 추가)
@@ -199,6 +205,8 @@ def _load_summary_data(rows, raw_rows) -> dict:
         "alpha_30":         alpha_30,
         "beta_all":         beta_all,
         "beta_30":          beta_30,
+        "dd_mine":          dd_mine,
+        "dd_ndx":           dd_ndx,
         "retirement_asset": retirement_asset,
         "retirement_date":  retirement_date,
         "chart_data":       chart_data,
@@ -461,6 +469,18 @@ def _dashboard_ui_dom_patch():
     if (el) el.className = base + (extra ? ' ' + extra : '');
   }
 
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function ddColor(val, lo, hi) {
+    // lo=나쁨(빨강) 기준값, hi=좋음(초록) 기준값. val을 0~1로 정규화 후 빨강→초록 보간
+    var t = (val - lo) / (hi - lo);
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    var r = Math.round(lerp(255, 0,   t));
+    var g = Math.round(lerp(77,  192, t));
+    var b = Math.round(lerp(77,  115, t));
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
   Shiny.addCustomMessageHandler('db_update', function(m) {
 
     // ── 히어로 (텍스트) ───────────────────────────────
@@ -521,6 +541,21 @@ def _dashboard_ui_dom_patch():
     if (m.beta) {
       setText('db-beta-all', m.beta.all_text);
       setText('db-beta-30',  m.beta.beta30_text);
+    }
+
+    // ── 낙폭 분석 (MDD / Current DD / Recovery) ───────
+    if (m.dd) {
+      var mddMineEl = document.getElementById('db-mdd-mine');
+      if (mddMineEl) { mddMineEl.textContent = m.dd.mdd_mine_text; mddMineEl.style.color = ddColor(m.dd.mdd_mine_val, -0.5, 0); }
+      setText('db-mdd-ndx', m.dd.mdd_ndx_text);
+
+      var cddMineEl = document.getElementById('db-cdd-mine');
+      if (cddMineEl) { cddMineEl.textContent = m.dd.cdd_mine_text; cddMineEl.style.color = ddColor(m.dd.cdd_mine_val, -0.3, 0); }
+      setText('db-cdd-ndx', m.dd.cdd_ndx_text);
+
+      var recMineEl = document.getElementById('db-rec-mine');
+      if (recMineEl) { recMineEl.textContent = m.dd.rec_mine_text; recMineEl.style.color = ddColor(m.dd.rec_mine_val, 0, 1.0); }
+      setText('db-rec-ndx', m.dd.rec_ndx_text);
     }
 
     // ── 도넛 (텍스트) ─────────────────────────────────
@@ -679,6 +714,40 @@ def _dashboard_ui_dom_patch():
                         ui.span("/",      class_="db-beta-sep"),
                         ui.span("30일 ", class_="db-beta-tag"),
                         ui.span("–", id="db-beta-30",  class_="db-beta-value"),
+                    ),
+                ),
+                ui.div(
+                    {"class": "db-dd-card"},
+                    ui.div("낙폭 분석 (vs NDX100)", class_="db-beta-label"),
+                    ui.div(
+                        {"class": "db-dd-row"},
+                        ui.span("최대낙폭", class_="db-dd-row-label"),
+                        ui.div(
+                            {"class": "db-beta-values"},
+                            ui.span("–", id="db-mdd-mine", class_="db-beta-value"),
+                            ui.span("/", class_="db-beta-sep"),
+                            ui.span("–", id="db-mdd-ndx", class_="db-beta-value db-dd-ndx"),
+                        ),
+                    ),
+                    ui.div(
+                        {"class": "db-dd-row"},
+                        ui.span("현재낙폭", class_="db-dd-row-label"),
+                        ui.div(
+                            {"class": "db-beta-values"},
+                            ui.span("–", id="db-cdd-mine", class_="db-beta-value"),
+                            ui.span("/", class_="db-beta-sep"),
+                            ui.span("–", id="db-cdd-ndx", class_="db-beta-value db-dd-ndx"),
+                        ),
+                    ),
+                    ui.div(
+                        {"class": "db-dd-row"},
+                        ui.span("회복률", class_="db-dd-row-label"),
+                        ui.div(
+                            {"class": "db-beta-values"},
+                            ui.span("–", id="db-rec-mine", class_="db-beta-value"),
+                            ui.span("/", class_="db-beta-sep"),
+                            ui.span("–", id="db-rec-ndx", class_="db-beta-value db-dd-ndx"),
+                        ),
                     ),
                 ),
             ),
@@ -895,6 +964,24 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
                 "beta30_text": f"{d['beta_30']:.2f}",
             }
 
+            # ── 낙폭 분석 (MDD / Current DD / Recovery) ───────
+            dd_mine = d["dd_mine"]
+            dd_ndx  = d["dd_ndx"]
+            dd = {
+                "mdd_mine_text": _fmt_pct(dd_mine["mdd"]),
+                "mdd_mine_val":  dd_mine["mdd"],
+                "mdd_ndx_text":  _fmt_pct(dd_ndx["mdd"]),
+                "mdd_ndx_val":   dd_ndx["mdd"],
+                "cdd_mine_text": _fmt_pct(dd_mine["current_dd"]),
+                "cdd_mine_val":  dd_mine["current_dd"],
+                "cdd_ndx_text":  _fmt_pct(dd_ndx["current_dd"]),
+                "cdd_ndx_val":   dd_ndx["current_dd"],
+                "rec_mine_text": _fmt_pct_plain(dd_mine["recovery"]),
+                "rec_mine_val":  dd_mine["recovery"],
+                "rec_ndx_text":  _fmt_pct_plain(dd_ndx["recovery"]),
+                "rec_ndx_val":   dd_ndx["recovery"],
+            }
+
             # ── 도넛 ─────────────────────────────────────────
             donut_data = _build_donut_payload(positions)
             if donut_data:
@@ -943,6 +1030,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
                 "irr":   irr,
                 "alpha": alpha,
                 "beta":  beta,
+                "dd":    dd,
                 "donut_text": {
                     "legend_html": donut["legend_html"],
                     "subtitle":    donut["subtitle"],

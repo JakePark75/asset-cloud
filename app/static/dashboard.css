@@ -122,6 +122,15 @@
 .db-beta-tag { font-size: 12px; color: var(--db-text-muted); }
 .db-beta-sep { font-size: 20px; color: var(--db-border2); margin: 0 4px; }
 
+/* 낙폭 분석 (MDD / Current DD / Recovery) */
+.db-dd-card { background: var(--db-surface); border-radius: 4px; padding: 16px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px; }
+.db-dd-row { display: flex; align-items: center; justify-content: space-between; }
+.db-dd-row-label { font-size: 12px; color: var(--db-text-muted); min-width: 64px; flex-shrink: 0; }
+.db-dd-row .db-beta-values { flex: 1; justify-content: flex-end; }
+.db-dd-row .db-beta-value { min-width: 84px; text-align: right; font-size: 18px; }
+.db-dd-row .db-beta-sep { margin: 0 6px; }
+.db-dd-ndx { color: var(--db-text-muted) !important; }
+
 /*     */
 .db-donut-card { background: var(--db-surface); border-radius: 4px;; padding: 16px; margin-bottom: 10px; }
 .db-donut-title { font-size: 15px; font-weight: 600; color: var(--db-text); margin-bottom: 14px; }
