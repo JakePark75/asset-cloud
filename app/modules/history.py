@@ -450,17 +450,31 @@ def history_ui():
           // ── today_row 갱신 — 최상단 행 교체 + 차트 끝단 업데이트 ──────────
           Shiny.addCustomMessageHandler('today_row_update', function(r) {
 
-            // 1. 테이블 최상단 행 교체
-            var tbody = document.getElementById('history-tbody');
-            if (tbody) {
-              var newTr   = buildTr(r);
-              var today   = r.date;
-              var existing = tbody.querySelector('tr[data-date="' + today + '"]');
-              if (existing) {
-                tbody.replaceChild(newTr, existing);
-              } else {
-                _allRows.unshift(r);
-                tbody.insertBefore(newTr, tbody.firstChild);
+            // 1. _allRows 갱신 (DOM 상태와 무관하게 배열 자체의 today 중복을 방지)
+            //    history_data가 이미 today row를 포함해서 보낸 경우와
+            //    이후 today_row_update가 추가로 들어오는 경우가 겹칠 수 있으므로,
+            //    배열의 첫 row가 같은 날짜면 교체, 아니면만 unshift.
+            var today = r.date;
+            if (_allRows.length > 0 && _allRows[0].date === today) {
+              _allRows[0] = r;
+            } else {
+              _allRows.unshift(r);
+            }
+
+            // 2. DOM 최상단 행 교체 — 테이블이 이미 실제로 그려져 있을 때만.
+            //    _pendingDraw 상태(탭 숨김 중 history_data 미반영)면 여기서 DOM을
+            //    건드리지 않는다. 탭 진입 시 drawTable(_allRows)가 갱신된 배열로
+            //    처음부터 다시 그리므로, 여기서 직접 insert하면 중복의 원인이 된다.
+            if (!_pendingDraw) {
+              var tbody = document.getElementById('history-tbody');
+              if (tbody) {
+                var newTr    = buildTr(r);
+                var existing = tbody.querySelector('tr[data-date="' + today + '"]');
+                if (existing) {
+                  tbody.replaceChild(newTr, existing);
+                } else {
+                  tbody.insertBefore(newTr, tbody.firstChild);
+                }
               }
             }
 
