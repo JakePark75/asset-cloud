@@ -553,7 +553,7 @@ def history_ui():
             if (gd._touchAttached) return;
             gd._touchAttached = true;
 
-            gd.style.touchAction = 'pan-y';
+            gd.style.touchAction = 'manipulation';
             gd.on('plotly_beforehover', function() { return false; });
             if (getComputedStyle(gd).position === 'static') {
               gd.style.position = 'relative';
@@ -721,7 +721,7 @@ def history_ui():
               longTimer = setTimeout(function() {
                 if (!isPanning) { isHovering = true; showPopup(touchStartX); }
               }, LONG_MS);
-            }, {passive: true});
+            }, {passive: false});
 
             gd.addEventListener('touchmove', function(e) {
               if (e.touches.length !== 1 || touchStartX === null) return;
@@ -730,7 +730,7 @@ def history_ui():
               var dy = t.clientY - touchStartY;
               if (longTimer && Math.abs(dx) > LONG_THRESHOLD) { clearTimeout(longTimer); longTimer = null; }
               if (isHovering) { e.preventDefault(); showPopup(t.clientX); return; }
-              if (!isPanning && Math.abs(dx) < PAN_THRESHOLD) return;
+              if (!isPanning && (Math.abs(dx) < PAN_THRESHOLD || Math.abs(dx) <= Math.abs(dy))) return;
               isPanning = true;
               e.preventDefault();
               var r0      = touchStartRange[0];
