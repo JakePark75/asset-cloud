@@ -1,3 +1,4 @@
+import json
 import re
 
 import yfinance as yf
@@ -42,14 +43,22 @@ def _notify_ticker_changed():
 
 @module.ui
 def accounts_ui():
+    market_map = get_market_map()
     market_options = "".join(
         f'<option value="{m}">{m} ({get_market_label(m)})</option>'
-        for m in get_market_map()
+        for m in market_map
+    )
+    # market → currency 매핑 (JS에서 종목 추가 모달 preview currency 결정에 사용)
+    market_currency_map_js = json.dumps(
+        {m: v.get("currency", "KRW") for m, v in market_map.items()}
     )
 
     return ui.div(
         ui.tags.script("""
 (function() {
+
+  // ── market → currency 매핑 (Python에서 주입) ──────────────────────────
+  var _marketCurrencyMap = """ + market_currency_map_js + """;
 
   // ── id 조회 헬퍼 ───────────────────────────────────────────────────────
   window.acGetEl = function(id) {
@@ -247,6 +256,14 @@ def accounts_ui():
     Shiny.setInputValue('accounts-lookup_ticker', { ticker: ticker, source: 'edit' }, {priority: 'event'});
   };
 
+  // ── 종목명으로 레버리지 배수 추론 ────────────────────────────────────────
+  function _inferLeverage(name) {
+    if (!name) return null;
+    if (/3X|3x|UltraPro/i.test(name)) return '3';
+    if (/2X|2x|Ultra/i.test(name))    return '2';
+    return null;
+  }
+
   Shiny.addCustomMessageHandler('ac_ticker_lookup_result', function(m) {
     var btn = document.getElementById('ac-new-pos-lookup-btn');
     if (btn) { btn.textContent = '🔍'; btn.disabled = false; }
@@ -257,6 +274,13 @@ def accounts_ui():
         var marketEl = document.getElementById('ac-new-pos-market');
         if (marketEl) marketEl.value = m.market;
       }
+      var lev = _inferLeverage(m.name);
+      if (lev) {
+        var levEl = document.getElementById('ac-new-pos-leverage');
+        if (levEl) levEl.value = lev;
+      }
+      // 조회 후 시장이 바뀌었을 수 있으므로 preview 갱신
+      acUpdateAddPreview();
     } else {
       alert('종목명을 찾지 못했습니다: ' + m.ticker);
     }
@@ -264,7 +288,7 @@ def accounts_ui():
 
   Shiny.addCustomMessageHandler('ac_ticker_lookup_result_edit', function(m) {
     var btn = document.getElementById('ac-edit-pos-lookup-btn');
-    if (btn) { btn.textContent = '🔍'; btn.disabled = false; }
+    if (btn) { btn.textContent = '🔄'; btn.disabled = false; }
     if (m.name) {
       var nameEl = document.getElementById('ac-edit-pos-name');
       if (nameEl) nameEl.value = m.name;
@@ -272,10 +296,96 @@ def accounts_ui():
         var marketEl = document.getElementById('ac-edit-pos-market');
         if (marketEl) marketEl.value = m.market;
       }
+      var lev = _inferLeverage(m.name);
+      if (lev) {
+        var levEl = document.getElementById('ac-edit-pos-leverage');
+        if (levEl) levEl.value = lev;
+      }
     } else {
       alert('종목명을 찾지 못했습니다: ' + m.ticker);
     }
   });
+
+  // ── 종목 추가 모달 — preview ───────────────────────────────────────────
+  window.acUpdateAddPreview = function() {
+    var marketEl = document.getElementById('ac-new-pos-market');
+    var market   = marketEl ? marketEl.value : '';
+    var cur      = _marketCurrencyMap[market] || 'KRW';
+
+    var previewBox = document.getElementById('ac-add-preview-box');
+
+    // INDEX(NUM)는 현금 개념 없음 → preview 숨김
+    if (cur === 'NUM') {
+      if (previewBox) previewBox.style.display = 'none';
+      return;
+    }
+    if (previewBox) previewBox.style.display = '';
+
+    var qty      = parseFloat(document.getElementById('ac-new-pos-qty')       ? document.getElementById('ac-new-pos-qty').value       : 0) || 0;
+    var avgPrice = parseFloat(document.getElementById('ac-new-pos-avg-price') ? document.getElementById('ac-new-pos-avg-price').value : 0) || 0;
+    var cost     = qty * avgPrice;
+    var cashHeld = _getCashAmount(cur);
+
+    var cashLabel = document.getElementById('ac-add-preview-cash-label');
+    if (cashLabel) cashLabel.textContent = '보유현금(' + cur + ')';
+    var cashEl = document.getElementById('ac-add-preview-cash');
+    if (cashEl) {
+      cashEl.textContent = _fmtNum(cashHeld, cur);
+      cashEl.className   = 'ac-preview-value' + (cost > cashHeld ? ' negative' : '');
+    }
+
+    var costLabel = document.getElementById('ac-add-preview-cost-label');
+    if (costLabel) costLabel.textContent = '매수금액(' + cur + ')';
+    var costEl = document.getElementById('ac-add-preview-cost');
+    if (costEl) {
+      costEl.textContent = cost > 0 ? ('-' + _fmtNum(cost, cur)) : '-';
+      costEl.className   = 'ac-preview-value negative' + (cost > cashHeld && cost > 0 ? ' ac-preview-over' : '');
+    }
+
+    var remainEl = document.getElementById('ac-add-preview-remain');
+    if (remainEl) {
+      var remain = cashHeld - cost;
+      remainEl.textContent = _fmtNum(remain, cur);
+      remainEl.className   = 'ac-preview-value' + (remain < 0 ? ' negative' : '');
+    }
+  };
+
+  // ── 종목 추가 확인 트리거 ────────────────────────────────────────────────
+  window.acTriggerAddPosition = function() {
+    var tickerEl  = document.getElementById('ac-new-pos-ticker');
+    var nameEl    = document.getElementById('ac-new-pos-name');
+    var marketEl  = document.getElementById('ac-new-pos-market');
+    var leverageEl= document.getElementById('ac-new-pos-leverage');
+    var qtyEl     = document.getElementById('ac-new-pos-qty');
+    var avgEl     = document.getElementById('ac-new-pos-avg-price');
+
+    var market  = marketEl  ? marketEl.value  : '';
+    var cur     = _marketCurrencyMap[market] || 'KRW';
+    var qty     = parseFloat(qtyEl  ? qtyEl.value  : 0) || 0;
+    var avg     = parseFloat(avgEl  ? avgEl.value  : 0) || 0;
+    var cost    = qty * avg;
+
+    // NUM 마켓(지수)은 현금 개념 없음 → 경고 없이 통과
+    if (cur !== 'NUM' && cost > 0) {
+      var cashHeld = _getCashAmount(cur);
+      if (cost > cashHeld) {
+        alert('매수금액(' + cost.toLocaleString('ko-KR', {maximumFractionDigits:4}) + ' ' + cur + ')이 보유현금(' + cashHeld.toLocaleString('ko-KR', {maximumFractionDigits:4}) + ' ' + cur + ')을 초과합니다.');
+        return;
+      }
+    }
+
+    Shiny.setInputValue('accounts-btn_confirm_add_position', {
+      name:     nameEl     ? nameEl.value     : '',
+      ticker:   tickerEl   ? tickerEl.value   : '',
+      market:   market,
+      leverage: leverageEl ? leverageEl.value : '1',
+      qty:      qty,
+      avg_price: avg || null,
+    }, {priority: 'event'});
+    acHideModal('ac-modal-add-position');
+  };
+
+  // _fmtNum / _getCashAmount 는 modal_edit_position_js() 에서 정의됨 (같은 IIFE 내)
 
 """ + modal_edit_position_js() + """
 })();
@@ -311,7 +421,7 @@ def accounts_ui():
                     ui.tags.button(
                         "+ 종목 추가",
                         class_="btn-add",
-                        onclick="acShowModal('ac-modal-add-position');",
+                        onclick="acShowModal('ac-modal-add-position'); acUpdateAddPreview();",
                     ),
                     ui.tags.button(
                         "+ 현금 추가",
@@ -397,7 +507,8 @@ def accounts_ui():
                                      placeholder="예) 애플", class_="form-control")),
                 ui.div(ui.tags.label("시장"),
                        ui.tags.select(ui.HTML(market_options),
-                                      id="ac-new-pos-market", class_="form-control")),
+                                      id="ac-new-pos-market", class_="form-control",
+                                      onchange="acUpdateAddPreview();")),
                 ui.div(ui.tags.label("레버리지"),
                        ui.tags.select(
                            ui.tags.option("x1", value="1"),
@@ -407,24 +518,33 @@ def accounts_ui():
                        )),
                 ui.div(ui.tags.label("수량"),
                        ui.tags.input(id="ac-new-pos-qty", type="number",
-                                     value="0", min="0", step="any", class_="form-control")),
+                                     value="0", min="0", step="any", class_="form-control",
+                                     oninput="acUpdateAddPreview();")),
                 ui.div(ui.tags.label("매수 평단가"),
                        ui.tags.input(id="ac-new-pos-avg-price", type="number",
                                      min="0", step="any", placeholder="미입력 시 미설정",
-                                     class_="form-control")),
+                                     class_="form-control",
+                                     oninput="acUpdateAddPreview();")),
+                # ── 미리보기 ──────────────────────────────────────────────────
+                ui.div(
+                    ui.div(
+                        ui.span("", id="ac-add-preview-cash-label", class_="ac-preview-label"),
+                        ui.span("", id="ac-add-preview-cash", class_="ac-preview-value"),
+                    ),
+                    ui.div(
+                        ui.span("", id="ac-add-preview-cost-label", class_="ac-preview-label"),
+                        ui.span("", id="ac-add-preview-cost", class_="ac-preview-value negative"),
+                    ),
+                    ui.div(
+                        ui.span("매수 후 잔여현금", class_="ac-preview-label"),
+                        ui.span("", id="ac-add-preview-remain", class_="ac-preview-value"),
+                    ),
+                    id="ac-add-preview-box",
+                    class_="ac-preview-box",
+                ),
                 ui.tags.button(
                     "추가", class_="btn-add",
-                    onclick=(
-                        "Shiny.setInputValue('accounts-btn_confirm_add_position', {"
-                        "  name: document.getElementById('ac-new-pos-name').value,"
-                        "  ticker: document.getElementById('ac-new-pos-ticker').value,"
-                        "  market: document.getElementById('ac-new-pos-market').value,"
-                        "  leverage: document.getElementById('ac-new-pos-leverage').value,"
-                        "  qty: parseFloat(document.getElementById('ac-new-pos-qty').value) || 0,"
-                        "  avg_price: parseFloat(document.getElementById('ac-new-pos-avg-price').value) || null"
-                        "}, {priority: 'event'});"
-                        "acHideModal('ac-modal-add-position');"
-                    ),
+                    onclick="acTriggerAddPosition();",
                 ),
                 class_="modal-box",
                 onclick="event.stopPropagation();",
@@ -706,6 +826,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             "KSC": "KR", "KOE": "KR",
             "NMS": "NAS", "NGM": "NAS", "NCM": "NAS",
             "NYQ": "NYS",
+            "PCX": "ARC",
             "ASE": "AMS",
             "NIM": "INDEX",
         }

@@ -46,7 +46,7 @@ def modal_edit_position_html(market_options: str) -> ui.Tag:
                     ui.div(
                         ui.tags.input(id="ac-edit-pos-name", type="text",
                                       class_="form-control", style="flex:1;"),
-                        ui.tags.button("🔍", id="ac-edit-pos-lookup-btn",
+                        ui.tags.button("🔄", id="ac-edit-pos-lookup-btn",
                                        style="margin-left:6px; padding:0; font-size:18px; background:none; border:none; outline:none; cursor:pointer; line-height:1; -webkit-appearance:none;",
                                        onclick="acLookupTickerEdit();"),
                         style="display:flex; align-items:center;",

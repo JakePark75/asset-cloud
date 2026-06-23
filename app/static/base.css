@@ -316,3 +316,7 @@ body {
     color: #888888;
     margin-left: auto;
 }
+
+.form-control {
+    font-size: 16px;
+}
