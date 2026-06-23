@@ -100,11 +100,11 @@
 .t-row-1 .t-row-left  { flex: 7; overflow: visible; }
 .t-row-1 .t-row-right { flex: 3; }
 
-.t-row-2 .t-row-left  { flex: 5; font-size: 13px; color: var(--text-muted); }
-.t-row-2 .t-row-right { flex: 5; font-size: 13px; }
+.t-row-2 .t-row-left  { flex: 6; font-size: 13px; color: var(--text-muted); }
+.t-row-2 .t-row-right { flex: 4; font-size: 13px; }
 
-.t-row-3 .t-row-left  { flex: 6; font-size: 13px; color: var(--text-muted); }
-.t-row-3 .t-row-right { flex: 4; font-size: 13px; }
+.t-row-3 .t-row-left  { flex: 5; font-size: 13px; color: var(--text-muted); }
+.t-row-3 .t-row-right { flex: 5; font-size: 13px; }
 
 .t-row-1 .t-row-right.ticker-amount {
     overflow: hidden;
