@@ -13,7 +13,7 @@ from app.modules.settings import settings_ui, settings_server
 from app.auth import verify_login, create_token, verify_token
 
 app_ui = ui.page_fluid(
-    ui.tags.meta(name="viewport", content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"),
+    ui.tags.meta(name="viewport", content="width=device-width, initial-scale=1, maximum-scale=2, user-scalable=yes"),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "base.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "dashboard.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "portfolio.css")),
