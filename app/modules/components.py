@@ -152,6 +152,7 @@ def build_ticker_row_values(
     leverage: int = 1,           # 레버리지 — tick으로 동적 갱신
     usd_rate: float = 1.0,       # 손익액 KRW 환산용 (USD 종목일 때 사용)
     qty_in_values: bool = True,  # portfolio: True, accounts/드릴다운: False(골격에 고정)
+    is_watch_only: bool = False, # True: 보유 0, 감시계좌에만 존재하는 종목 (수량/평가금액 비표시)
 ) -> dict:
     is_cash  = ticker in ('KRW', 'USD')
     qty_f    = float(qty      or 0)
@@ -163,9 +164,12 @@ def build_ticker_row_values(
     currency = get_market_currency_fn(market) if not is_cash else None
 
     # ── amount_str: 현금은 원화환산 표기, 종목은 원화 평가금액 ──
+    # 감시종목(is_watch_only)은 보유 자산이 아니므로 평가금액을 표시하지 않음
     if ticker == 'USD':
         # "₩1,234,567 ($1,234.56)" 형태로 원화+달러 통합 표시
         amount_str = f"{fmt_krw(amount)} ({fmt_usd(qty_f)})"
+    elif is_watch_only:
+        amount_str = "–"
     else:
         amount_str = fmt_krw(amount)
 
@@ -176,8 +180,9 @@ def build_ticker_row_values(
         price_str, chg_str, chg_css = fmt_change(price_f, chg_f, currency=currency)
 
     # ── 수량 ─────────────────────────────────────────────────
+    # 감시종목은 보유 수량이 없으므로 표시하지 않음(드릴다운에서는 계좌별 수량 표시)
     qty_str = ""
-    if not is_cash and qty_in_values:
+    if not is_cash and qty_in_values and not is_watch_only:
         qty_str = f"≈{qty_f:.2f}주" if qty_f != int(qty_f) else f"{qty_f:g}주"
 
     # ── 평단가 ────────────────────────────────────────────────

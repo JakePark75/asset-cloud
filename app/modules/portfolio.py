@@ -29,6 +29,24 @@ def load_portfolio(db_rows, yesterday_total):
     return rows, yesterday_total
 
 
+def load_watch_only(db_rows):
+    """
+    감시계좌에만 존재하고 비감시계좌 보유가 없는 ticker(감시종목).
+    가격은 일반 종목과 동일하게 Redis에서 주입. qty/avg_price는 보유가 없으므로 항상 0/None.
+    """
+    from common.redis_store import get_all_prices
+
+    prices = get_all_prices()
+    rows   = []
+    for ticker, name, market, leverage in db_rows:
+        p_data     = prices.get(ticker)
+        price      = float(p_data["price"])      if p_data else 0.0
+        change_pct = float(p_data["change_pct"]) if p_data else 0.0
+        rows.append((ticker, 0, name, price, change_pct, market, leverage, None))
+
+    return rows
+
+
 def load_ticker_accounts(ticker: str, db_rows, usd_rate: float):
     """
     특정 ticker 보유 계좌 목록.
@@ -72,6 +90,12 @@ def _sort_rows(rows, usd_rate):
     )
 
 
+def _sort_watch_rows(rows):
+    """감시종목 정렬 — 보유 자산이 없어 금액 기준 정렬이 의미 없으므로 이름/ticker 기준 고정 정렬.
+    (정렬 기준이 매 갱신마다 흔들리면 structure_changed가 불필요하게 자주 True가 됨)"""
+    return sorted(rows, key=lambda r: (r[2] or r[0]))
+
+
 def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
     """포트폴리오 종목 행 골격"""
     tid      = _ticker_to_id(ticker)
@@ -107,7 +131,7 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
     )
 
 
-def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price=None):
+def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price=None, is_watch_only=False):
     """포트폴리오 종목 tick 값"""
     tid     = _ticker_to_id(ticker)
     qty_f   = float(qty   or 0)
@@ -138,6 +162,7 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
         leverage               = leverage,
         usd_rate               = usd_rate,
         qty_in_values          = True,
+        is_watch_only          = is_watch_only,
     )
 
 
@@ -441,6 +466,33 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
         return rows
 
     @reactive.calc
+    def _db_watch_only_tickers():
+        """
+        감시계좌(is_watch=true)에는 존재하지만 비감시계좌(is_watch=false) 보유가 전혀 없는 ticker.
+        position_signal / ticker_signal 시에만 재조회. 보유 0이므로 avg_price 없음.
+        """
+        position_signal.get()
+        ticker_signal.get()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT DISTINCT p.ticker, t.name, t.market, t.leverage
+                FROM positions p
+                JOIN accounts a ON p.account_id = a.id
+                LEFT JOIN tickers t ON p.ticker = t.ticker
+                WHERE a.is_watch = true
+                  AND p.ticker NOT IN (
+                      SELECT p2.ticker
+                      FROM positions p2
+                      JOIN accounts a2 ON p2.account_id = a2.id
+                      WHERE a2.is_watch = false
+                  )
+            """)
+            rows = cur.fetchall()
+            cur.close()
+        return rows
+
+    @reactive.calc
     def _db_yesterday_total():
         """daily_summary 최신 1행 — daily_insert_signal 시에만 재조회"""
         from app.price_signal import daily_insert_signal
@@ -558,7 +610,10 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             rows, yesterday_total = load_portfolio(
                 _db_portfolio_rows(), _db_yesterday_total()
             )
+            watch_rows = load_watch_only(_db_watch_only_tickers())
 
+            # total_asset은 보유 자산(비감시계좌 positions)에서만 계산.
+            # 감시종목은 qty=0이라 우연히 0이 되는 게 아니라, 별도 리스트이므로 구조적으로 제외됨.
             total_asset = sum(
                 _calc_amount(t, float(qty or 0), float(price or 0), market, usd_rate)
                 for t, qty, name, price, chg_pct, market, leverage, avg_price in rows
@@ -571,16 +626,22 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
             import datetime as _dt
             from zoneinfo import ZoneInfo as _ZoneInfo
             print(f"[DEBUG-PF] {_dt.datetime.now(_ZoneInfo('Asia/Seoul'))} "
-                  f"total_asset={total_asset} row_count={len(rows)} usd_rate={usd_rate}")
+                  f"total_asset={total_asset} row_count={len(rows)} watch_count={len(watch_rows)} usd_rate={usd_rate}")
 
-            rows_sorted   = _sort_rows(rows, usd_rate)
+            rows_sorted  = _sort_rows(rows, usd_rate)
+            watch_sorted = _sort_watch_rows(watch_rows)
+
             ticker_values = {
                 t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
                 for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
             }
+            ticker_values.update({
+                t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price, is_watch_only=True)
+                for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
+            })
             summary = build_summary_payload(total_asset, total_pnl, pnl_pct, usd_rate, usd_chg)
 
-            current_tickers   = [r[0] for r in rows_sorted]
+            current_tickers   = [r[0] for r in rows_sorted] + [r[0] for r in watch_sorted]
             structure_changed = (current_tickers != _last_tickers)
 
             if structure_changed:
@@ -592,6 +653,12 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
                     _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
                     for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
                 )
+                if watch_sorted:
+                    ticker_list_html += '<h4 class="section-heading">감시종목</h4>'
+                    ticker_list_html += "".join(
+                        _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
+                        for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
+                    )
                 await session.send_custom_message("pf_init", {
                     "summary":          summary,
                     "ticker_list_html": ticker_list_html,
