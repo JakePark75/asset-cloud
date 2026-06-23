@@ -20,7 +20,7 @@ def fmt_pnl(amount: float, pct: float, currency: str = "KRW") -> tuple[str, str]
     sign = "+" if amount >= 0 else "-"
     css = "positive" if amount >= 0 else "negative"
     amount_str = fmt_krw(abs(amount)) if currency == "KRW" else fmt_usd(abs(amount))
-    text = f"{sign}{amount_str} ({fmt_pct(pct)})"
+    text = f"{sign}{amount_str} {fmt_pct(pct)}"
     return text, css
 
 def fmt_change(price: float, chg_pct: float, currency: str = "KRW") -> tuple[str, str, str]:
@@ -368,7 +368,7 @@ def build_summary_payload(
     usd_text = ""
     usd_css  = ""
     if usd_rate and usd_chg is not None:
-        usd_text = f'{usd_rate:,.2f} ({fmt_pct(usd_chg)})'
+        usd_text = f'{usd_rate:,.2f} {fmt_pct(usd_chg)}'
         usd_css  = "positive" if usd_chg > 0 else "negative" if usd_chg < 0 else "neutral"
     return {
         "total":     fmt_krw(total_asset),

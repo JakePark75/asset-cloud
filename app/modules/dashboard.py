@@ -17,10 +17,10 @@ from app.utils.display_diff import diff_display
 
 # ── 포맷 헬퍼 ────────────────────────────────────────────────
 
-def _fmt_pct(val: float, decimals: int = 2) -> str:
+def _fmt_ratio_pct(val: float, decimals: int = 2) -> str:
     return f"{val * 100:+.{decimals}f}%"
 
-def _fmt_pct_plain(val: float, decimals: int = 2) -> str:
+def _fmt_ratio_pct_plain(val: float, decimals: int = 2) -> str:
     return f"{val * 100:.{decimals}f}%"
 
 def _pnl_class(val: float) -> str:
@@ -887,10 +887,10 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             chart_svg = _hero_line_svg(d.get("chart_data", []))
             hero = {
                 "total_asset": fmt_krw(d["total_asset"]),
-                "delta_text":  f"{_arrow(delta)}{fmt_krw(abs(delta))}  ({_fmt_pct(pct)})",
+                "delta_text":  f"{_arrow(delta)}{fmt_krw(abs(delta))}  {_fmt_ratio_pct(pct)}",
                 "delta_val":   delta,
                 "chart_svg":   chart_svg,
-                "usd_text":    f"{d['usd_krw']:,.2f} ({fmt_pct(d['usd_chg'])})",
+                "usd_text":    f"{d['usd_krw']:,.2f} {fmt_pct(d['usd_chg'])}",
                 "usd_chg_val": d["usd_chg"],
             }
 
@@ -933,7 +933,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             exposure_payload = {
                 "exposure_text":   f"{exposure:.2f}x",
                 "exp_cls":         exp_cls,
-                "cash_ratio_text": _fmt_pct_plain(cash_ratio),
+                "cash_ratio_text": _fmt_ratio_pct_plain(cash_ratio),
                 "cash_eval_text":  fmt_krw(cash_eval),
                 "lev_bar_html":    "".join(lev_bar_parts),
                 "lev_legend_html": "".join(lev_legend_parts),
@@ -942,11 +942,11 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             # ── 수익률 ───────────────────────────────────────
             total_cash_flow = d["total_cash_flow"]
             irr = {
-                "annual_text":       _fmt_pct(d["annual_irr"]),
+                "annual_text":       _fmt_ratio_pct(d["annual_irr"]),
                 "annual_val":        d["annual_irr"],
-                "monthly_text":      _fmt_pct(d["monthly_irr"]),
+                "monthly_text":      _fmt_ratio_pct(d["monthly_irr"]),
                 "monthly_val":       d["monthly_irr"],
-                "irr30_text":        _fmt_pct(d["irr_30"]),
+                "irr30_text":        _fmt_ratio_pct(d["irr_30"]),
                 "irr30_val":         d["irr_30"],
                 "cash_flow_text":    fmt_krw(total_cash_flow),
                 "cash_flow_sign":    total_cash_flow,
@@ -954,11 +954,11 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
 
             # ── 알파 ─────────────────────────────────────────
             alpha = {
-                "cumul_text":    _fmt_pct(d["cumul_alpha"]),
+                "cumul_text":    _fmt_ratio_pct(d["cumul_alpha"]),
                 "cumul_val":     d["cumul_alpha"],
-                "monthly_text":  _fmt_pct(d["monthly_alpha"]),
+                "monthly_text":  _fmt_ratio_pct(d["monthly_alpha"]),
                 "monthly_val":   d["monthly_alpha"],
-                "alpha30_text":  _fmt_pct(d["alpha_30"]),
+                "alpha30_text":  _fmt_ratio_pct(d["alpha_30"]),
                 "alpha30_val":   d["alpha_30"],
             }
 
@@ -972,17 +972,17 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             dd_mine = d["dd_mine"]
             dd_ndx  = d["dd_ndx"]
             dd = {
-                "mdd_mine_text": _fmt_pct(dd_mine["mdd"]),
+                "mdd_mine_text": _fmt_ratio_pct(dd_mine["mdd"]),
                 "mdd_mine_val":  dd_mine["mdd"],
-                "mdd_ndx_text":  _fmt_pct(dd_ndx["mdd"]),
+                "mdd_ndx_text":  _fmt_ratio_pct(dd_ndx["mdd"]),
                 "mdd_ndx_val":   dd_ndx["mdd"],
-                "cdd_mine_text": _fmt_pct(dd_mine["current_dd"]),
+                "cdd_mine_text": _fmt_ratio_pct(dd_mine["current_dd"]),
                 "cdd_mine_val":  dd_mine["current_dd"],
-                "cdd_ndx_text":  _fmt_pct(dd_ndx["current_dd"]),
+                "cdd_ndx_text":  _fmt_ratio_pct(dd_ndx["current_dd"]),
                 "cdd_ndx_val":   dd_ndx["current_dd"],
-                "rec_mine_text": _fmt_pct_plain(dd_mine["recovery"]),
+                "rec_mine_text": _fmt_ratio_pct_plain(dd_mine["recovery"]),
                 "rec_mine_val":  dd_mine["recovery"],
-                "rec_ndx_text":  _fmt_pct_plain(dd_ndx["recovery"]),
+                "rec_ndx_text":  _fmt_ratio_pct_plain(dd_ndx["recovery"]),
                 "rec_ndx_val":   dd_ndx["recovery"],
             }
 
@@ -1017,7 +1017,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             retirement = {
                 "subtitle":      f"은퇴 시뮬레이션 ({ret_date.strftime('%Y년 %m월')}, +{years:.1f}년 후)",
                 "amount_text":   fmt_krw(ret_asset),
-                "sub_text":      f"월평균 IRR {_fmt_pct(monthly_irr)} 복리 적용",
+                "sub_text":      f"월평균 IRR {_fmt_ratio_pct(monthly_irr)} 복리 적용",
                 "compound_text": f"{months}개월 복리",
             }
 
