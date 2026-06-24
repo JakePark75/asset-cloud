@@ -9,6 +9,8 @@ common/redis_store.py
 - recalc_today_row()   : 오늘치 실적 row 계산 + Redis 저장 (Lock 보호)
 - publish_price_updated()   : price_updated 채널에 신호 발행 (NOTIFY 대체)
 - publish_daily_inserted()  : daily_inserted 채널에 신호 발행 (NOTIFY 대체)
+- get_news_translation_cache() / set_news_translation_cache() : 뉴스 제목 번역 캐시 (TTL 1시간)
+- get_news_feed_cache() / set_news_feed_cache()               : 매칭된 뉴스 피드 캐시 (TTL 5분)
 """
 
 import json
@@ -133,6 +135,38 @@ def publish_daily_inserted() -> None:
         r.publish("daily_inserted", "1")
     except Exception as e:
         print(f"[redis_store] publish_daily_inserted 실패: {e}")
+
+
+def publish_news_keyword_changed() -> None:
+    """
+    news_keyword_changed 채널에 신호 발행.
+    settings.py에서 키워드 추가/삭제 완료 후 호출.
+    news_fetcher.py가 구독 중이며, 수신 즉시 재폴링을 실행한다.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.publish("news_keyword_changed", "1")
+    except Exception as e:
+        print(f"[redis_store] publish_news_keyword_changed 실패: {e}")
+
+
+def publish_news_feed_updated() -> None:
+    """
+    news_feed_updated 채널에 신호 발행.
+    news_fetcher.py가 Redis news:feed 캐시를 새로 쓴 직후 호출.
+    payload는 의미 없는 고정값("1") — 화면 쪽은 채널 수신 자체만 트리거로 사용.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.publish("news_feed_updated", "1")
+    except Exception as e:
+        print(f"[redis_store] publish_news_feed_updated 실패: {e}")
 
 
 def get_price(ticker: str) -> dict | None:
@@ -305,3 +339,74 @@ def recalc_today_row() -> None:
         print(f"[redis_store] recalc_today_row 실패 (무시): {e}")
     finally:
         _recalc_lock.release()
+
+
+# ── 뉴스 피드 캐시 ─────────────────────────────────────────────────────────────
+#
+# 키 구조:
+#   news:translated:{url_hash}  → 번역된 제목 문자열 (TTL 1시간)
+#   news:feed                   → 최신 매칭 기사 리스트 JSON (TTL 5분)
+#
+# url_hash는 호출하는 쪽(news_fetcher.py)에서 hashlib.md5(url).hexdigest()로 생성해
+# 인자로 넘긴다. 이 모듈은 해시 생성 책임을 가지지 않고 Redis 접근만 담당한다.
+
+def get_news_translation_cache(url_hash: str) -> str | None:
+    """
+    캐시된 번역 제목 조회. 없거나 실패 시 None.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return None
+        return r.get(f"news:translated:{url_hash}")
+    except Exception as e:
+        print(f"[redis_store] get_news_translation_cache 실패 ({url_hash}): {e}")
+        return None
+
+
+def set_news_translation_cache(url_hash: str, translated_title: str, ttl: int = 3600) -> None:
+    """
+    번역 제목 캐시 저장 (기본 TTL 1시간).
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.set(f"news:translated:{url_hash}", translated_title, ex=ttl)
+    except Exception as e:
+        print(f"[redis_store] set_news_translation_cache 실패 ({url_hash}): {e}")
+
+
+def get_news_feed_cache() -> list | None:
+    """
+    캐시된 뉴스 피드 리스트 조회.
+    반환: [{...}, ...] 또는 None (캐시 없음/실패).
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return None
+        raw = r.get("news:feed")
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception as e:
+        print(f"[redis_store] get_news_feed_cache 실패: {e}")
+        return None
+
+
+def set_news_feed_cache(items: list, ttl: int = 300) -> None:
+    """
+    매칭된 뉴스 기사 리스트를 JSON으로 캐시 저장 (기본 TTL 5분).
+    각 item은 JSON 직렬화 가능한 dict여야 한다 (예: title, translated_title,
+    link, source, published_at(ISO 문자열) 등).
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.set("news:feed", json.dumps(items, ensure_ascii=False), ex=ttl)
+    except Exception as e:
+        print(f"[redis_store] set_news_feed_cache 실패: {e}")

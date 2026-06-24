@@ -1,0 +1,14 @@
+[Unit]
+Description=Asset Cloud News Fetcher
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/asset-cloud/scheduler
+ExecStart=/usr/bin/python3 /home/ubuntu/asset-cloud/scheduler/news_fetcher.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
