@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SERVICES=("myassets" "price_updater" "daily_inserter" "nginx")
+SERVICES=("myassets" "price_updater" "daily_inserter" "news_fetcher" "nginx")
 PROJECT_ROOT="/home/ubuntu/asset-cloud"
 
 # 압축 수행 함수
