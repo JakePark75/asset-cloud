@@ -4,10 +4,10 @@ import sys
 from app.db import get_db, get_usd_krw, get_config, get_market_currency
 from app.price_signal import price_signal, position_signal, ticker_signal
 from app.modules.components import (
-    fmt_krw, fmt_usd, fmt_pct, fmt_change, fmt_pnl,
+    fmt_pct,
     build_ticker_row_skeleton, build_ticker_row_values,
     build_account_row_skeleton, build_account_row_values,
-    build_summary_header_dom, build_summary_payload,
+    build_summary_payload,
 )
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
@@ -15,7 +15,7 @@ from app.utils.display_diff import diff_display
 
 # ── DAL ───────────────────────────────────────────────────────────────────────
 
-def load_portfolio(db_rows, yesterday_total):
+def load_portfolio(db_rows):
     from common.redis_store import get_all_prices
 
     prices = get_all_prices()
@@ -26,7 +26,7 @@ def load_portfolio(db_rows, yesterday_total):
         change_pct = float(p_data["change_pct"]) if p_data else 0.0
         rows.append((ticker, qty, name, price, change_pct, market, leverage, avg_price))
 
-    return rows, yesterday_total
+    return rows
 
 
 def load_watch_only(db_rows):
@@ -49,10 +49,10 @@ def load_watch_only(db_rows):
 
 def load_ticker_accounts(ticker: str, db_rows, usd_rate: float):
     """
-    특정 ticker 보유 계좌 목록.
+    특정 ticker 보유 계좌 목록 (아코디언 내용).
     가격은 Redis에서 읽어 주입 (position_signal 구독 캐시 기반, price_signal 무관).
     반환: (acc_rows, price, chg_pct)
-      acc_rows: [(acc_id, acc_name, alias, is_watch, qty, avg_price, market, leverage, price, chg_pct), ...]
+      acc_rows: [(acc_id, acc_name, alias, is_watch, qty, avg_price, market, leverage, price, chg_pct, ticker_name), ...]
     """
     from common.redis_store import get_all_prices
     prices  = get_all_prices()
@@ -97,7 +97,7 @@ def _sort_watch_rows(rows):
 
 
 def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
-    """포트폴리오 종목 행 골격"""
+    """포트폴리오 종목 행 골격 + 아코디언 컨테이너(빈 채로, 기본 display:none)"""
     tid      = _ticker_to_id(ticker)
     qty_f    = float(qty or 0)
     leverage = int(leverage) if leverage else 1
@@ -115,10 +115,10 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
 
     onclick_attr = (
         "" if is_cash
-        else f"pfOpenTickerDrilldown('{ticker}', '{display_name}');"
+        else f"pfToggleTicker('{ticker}', '{tid}');"
     )
 
-    return build_ticker_row_skeleton(
+    row_html = build_ticker_row_skeleton(
         ticker       = ticker,
         display_name = display_name,
         market       = market,
@@ -129,6 +129,12 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
         onclick_attr = onclick_attr,
         data_attrs   = "",
     )
+
+    if is_cash:
+        return row_html
+
+    accordion_html = f'<div class="pf-accordion" id="pf-acc-{tid}" style="display:none;"></div>'
+    return row_html + accordion_html
 
 
 def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price=None, is_watch_only=False):
@@ -167,7 +173,7 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
 
 
 def _build_drilldown_row_skeleton(acc_id, acc_name, alias, qty):
-    """드릴다운 계좌 행 골격 — 계좌명·수량만. 종목 단위 정보(레버리지/시장상태)는 헤더에 1회만 표시"""
+    """아코디언 내부 계좌 행 골격 — 계좌명·수량만."""
     qty_f         = float(qty or 0)
     display_name  = acc_name + (f" ({alias})" if alias else "")
     qty_text      = f"≈{qty_f:.2f}주" if qty_f != int(qty_f) else f"{qty_f:g}주"
@@ -181,7 +187,7 @@ def _build_drilldown_row_skeleton(acc_id, acc_name, alias, qty):
 
 
 def _build_drilldown_row_values(acc_id, ticker, qty, avg_price, price, market, usd_rate):
-    """드릴다운 계좌 행 tick 값 — 평가금액 + 이 계좌 포지션의 손익액/수익률"""
+    """아코디언 내부 계좌 행 tick 값 — 평가금액 + 이 계좌 포지션의 손익액/수익률"""
     qty_f   = float(qty       or 0)
     avg_f   = float(avg_price or 0)
     price_f = float(price     or 0)
@@ -201,6 +207,25 @@ def _build_drilldown_row_values(acc_id, ticker, qty, avg_price, price, market, u
     )
 
 
+def _build_accordion_html(acc_rows):
+    """아코디언 내부 계좌 목록 HTML (헤더 없음 — 종목 행 자체에 가격/손익 이미 표시됨)"""
+    normal = [r for r in acc_rows if not r[3]]
+    watch  = [r for r in acc_rows if r[3]]
+
+    def _section(rows_subset):
+        return "".join(
+            _build_drilldown_row_skeleton(acc_id, acc_name, alias, qty)
+            for acc_id, acc_name, alias, is_watch, qty, avg_price, market, leverage, p, c, _
+            in rows_subset
+        )
+
+    html = _section(normal)
+    if watch:
+        html += '<h4 class="section-heading">감시 계좌</h4>'
+        html += _section(watch)
+    return html
+
+
 # ── UI ────────────────────────────────────────────────────────────────────────
 
 @module.ui
@@ -211,122 +236,76 @@ def portfolio_ui():
 
   // ── pf_init: 종목 구성 변경 시 골격 통째 교체 ──────────────
   Shiny.addCustomMessageHandler('pf_init', function(m) {
-    var el;
-
-    el = document.getElementById('pf-summary-total');
-    if (el) el.textContent = m.summary.total;
-
-    el = document.getElementById('pf-summary-pnl');
-    if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
-
-    el = document.getElementById('pf-usd-wrap');
-    if (el) el.style.display = m.summary.usd_text ? 'flex' : 'none';
-    el = document.getElementById('pf-usd-text');
-    if (el) { el.textContent = m.summary.usd_text; el.className = m.summary.usd_css; }
-
-    el = document.getElementById('pf-ticker-list');
+    var el = document.getElementById('pf-ticker-list');
     if (el) el.innerHTML = m.ticker_list_html;
 
     el = document.getElementById('pf-force-btn-wrap');
     if (el) el.style.display = m.show_force_btn ? '' : 'none';
 
-    el = document.getElementById('pf-header-price-wrap');
-    if (el) el.style.display = 'none';
-
-    el = document.getElementById('pf-summary-label');
-    if (el) el.textContent = '포트폴리오';
+    // 리스트가 다시 그려졌으므로, 열려있던 아코디언이 있으면 재오픈 표시
+    // (내용은 뒤따르는 pf_acc_init/tick 메시지가 채움)
+    if (window._pfOpenTid) {
+      var accEl = document.getElementById('pf-acc-' + window._pfOpenTid);
+      if (accEl) {
+        accEl.style.display = '';
+        accEl.innerHTML = '<div class="pf-acc-loading">불러오는 중...</div>';
+      } else {
+        // 더 이상 존재하지 않는 종목(보유 청산 등) — 상태 정리
+        window._pfOpenTid = null;
+      }
+    }
 
     _applyTickers(m.tickers);
   });
 
   // ── pf_tick: 변경된 key만 patch ─────────────────────────────
   Shiny.addCustomMessageHandler('pf_tick', function(m) {
-    if (m.summary) {
-      var el;
-      el = document.getElementById('pf-summary-total');
-      if (el) el.textContent = m.summary.total;
-
-      el = document.getElementById('pf-summary-pnl');
-      if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
-
-      el = document.getElementById('pf-usd-wrap');
-      if (el) el.style.display = m.summary.usd_text ? 'flex' : 'none';
-      el = document.getElementById('pf-usd-text');
-      if (el) { el.textContent = m.summary.usd_text; el.className = m.summary.usd_css; }
-    }
     Object.keys(m).forEach(function(key) {
-      if (key === 'summary') return;
       _applyOneTicker(m[key]);
     });
   });
 
-  // ── pfd_init: 드릴다운 계좌 목록 초기화 ────────────────────
-  Shiny.addCustomMessageHandler('pfd_init', function(m) {
-    var el;
-
-    el = document.getElementById('pf-summary-total');
-    if (el) el.textContent = m.summary.total;
-    el = document.getElementById('pf-summary-pnl');
-    if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
-    el = document.getElementById('pf-usd-wrap');
-    if (el) el.style.display = 'none';
-
-    el = document.getElementById('pf-summary-label');
-    if (el) el.textContent = m.ticker_name;
-
-    el = document.getElementById('pf-drilldown-list');
-    if (el) el.innerHTML = m.account_list_html;
-
-    el = document.getElementById('pf-header-price-wrap');
-    if (el) el.style.display = '';
-    el = document.getElementById('pf-header-price');
-    if (el) { el.textContent = m.summary.price_text; el.className = m.summary.chg_css; }
-    el = document.getElementById('pf-header-chg');
-    if (el) { el.textContent = m.summary.chg_text; el.className = m.summary.chg_css; }
-
-    document.getElementById('pf-list-view').style.display      = 'none';
-    document.getElementById('pf-drilldown-view').style.display = '';
-    document.getElementById('pf-back-btn').style.display       = 'inline-block';
-    document.getElementById('pf-summary-badge').classList.add('is-active');
-    document.getElementById('pf-force-btn-wrap').style.display = 'none';
-
+  // ── pf_acc_init: 아코디언 내용 통째 교체 ────────────────────
+  Shiny.addCustomMessageHandler('pf_acc_init', function(m) {
+    var el = document.getElementById('pf-acc-' + m.tid);
+    if (el) {
+      el.innerHTML = m.account_list_html;
+      el.style.display = '';
+    }
     _applyDrilldownRows(m.rows);
   });
 
-  // ── pfd_tick: 드릴다운 변경값만 patch ──────────────────────
-  Shiny.addCustomMessageHandler('pfd_tick', function(m) {
-    if (m.summary) {
-      var el;
-      el = document.getElementById('pf-summary-total');
-      if (el) el.textContent = m.summary.total;
-      el = document.getElementById('pf-summary-pnl');
-      if (el) { el.textContent = m.summary.pnl_text; el.className = 'summary-delta ' + m.summary.pnl_class; }
-      el = document.getElementById('pf-header-price');
-      if (el) { el.textContent = m.summary.price_text; el.className = m.summary.chg_css; }
-      el = document.getElementById('pf-header-chg');
-      if (el) { el.textContent = m.summary.chg_text; el.className = m.summary.chg_css; }
-    }
-    Object.keys(m).forEach(function(key) {
-      if (key === 'summary') return;
-      _applyOneDrilldownRow(m[key]);
+  // ── pf_acc_tick: 아코디언 변경값만 patch ─────────────────────
+  Shiny.addCustomMessageHandler('pf_acc_tick', function(m) {
+    Object.keys(m.rows || {}).forEach(function(key) {
+      _applyOneDrilldownRow(m.rows[key]);
     });
   });
 
-  // ── 드릴다운 열기 ────────────────────────────────────────────
-  window.pfOpenTickerDrilldown = function(ticker, name) {
-    Shiny.setInputValue('portfolio-ticker_clicked', { ticker: ticker, name: name }, { priority: 'event' });
-  };
+  // ── 아코디언 토글 (한번에 하나만 열림) ────────────────────────
+  window.pfToggleTicker = function(ticker, tid) {
+    var el = document.getElementById('pf-acc-' + tid);
+    if (!el) return;
 
-  // ── 뒤로가기 ─────────────────────────────────────────────────
-  window.pfGoBack = function() {
-    document.getElementById('pf-list-view').style.display      = '';
-    document.getElementById('pf-drilldown-view').style.display = 'none';
-    document.getElementById('pf-back-btn').style.display       = 'none';
-    document.getElementById('pf-summary-badge').classList.remove('is-active');
-    document.getElementById('pf-header-price-wrap').style.display = 'none';
-    var labelEl = document.getElementById('pf-summary-label');
-    if (labelEl) labelEl.textContent = '포트폴리오';
-    Shiny.setInputValue('portfolio-go_back', Math.random(), { priority: 'event' });
+    if (window._pfOpenTid === tid) {
+      // 닫기
+      el.style.display = 'none';
+      el.innerHTML = '';
+      window._pfOpenTid = null;
+      Shiny.setInputValue(window._pfNs + '-ticker_clicked', { ticker: null }, { priority: 'event' });
+      return;
+    }
+
+    // 이전에 열려있던 아코디언 닫기
+    if (window._pfOpenTid) {
+      var prevEl = document.getElementById('pf-acc-' + window._pfOpenTid);
+      if (prevEl) { prevEl.style.display = 'none'; prevEl.innerHTML = ''; }
+    }
+
+    window._pfOpenTid = tid;
+    el.style.display = '';
+    el.innerHTML = '<div class="pf-acc-loading">불러오는 중...</div>';
+    Shiny.setInputValue(window._pfNs + '-ticker_clicked', { ticker: ticker }, { priority: 'event' });
   };
 
   function _applyTickers(tickers) {
@@ -394,34 +373,15 @@ def portfolio_ui():
         ui.div(
             {"class": "page-inner", "style": "position:relative;"},
 
-            # ── 공통 헤더 ─────────────────────────────────────────────────────
-            build_summary_header_dom(
-                id_prefix        = "pf",
-                label_text       = "포트폴리오",
-                back_btn_onclick = "pfGoBack();",
-                delta_row_extra  = ui.span(
-                    {"id": "pf-header-price-wrap", "style": "display:none; margin-left:auto;"},
-                    ui.span("", id="pf-header-price", style="margin-right:4px;"),
-                    ui.span("", id="pf-header-chg"),
-                ),
-            ),
-
             # ── 강제 조회 버튼 ────────────────────────────────────────────────
             ui.div(
                 {"id": "pf-force-btn-wrap", "style": "display:none;"},
                 ui.input_action_button("force_update", "↺", class_="force-update-btn"),
             ),
 
-            # ── 포트폴리오 목록 뷰 ────────────────────────────────────────────
+            # ── 포트폴리오 목록 (아코디언 포함) ───────────────────────────────
             ui.div(
-                {"id": "pf-list-view"},
-                ui.div({"id": "pf-ticker-list", "class": "ticker-list"}),
-            ),
-
-            # ── 드릴다운 뷰 (종목별 계좌 목록) ───────────────────────────────
-            ui.div(
-                {"id": "pf-drilldown-view", "style": "display:none;"},
-                ui.div({"id": "pf-drilldown-list", "class": "ticker-list"}),
+                {"id": "pf-ticker-list", "class": "ticker-list"},
             ),
         ),
 
@@ -432,15 +392,19 @@ def portfolio_ui():
 # ── Server ────────────────────────────────────────────────────────────────────
 
 @module.server
-def portfolio_server(input, output, session, active_tab: reactive.value = None):
+def portfolio_server(input, output, session, active_tab: reactive.value = None,
+                     active_sub_tab: reactive.value = None):
 
-    _initialized    = False  # 일반 변수: effect 자기-재트리거 방지
-    selected_ticker = reactive.value(None)  # None: 목록 뷰, str: 드릴다운 뷰
+    ns_str = session.ns("_")[:-1]
 
-    _last_tickers:     list = []
-    _last_display:     dict = {}
-    _last_dd_accounts: list = []
-    _last_dd_display:  dict = {}
+    _initialized = False  # 일반 변수: effect 자기-재트리거 방지
+    open_ticker  = reactive.value(None)  # None: 아코디언 닫힘, str: 해당 ticker 아코디언 열림 (한번에 하나만)
+
+    _last_tickers:     list      = []
+    _last_display:     dict      = {}
+    _last_open_ticker: str | None = None
+    _last_dd_accounts: list      = []
+    _last_dd_display:  dict      = {}
 
     # ── DB 캐시 ──────────────────────────────────────────────────────────────
 
@@ -493,23 +457,12 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
         return rows
 
     @reactive.calc
-    def _db_yesterday_total():
-        """daily_summary 최신 1행 — daily_insert_signal 시에만 재조회"""
-        from app.price_signal import daily_insert_signal
-        daily_insert_signal.get()
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT total_asset FROM daily_summary ORDER BY date DESC LIMIT 1")
-            row = cur.fetchone()
-            cur.close()
-        return float(row[0]) if row else 0.0
-
-    @reactive.calc
     def _db_ticker_accounts():
-        """선택된 ticker 보유 계좌 목록 — position_signal / ticker_signal 시에만 재조회"""
+        """열려있는 아코디언의 ticker 보유 계좌 목록 — position_signal / ticker_signal 시에만 재조회.
+        open_ticker가 None이면 빈 리스트 (불필요한 쿼리 방지)."""
         position_signal.get()
         ticker_signal.get()
-        ticker = selected_ticker.get()
+        ticker = open_ticker.get()
         if not ticker:
             return []
         with get_db() as conn:
@@ -564,196 +517,114 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None):
     def _cancel_force_update():
         ui.modal_remove()
 
-    # ── 종목 클릭 → 드릴다운 ────────────────────────────────────────────────
+    # ── 종목 클릭 → 아코디언 토글 ───────────────────────────────────────────
 
     @reactive.effect
     @reactive.event(input.ticker_clicked)
     def _handle_ticker_click():
-        nonlocal _last_dd_accounts, _last_dd_display
         payload = input.ticker_clicked()
         ticker  = payload.get("ticker") if payload else None
-        if ticker:
-            _last_dd_accounts = []
-            _last_dd_display.clear()
-            selected_ticker.set(ticker)
-
-    # ── 뒤로가기 ─────────────────────────────────────────────────────────────
-
-    @reactive.effect
-    @reactive.event(input.go_back)
-    def _handle_go_back():
-        nonlocal _last_tickers, _last_display
-        _last_tickers = []
-        _last_display.clear()
-        selected_ticker.set(None)
+        open_ticker.set(ticker)  # ticker가 None이면 닫힘
 
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 
     @reactive.effect
     async def _send_update():
-        nonlocal _last_tickers, _last_display, _last_dd_accounts, _last_dd_display
+        nonlocal _last_tickers, _last_display
+        nonlocal _last_open_ticker, _last_dd_accounts, _last_dd_display
         nonlocal _initialized
+
         price_signal.get()
         position_signal.get()
         ticker_signal.get()
+        cur_open_ticker = open_ticker.get()  # 탭 가드 전에 의존성 등록
 
-        if _initialized and active_tab and active_tab.get() != "portfolio":
+        tab = active_sub_tab if active_sub_tab is not None else active_tab
+        if _initialized and tab and tab.get() != "portfolio":
             return
 
         usd_rate, usd_chg = get_usd_krw()
         usd_rate = usd_rate or 0
 
-        ticker = selected_ticker.get()
+        # ── 포트폴리오 목록 (항상 갱신) ────────────────────────────────────
+        rows = load_portfolio(_db_portfolio_rows())
+        watch_rows = load_watch_only(_db_watch_only_tickers())
 
-        if ticker is None:
-            # ── 포트폴리오 목록 뷰 ────────────────────────────────────────
-            rows, yesterday_total = load_portfolio(
-                _db_portfolio_rows(), _db_yesterday_total()
-            )
-            watch_rows = load_watch_only(_db_watch_only_tickers())
+        rows_sorted  = _sort_rows(rows, usd_rate)
+        watch_sorted = _sort_watch_rows(watch_rows)
 
-            # total_asset은 보유 자산(비감시계좌 positions)에서만 계산.
-            # 감시종목은 qty=0이라 우연히 0이 되는 게 아니라, 별도 리스트이므로 구조적으로 제외됨.
-            total_asset = sum(
-                _calc_amount(t, float(qty or 0), float(price or 0), market, usd_rate)
-                for t, qty, name, price, chg_pct, market, leverage, avg_price in rows
-            )
+        ticker_values = {
+            t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
+            for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
+        }
+        ticker_values.update({
+            t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price, is_watch_only=True)
+            for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
+        })
 
-            total_pnl = total_asset - yesterday_total
-            pnl_pct   = (total_pnl / yesterday_total * 100) if yesterday_total else 0
+        current_tickers   = [r[0] for r in rows_sorted] + [r[0] for r in watch_sorted]
+        structure_changed = (current_tickers != _last_tickers)
 
-            # [DEBUG-PF] 화면 갱신 시점 total_asset 로그
-            import datetime as _dt
-            from zoneinfo import ZoneInfo as _ZoneInfo
-            print(f"[DEBUG-PF] {_dt.datetime.now(_ZoneInfo('Asia/Seoul'))} "
-                  f"total_asset={total_asset} row_count={len(rows)} watch_count={len(watch_rows)} usd_rate={usd_rate}")
-
-            rows_sorted  = _sort_rows(rows, usd_rate)
-            watch_sorted = _sort_watch_rows(watch_rows)
-
-            ticker_values = {
-                t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
+        if structure_changed:
+            _last_tickers = current_tickers
+            _last_display.clear()
+            cfg        = get_config()
+            show_force = int(cfg.get("interval", 1)) != 0
+            ticker_list_html = "".join(
+                _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
                 for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
-            }
-            ticker_values.update({
-                t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price, is_watch_only=True)
-                for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
-            })
-            summary = build_summary_payload(total_asset, total_pnl, pnl_pct, usd_rate, usd_chg)
-
-            current_tickers   = [r[0] for r in rows_sorted] + [r[0] for r in watch_sorted]
-            structure_changed = (current_tickers != _last_tickers)
-
-            if structure_changed:
-                _last_tickers = current_tickers
-                _last_display.clear()
-                cfg        = get_config()
-                show_force = int(cfg.get("interval", 1)) != 0
-                ticker_list_html = "".join(
+            )
+            if watch_sorted:
+                ticker_list_html += '<h4 class="section-heading">감시종목</h4>'
+                ticker_list_html += "".join(
                     _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
-                    for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
+                    for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
                 )
-                if watch_sorted:
-                    ticker_list_html += '<h4 class="section-heading">감시종목</h4>'
-                    ticker_list_html += "".join(
-                        _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
-                        for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
-                    )
-                await session.send_custom_message("pf_init", {
-                    "summary":          summary,
-                    "ticker_list_html": ticker_list_html,
-                    "show_force_btn":   show_force,
-                    "tickers":          ticker_values,
-                })
-            else:
-                current = {"summary": summary, **ticker_values}
-                diff = diff_display(current, _last_display)
-                if diff:
-                    await session.send_custom_message("pf_tick", diff)
-
+            await session.send_custom_message("pf_init", {
+                "ticker_list_html": ticker_list_html,
+                "show_force_btn":   show_force,
+                "tickers":          ticker_values,
+            })
         else:
-            # ── 드릴다운 뷰 (ticker 보유 계좌 목록) ──────────────────────
+            diff = diff_display(ticker_values, _last_display)
+            if diff:
+                await session.send_custom_message("pf_tick", diff)
+
+        # ── 아코디언 (열려있는 종목이 있을 때만 추가 계산) ───────────────────
+        if cur_open_ticker:
+            tid = _ticker_to_id(cur_open_ticker)
             db_rows = _db_ticker_accounts()
-            acc_rows, price, chg_pct = load_ticker_accounts(ticker, db_rows, usd_rate)
+            acc_rows, price, chg_pct = load_ticker_accounts(cur_open_ticker, db_rows, usd_rate)
 
-            normal = [r for r in acc_rows if not r[3]]
-            watch  = [r for r in acc_rows if r[3]]
-
-            # 드릴다운 헤더: 비감시 계좌만 합산 (감시계좌는 보유자산이 아니므로 제외 — 목록 뷰와 동일 기준)
-            total_asset = sum(
-                _calc_amount(ticker, float(qty or 0), float(p or 0), market, usd_rate)
-                for _, _, _, _, qty, _, market, leverage, p, _, _ in normal
-            )
-            cost_basis = sum(
-                _calc_amount(ticker, float(qty or 0), float(avg_price or 0), market, usd_rate)
-                for _, _, _, _, qty, avg_price, market, leverage, p, _, _ in normal
-            )
-            sum_qty = sum(float(qty or 0) for _, _, _, _, qty, _, _, _, _, _, _ in normal)
-            weighted_avg_price = (
-                sum(
-                    float(qty or 0) * float(avg_price or 0)
-                    for _, _, _, _, qty, avg_price, _, _, _, _, _ in normal
-                ) / sum_qty
-            ) if sum_qty else 0.0
-
-            pnl_amount = total_asset - cost_basis
-            pnl_pct    = (
-                (price - weighted_avg_price) / weighted_avg_price * 100
-            ) if weighted_avg_price else 0.0
-            pnl_text, pnl_class = fmt_pnl(pnl_amount, pnl_pct)
-
-            ticker_market = acc_rows[0][6] if acc_rows else None
-            currency = get_market_currency(ticker_market) if ticker_market else None
-            price_text, chg_text, chg_css = fmt_change(price, chg_pct, currency=currency)
-
-            summary = {
-                "total":       fmt_krw(total_asset),
-                "pnl_text":    pnl_text,
-                "pnl_class":   pnl_class,
-                "price_text":  price_text,
-                "chg_text":    chg_text,
-                "chg_css":     chg_css,
-            }
+            current_accounts = [r[0] for r in acc_rows]
+            ticker_switched   = (cur_open_ticker != _last_open_ticker)
+            acc_structure_changed = ticker_switched or (current_accounts != _last_dd_accounts)
 
             row_values = {
                 str(acc_id): _build_drilldown_row_values(
-                    acc_id, ticker, qty, avg_price, p, market, usd_rate
+                    acc_id, cur_open_ticker, qty, avg_price, p, market, usd_rate
                 )
                 for acc_id, _, _, _, qty, avg_price, market, leverage, p, c, _ in acc_rows
             }
 
-            current_accounts  = [r[0] for r in acc_rows]
-            structure_changed = (current_accounts != _last_dd_accounts)
-
-            # ticker 표시명 — DB 쿼리 결과에서 직접 추출
-            ticker_name = acc_rows[0][10] or ticker if acc_rows else ticker
-
-            if structure_changed:
+            if acc_structure_changed:
                 _last_dd_accounts = current_accounts
                 _last_dd_display.clear()
-
-                def _section(rows_subset):
-                    return "".join(
-                        _build_drilldown_row_skeleton(acc_id, acc_name, alias, qty)
-                        for acc_id, acc_name, alias, is_watch, qty, avg_price, market, leverage, p, c, _
-                        in rows_subset
-                    )
-
-                html = _section(normal)
-                if watch:
-                    html += '<h4 class="section-heading">감시 계좌</h4>'
-                    html += _section(watch)
-
-                await session.send_custom_message("pfd_init", {
-                    "summary":           summary,
-                    "ticker_name":       ticker_name,
-                    "account_list_html": html,
+                await session.send_custom_message("pf_acc_init", {
+                    "tid":               tid,
+                    "account_list_html": _build_accordion_html(acc_rows),
                     "rows":              row_values,
                 })
             else:
-                current = {"summary": summary, **row_values}
-                diff = diff_display(current, _last_dd_display)
+                diff = diff_display(row_values, _last_dd_display)
                 if diff:
-                    await session.send_custom_message("pfd_tick", diff)
+                    await session.send_custom_message("pf_acc_tick", {"rows": diff})
+
+            _last_open_ticker = cur_open_ticker
+        else:
+            if _last_open_ticker is not None:
+                _last_dd_accounts = []
+                _last_dd_display.clear()
+                _last_open_ticker = None
 
         _initialized = True

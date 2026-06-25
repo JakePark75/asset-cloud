@@ -14,12 +14,11 @@ def _ticker_to_id(ticker: str) -> str:
 # ── 계좌 카드 ─────────────────────────────────────────────────────────────────
 
 def _build_account_card_skeleton(acc, ns_str):
-    """계좌 카드 골격 HTML — 드릴다운 계좌 카드와 동일한 ticker-row 컨셉 사용"""
+    """계좌 카드 골격 HTML — 클릭 시 아코디언 토글"""
     a_id, name, alias, total, cash, is_watch, prev_total = acc
     alias_str = f" ({alias})" if alias else ""
     return (
-        f'<div onclick="Shiny.setInputValue(\'{ns_str}card_clicked\', {a_id}, {{priority: \'event\'}});" '
-        f'style="cursor:pointer;">'
+        f'<div onclick="acToggleCard({a_id});" style="cursor:pointer;">'
         f'  <div class="ticker-row" id="ac-card-{a_id}">'
         f'    <div>'
         f'      <div class="lev-name-wrap">'
@@ -34,6 +33,7 @@ def _build_account_card_skeleton(acc, ns_str):
         f'      </div>'
         f'    </div>'
         f'  </div>'
+        f'  <div class="ac-accordion" id="ac-acc-{a_id}" style="display:none;"></div>'
         f'</div>'
     )
 

@@ -9,6 +9,7 @@ from app.modules.accounts_DAL import (
     fetch_account_details, calc_account_details,
     execute_buy, execute_sell,
 )
+# fetch_account_details / calc_account_details: 아코디언 종목 목록 조회에 재활용
 from app.modules.accounts_helpers import (
     _build_account_card_skeleton, _build_account_card_values,
     _build_position_row_skeleton, _build_position_row_values,
@@ -16,7 +17,7 @@ from app.modules.accounts_helpers import (
 )
 from app.modules.accounts_modals import modal_edit_position_html, modal_edit_position_js
 from app.db import get_db, get_usd_krw, get_market_map, get_market_label, get_market_currency
-from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change, build_summary_header_dom
+from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
 from app.price_signal import price_signal, daily_insert_signal
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display
@@ -85,24 +86,23 @@ def accounts_ui():
 
   // ── ac_list_init ───────────────────────────────────────────────────────
   Shiny.addCustomMessageHandler('ac_list_init', function(m) {
-    _applySummary(m.summary);
-    setText('ac-summary-label', m.summary.label);
     setHtml('ac-account-list', m.account_list_html);
-    setDisplay('ac-back-btn', 'none');
-    acGetEl('ac-summary-badge').classList.remove('is-active');
-    setDisplay('ac-list-view', '');
-    setDisplay('ac-detail-view', 'none');
+    // 열려있던 아코디언이 있으면 재오픈 표시 (내용은 ac_acc_init이 채움)
+    if (window._acOpenId) {
+      var accEl = document.getElementById('ac-acc-' + window._acOpenId);
+      if (accEl) {
+        accEl.style.display = '';
+        accEl.innerHTML = '<div class="pf-acc-loading">불러오는 중...</div>';
+      } else {
+        window._acOpenId = null;
+      }
+    }
     _applyAccountCards(m.cards);
   });
 
   // ── ac_list_tick ───────────────────────────────────────────────────────
   Shiny.addCustomMessageHandler('ac_list_tick', function(m) {
-    if (m.summary) {
-      _applySummary(m.summary);
-      setText('ac-summary-label', m.summary.label);
-    }
     Object.keys(m).forEach(function(key) {
-      if (key === 'summary') return;
       _applyOneCard(m[key]);
     });
   });
@@ -119,26 +119,48 @@ def accounts_ui():
     if (cashEl) cashEl.textContent = c.cash;
   }
 
-  // ── ac_detail_init ─────────────────────────────────────────────────────
-  Shiny.addCustomMessageHandler('ac_detail_init', function(m) {
-    _applySummary(m.summary);
-    setText('ac-summary-label', m.title);
-    setHtml('ac-position-list', m.position_list_html);
-    setDisplay('ac-back-btn', 'inline-block');
-    acGetEl('ac-summary-badge').classList.add('is-active');
-    setDisplay('ac-list-view', 'none');
-    setDisplay('ac-detail-view', '');
+  // ── ac_acc_init: 아코디언 내용 통째 교체 ──────────────────────────────
+  Shiny.addCustomMessageHandler('ac_acc_init', function(m) {
+    var el = document.getElementById('ac-acc-' + m.acc_id);
+    if (el) {
+      el.innerHTML = m.position_list_html;
+      el.style.display = '';
+    }
     _applyPositions(m.positions);
   });
 
-  // ── ac_detail_tick ─────────────────────────────────────────────────────
-  Shiny.addCustomMessageHandler('ac_detail_tick', function(m) {
-    if (m.summary) _applySummary(m.summary);
-    Object.keys(m).forEach(function(key) {
-      if (key === 'summary') return;
-      _applyOnePosition(m[key]);
+  // ── ac_acc_tick: 아코디언 변경값만 patch ──────────────────────────────
+  Shiny.addCustomMessageHandler('ac_acc_tick', function(m) {
+    Object.keys(m.positions || {}).forEach(function(key) {
+      _applyOnePosition(m.positions[key]);
     });
   });
+
+  // ── 아코디언 토글 (한번에 하나만 열림) ────────────────────────────────
+  window.acToggleCard = function(acc_id) {
+    var el = document.getElementById('ac-acc-' + acc_id);
+    if (!el) return;
+
+    if (window._acOpenId === acc_id) {
+      // 닫기
+      el.style.display = 'none';
+      el.innerHTML = '';
+      window._acOpenId = null;
+      Shiny.setInputValue(window._acNs + '-card_clicked', null, { priority: 'event' });
+      return;
+    }
+
+    // 이전에 열려있던 아코디언 닫기
+    if (window._acOpenId) {
+      var prevEl = document.getElementById('ac-acc-' + window._acOpenId);
+      if (prevEl) { prevEl.style.display = 'none'; prevEl.innerHTML = ''; }
+    }
+
+    window._acOpenId = acc_id;
+    el.style.display = '';
+    el.innerHTML = '<div class="pf-acc-loading">불러오는 중...</div>';
+    Shiny.setInputValue(window._acNs + '-card_clicked', acc_id, { priority: 'event' });
+  };
 
   function _applyPositions(positions) {
     Object.values(positions).forEach(function(p) { _applyOnePosition(p); });
@@ -197,15 +219,6 @@ def accounts_ui():
     }
   }
 
-  function _applySummary(s) {
-    setText('ac-summary-total', s.total);
-    var pnlEl = acGetEl('ac-summary-pnl');
-    if (pnlEl) { pnlEl.textContent = s.pnl_text; pnlEl.className = 'summary-delta ' + s.pnl_class; }
-    setDisplay('ac-usd-wrap', s.usd_text ? 'flex' : 'none');
-    var usdEl = acGetEl('ac-usd-text');
-    if (usdEl) { usdEl.textContent = s.usd_text; usdEl.className = s.usd_css; }
-  }
-
   // ── 현금 모달 ──────────────────────────────────────────────────────────
   var _editCashId = null;
 
@@ -221,7 +234,7 @@ def accounts_ui():
   window.acTriggerEditCashSave = function() {
     var tEl = document.getElementById('ac-edit-cash-type');
     var aEl = document.getElementById('ac-edit-cash-amount');
-    Shiny.setInputValue('accounts-btn_confirm_edit_cash', {
+    Shiny.setInputValue(window._acNs + '-btn_confirm_edit_cash', {
       pos_id:    _editCashId,
       cash_type: tEl ? tEl.value : 'KRW',
       amount:    aEl ? (parseFloat(aEl.value) || 0) : 0,
@@ -231,7 +244,7 @@ def accounts_ui():
 
   window.acTriggerCashDelete = function() {
     if (confirm('현금을 삭제하시겠습니까?')) {
-      Shiny.setInputValue('accounts-confirm_delete_cash',
+      Shiny.setInputValue(window._acNs + '-confirm_delete_cash',
         { pos_id: _editCashId }, {priority: 'event'});
       acHideModal('ac-modal-edit-cash');
     }
@@ -244,7 +257,7 @@ def accounts_ui():
     if (!ticker) return;
     var btn = document.getElementById('ac-new-pos-lookup-btn');
     if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
-    Shiny.setInputValue('accounts-lookup_ticker', { ticker: ticker, source: 'add' }, {priority: 'event'});
+    Shiny.setInputValue(window._acNs + '-lookup_ticker', { ticker: ticker, source: 'add' }, {priority: 'event'});
   };
 
   window.acLookupTickerEdit = function() {
@@ -253,7 +266,7 @@ def accounts_ui():
     if (!ticker) return;
     var btn = document.getElementById('ac-edit-pos-lookup-btn');
     if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
-    Shiny.setInputValue('accounts-lookup_ticker', { ticker: ticker, source: 'edit' }, {priority: 'event'});
+    Shiny.setInputValue(window._acNs + '-lookup_ticker', { ticker: ticker, source: 'edit' }, {priority: 'event'});
   };
 
   // ── 종목명으로 레버리지 배수 추론 ────────────────────────────────────────
@@ -374,7 +387,7 @@ def accounts_ui():
       }
     }
 
-    Shiny.setInputValue('accounts-btn_confirm_add_position', {
+    Shiny.setInputValue(window._acNs + '-btn_confirm_add_position', {
       name:     nameEl     ? nameEl.value     : '',
       ticker:   tickerEl   ? tickerEl.value   : '',
       market:   market,
@@ -391,13 +404,6 @@ def accounts_ui():
 })();
         """),
 
-        # ── Summary 헤더 ──────────────────────────────────────────────────────
-        build_summary_header_dom(
-            id_prefix        = "ac",
-            label_text       = "계좌",
-            back_btn_onclick = "Shiny.setInputValue('accounts-btn_back', Math.random(), {priority: 'event'});",
-        ),
-
         # ── 계좌 목록 화면 ────────────────────────────────────────────────────
         ui.div(
             {"id": "ac-list-view"},
@@ -407,33 +413,6 @@ def accounts_ui():
                     "+ 계좌 추가",
                     class_="btn-add",
                     onclick="acShowModal('ac-modal-add-account');",
-                ),
-                class_="page-inner",
-            ),
-        ),
-
-        # ── 계좌 상세 화면 ────────────────────────────────────────────────────
-        ui.div(
-            {"id": "ac-detail-view", "style": "display:none;"},
-            ui.div(
-                ui.div({"id": "ac-position-list"}),
-                ui.div(
-                    ui.tags.button(
-                        "+ 종목 추가",
-                        class_="btn-add",
-                        onclick="acShowModal('ac-modal-add-position'); acUpdateAddPreview();",
-                    ),
-                    ui.tags.button(
-                        "+ 현금 추가",
-                        class_="btn-add",
-                        onclick="acShowModal('ac-modal-add-cash');",
-                    ),
-                    ui.tags.button(
-                        "계좌 삭제",
-                        class_="btn-account-delete-bottom",
-                        onclick="if(confirm('계좌를 삭제하시겠습니까?')) Shiny.setInputValue('accounts-confirm_delete_account', Math.random(), {priority: 'event'});",
-                    ),
-                    style="margin-top:20px;",
                 ),
                 class_="page-inner",
             ),
@@ -463,7 +442,7 @@ def accounts_ui():
                 ui.tags.button(
                     "추가", class_="btn-add",
                     onclick=(
-                        "Shiny.setInputValue('accounts-btn_confirm_add', {"
+                        "Shiny.setInputValue(window._acNs + '-btn_confirm_add', {"
                         "  name: document.getElementById('ac-new-account-name').value,"
                         "  alias: document.getElementById('ac-new-account-alias').value,"
                         "  is_watch: document.getElementById('ac-new-account-is-watch').checked"
@@ -576,7 +555,7 @@ def accounts_ui():
                 ui.tags.button(
                     "추가", class_="btn-add",
                     onclick=(
-                        "Shiny.setInputValue('accounts-btn_confirm_add_cash', {"
+                        "Shiny.setInputValue(window._acNs + '-btn_confirm_add_cash', {"
                         "  cash_type: document.getElementById('ac-new-cash-type').value,"
                         "  amount: parseFloat(document.getElementById('ac-new-cash-amount').value) || 0"
                         "}, {priority: 'event'});"
@@ -633,17 +612,19 @@ def accounts_ui():
 # ── Server ────────────────────────────────────────────────────────────────────
 
 @module.server
-def accounts_server(input, output, session, active_tab: reactive.value = None):
+def accounts_server(input, output, session, active_tab: reactive.value = None,
+                    active_sub_tab: reactive.value = None):
     
-    _initialized     = False  # 일반 변수: effect 자기-재트리거 방지
-    selected_account = reactive.value(None)
-    refresh          = reactive.value(0)
+    ns_str = session.ns("_")[:-1]  # "asset-accounts" 등 실제 prefix
 
-    ns_str = session.ns("_")[:-1]  # "accounts-" 접두사
+    _initialized = False  # 일반 변수: effect 자기-재트리거 방지
+    open_account = reactive.value(None)
+    refresh      = reactive.value(0)
 
     _last_accounts:  list = []
-    _last_positions: list = []
-    _last_display:   dict = {}
+    _last_list_disp: dict = {}   # 계좌 목록 diff 캐시
+    _last_positions: dict = {}   # open_account → [pos_id, ...] (아코디언 구조 변경 감지)
+    _last_acc_disp:  dict = {}   # 아코디언 종목 diff 캐시
 
     # ── DB 캐시 (price_signal 비의존, 구조만) ───────────────────────────────
 
@@ -653,9 +634,9 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         return fetch_accounts_summary()  # 시세 없음, 구조만
 
     @reactive.calc
-    def _db_detail():
+    def _db_account_positions():
         refresh()
-        acc_id = selected_account()
+        acc_id = open_account()
         if acc_id is None:
             return None
         return fetch_account_details(acc_id)  # 시세 없음, 구조만
@@ -664,135 +645,112 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
 
     @reactive.effect
     async def _send_update():
-        nonlocal _last_accounts, _last_positions, _last_display
+        nonlocal _last_accounts, _last_list_disp, _last_positions, _last_acc_disp
         nonlocal _initialized
         price_signal.get()
         daily_insert_signal.get()
+        acc_id = open_account()  # 탭 가드 전에 의존성 등록
 
-        if _initialized and active_tab and active_tab.get() != "accounts":
+        tab = active_sub_tab if active_sub_tab is not None else active_tab
+        if _initialized and tab and tab.get() != "accounts":
             return
 
         usd_rate_val, usd_chg = get_usd_krw()
-        acc_id = selected_account()
 
-        if acc_id is None:
-            from common.redis_store import get_all_prices
-            prices   = get_all_prices()
-            accounts = calc_accounts_summary(_db_accounts(), prices, usd_rate_val)
-            # accounts: [(id, name, alias, total, cash, is_watch, prev_total), ...]
-            normal   = [a for a in accounts if not a[5]]
-            watch    = [a for a in accounts if a[5]]
+        # ── 계좌 목록 갱신 ──────────────────────────────────────────────────
+        from common.redis_store import get_all_prices
+        prices   = get_all_prices()
+        accounts = calc_accounts_summary(_db_accounts(), prices, usd_rate_val)
+        normal   = [a for a in accounts if not a[5]]
+        watch    = [a for a in accounts if a[5]]
 
-            total_sum       = sum(a[3] for a in normal)
-            yesterday_total = sum(a[6] for a in normal)
-            pnl_sum         = total_sum - yesterday_total
-            pnl_pct_sum     = (pnl_sum / yesterday_total * 100) if yesterday_total > 0 else 0
-            summary = _build_summary_html("총자산", total_sum, pnl_sum, pnl_pct_sum,
-                                          usd_rate_val, usd_chg)
+        total_sum       = sum(a[3] for a in normal)
+        yesterday_total = sum(a[6] for a in normal)
+        pnl_sum         = total_sum - yesterday_total
+        pnl_pct_sum     = (pnl_sum / yesterday_total * 100) if yesterday_total > 0 else 0
+        summary = _build_summary_html("총자산", total_sum, pnl_sum, pnl_pct_sum,
+                                      usd_rate_val, usd_chg)
 
-            card_values = {str(a[0]): _build_account_card_values(a) for a in accounts}
-            current_accounts = [a[0] for a in accounts]
-            structure_changed = (current_accounts != _last_accounts)
+        card_values = {str(a[0]): _build_account_card_values(a) for a in accounts}
+        current_accounts = [a[0] for a in accounts]
+        structure_changed = (current_accounts != _last_accounts)
 
-            if structure_changed:
-                _last_accounts = current_accounts
-                _last_display.clear()
-                if normal:
-                    skeleton_html = "".join(
-                        _build_account_card_skeleton(a, ns_str) for a in normal
-                    )
-                else:
-                    skeleton_html = '<p style="color:#888; padding:16px 0;">등록된 계좌가 없습니다.</p>'
-                if watch:
-                    skeleton_html += '<h4 class="section-heading">감시 계좌</h4>'
-                    skeleton_html += "".join(
-                        _build_account_card_skeleton(a, ns_str) for a in watch
-                    )
-                await session.send_custom_message("ac_list_init", {
-                    "summary":           summary,
-                    "account_list_html": skeleton_html,
-                    "cards":             card_values,
-                })
+        if structure_changed:
+            _last_accounts = current_accounts
+            _last_list_disp.clear()
+            if normal:
+                skeleton_html = "".join(
+                    _build_account_card_skeleton(a, ns_str) for a in normal
+                )
             else:
-                current = {"summary": summary, **card_values}
-                diff = diff_display(current, _last_display)
-                if diff:
-                    await session.send_custom_message("ac_list_tick", diff)
-
+                skeleton_html = '<p style="color:#888; padding:16px 0;">등록된 계좌가 없습니다.</p>'
+            if watch:
+                skeleton_html += '<h4 class="section-heading">감시 계좌</h4>'
+                skeleton_html += "".join(
+                    _build_account_card_skeleton(a, ns_str) for a in watch
+                )
+            await session.send_custom_message("ac_list_init", {
+                "summary":           summary,
+                "account_list_html": skeleton_html,
+                "cards":             card_values,
+            })
         else:
-            db_detail = _db_detail()
+            current = {"summary": summary, **card_values}
+            diff = diff_display(current, _last_list_disp)
+            if diff:
+                await session.send_custom_message("ac_list_tick", diff)
+
+        # ── 아코디언 종목 갱신 (열려있을 때만) ─────────────────────────────
+        if acc_id is not None:
+            db_detail = _db_account_positions()
             if db_detail is None:
                 return
             acc_row, db_rows = db_detail
 
-            from common.redis_store import get_all_prices
-            prices = get_all_prices()
             acc, positions, usd_rate = calc_account_details(acc_row, db_rows, prices, usd_rate_val)
 
-            prev_total = float(acc[3])
-            total_sum  = 0
-            for pos in positions:
-                _, ticker, qty, _, price, _, t_market, _, _ = pos
-                qty_f   = float(qty   or 0)
-                price_f = float(price or 0)
-                rate = usd_rate if (get_market_currency(t_market) == "USD" or ticker == "USD") else 1
-                amt  = qty_f * (price_f if ticker not in ('KRW', 'USD') else 1) * rate
-                total_sum += amt
-
-            pnl_sum     = total_sum - prev_total
-            pnl_pct_sum = (pnl_sum / prev_total * 100) if prev_total > 0 else 0
-            title       = acc[0] + (f" ({acc[1]})" if acc[1] else "")
-            summary     = _build_summary_html("계좌자산", total_sum, pnl_sum, pnl_pct_sum,
-                                              usd_rate_val, usd_chg)
-
             pos_values = {str(p[0]): _build_position_row_values(p, usd_rate) for p in positions}
-            current_positions = [p[0] for p in positions]
-            structure_changed = (current_positions != _last_positions)
+            current_pos_ids = [p[0] for p in positions]
+            pos_structure_changed = (_last_positions.get(acc_id) != current_pos_ids)
 
-            if structure_changed:
-                _last_positions = current_positions
-                _last_display.clear()
+            if pos_structure_changed:
+                _last_positions[acc_id] = current_pos_ids
+                _last_acc_disp.clear()
                 if positions:
                     skeleton_html = "".join(
                         _build_position_row_skeleton(p, ns_str) for p in positions
                     )
                 else:
                     skeleton_html = '<p style="color:#888; padding:16px;">종목이 없습니다.</p>'
-                await session.send_custom_message("ac_detail_init", {
-                    "summary":            summary,
-                    "title":              title,
+                await session.send_custom_message("ac_acc_init", {
+                    "acc_id":             acc_id,
                     "position_list_html": skeleton_html,
                     "positions":          pos_values,
                 })
             else:
-                current = {"summary": summary, **pos_values}
-                diff = diff_display(current, _last_display)
+                diff = diff_display(pos_values, _last_acc_disp)
                 if diff:
-                    await session.send_custom_message("ac_detail_tick", diff)
+                    await session.send_custom_message("ac_acc_tick", {
+                        "positions": diff,
+                    })
 
         _initialized = True
 
-    # ── 계좌 카드 클릭 ────────────────────────────────────────────────────────
+    # ── 계좌 카드 클릭 (아코디언 토글) ──────────────────────────────────────
 
     @reactive.effect
     @reactive.event(input.card_clicked)
     def _handle_card_click():
-        nonlocal _last_display, _last_positions
+        nonlocal _last_acc_disp, _last_positions
         acc_id = input.card_clicked()
-        if acc_id is not None:
-            _last_display.clear()
-            _last_positions = []
-            selected_account.set(acc_id)
-
-    # ── 뒤로가기 ──────────────────────────────────────────────────────────────
-
-    @reactive.effect
-    @reactive.event(input.btn_back)
-    def _go_back():
-        nonlocal _last_display, _last_accounts
-        _last_display.clear()
-        _last_accounts = []
-        selected_account.set(None)
+        if acc_id is None:
+            # 닫기
+            _last_acc_disp.clear()
+            open_account.set(None)
+        else:
+            _last_acc_disp.clear()
+            _last_positions.pop(acc_id, None)
+            open_account.set(acc_id)
 
     # ── 티커 자동조회 ─────────────────────────────────────────────────────────
 
@@ -873,7 +831,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
     @reactive.effect
     @reactive.event(input.confirm_delete_account)
     def _delete_account():
-        acc_id = selected_account()
+        acc_id = open_account()
         if acc_id is None:
             return
         with get_db() as conn:
@@ -881,7 +839,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             cur.execute("DELETE FROM accounts WHERE id = %s", (acc_id,))
             conn.commit()
             cur.close()
-        selected_account.set(None)
+        open_account.set(None)
         refresh.set(refresh() + 1)
         _notify_position_changed()
 
@@ -901,7 +859,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
         avg_price = payload.get("avg_price")
         if avg_price is not None:
             avg_price = float(avg_price)
-        acc_id    = selected_account()
+        acc_id    = open_account()
         if not ticker or not acc_id:
             return
         with get_db() as conn:
@@ -938,7 +896,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None):
             return
         cash_type = str(payload.get("cash_type", "KRW"))
         amount    = float(payload.get("amount", 0))
-        acc_id    = selected_account()
+        acc_id    = open_account()
         if not acc_id:
             return
         with get_db() as conn:

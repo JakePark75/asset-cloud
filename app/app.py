@@ -5,9 +5,7 @@ from starlette.routing import Mount
 # app. 으로 시작하는 정석 경로
 from app.context_api import routes as context_routes
 from app.export_api import routes as export_routes
-from app.modules.dashboard import dashboard_ui, dashboard_server
-from app.modules.portfolio import portfolio_ui, portfolio_server
-from app.modules.accounts import accounts_ui, accounts_server
+from app.modules.asset import asset_ui, asset_server
 from app.modules.history import history_ui, history_server
 from app.modules.settings import settings_ui, settings_server
 from app.auth import verify_login, create_token, verify_token
@@ -38,19 +36,15 @@ app_ui = ui.page_fluid(
     # 메인 화면
     ui.div(
         ui.div(
-            ui.div(dashboard_ui("dashboard"), id="tab-dashboard", class_="tab-content active"),
-            ui.div(portfolio_ui("portfolio"), id="tab-portfolio", class_="tab-content"),
-            ui.div(accounts_ui("accounts"), id="tab-accounts", class_="tab-content"),
-            ui.div(history_ui("history"), id="tab-history", class_="tab-content"),
+            ui.div(asset_ui("asset"),       id="tab-asset",    class_="tab-content active"),
+            ui.div(history_ui("history"),   id="tab-history",  class_="tab-content"),
             ui.div(settings_ui("settings"), id="tab-settings", class_="tab-content"),
             style="padding-bottom: 70px;"
         ),
         ui.div(
-            ui.div(ui.HTML("📊<br><span>대시보드</span>"), class_="tab-btn active", onclick="switchTab('dashboard', this)"),
-            ui.div(ui.HTML("💼<br><span>포트폴리오</span>"), class_="tab-btn", onclick="switchTab('portfolio', this)"),
-            ui.div(ui.HTML("🏦<br><span>계좌</span>"), class_="tab-btn", onclick="switchTab('accounts', this)"),
-            ui.div(ui.HTML("📈<br><span>실적</span>"), class_="tab-btn", onclick="switchTab('history', this)"),
-            ui.div(ui.HTML("⚙️<br><span>설정</span>"), class_="tab-btn", onclick="switchTab('settings', this)"),
+            ui.div(ui.HTML("💼<br><span>자산</span>"),  class_="tab-btn active", onclick="switchTab('asset', this)"),
+            ui.div(ui.HTML("📈<br><span>실적</span>"),  class_="tab-btn", onclick="switchTab('history', this)"),
+            ui.div(ui.HTML("⚙️<br><span>관리</span>"),  class_="tab-btn", onclick="switchTab('settings', this)"),
             class_="bottom-tabbar"
         ),
         id="screen-main",
@@ -79,9 +73,9 @@ app_ui = ui.page_fluid(
         function restoreTab() {
             var saved = localStorage.getItem('activeTab');
             if (!saved) return;
-            var tabNames = ['dashboard', 'portfolio', 'accounts', 'history', 'settings'];
+            var tabNames = ['asset', 'history', 'settings'];
             var idx = tabNames.indexOf(saved);
-            if (idx === -1) return;
+            if (idx === -1) { saved = 'asset'; idx = 0; }
             var content = document.getElementById('tab-' + saved);
             var btns = document.querySelectorAll('.tab-btn');
             if (!content || btns.length <= idx) return;
@@ -171,16 +165,14 @@ def server(input, output, session):
     from app.db import get_config
     start_signal_listener()
 
-    active_tab = reactive.value("dashboard")
+    active_tab = reactive.value("asset")
 
     @reactive.effect
     @reactive.event(input.active_tab)
     def _sync_active_tab():
         active_tab.set(input.active_tab())
 
-    dashboard_server("dashboard", active_tab=active_tab)
-    portfolio_server("portfolio", active_tab=active_tab)
-    accounts_server("accounts", active_tab=active_tab)
+    asset_server("asset", active_tab=active_tab)
     history_server("history", active_tab=active_tab)
     settings_server("settings", active_tab=active_tab)
 

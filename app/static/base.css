@@ -268,6 +268,7 @@ body {
 
 /*    */
 #screen-login .shiny-input-container { width: 100%; }
+
 /* render_summary_header — 대시보드 히어로 스타일 */
 .summary-badge {
     display: inline-flex;
@@ -319,4 +320,36 @@ body {
 
 .form-control {
     font-size: 16px;
+}
+
+/* 서브탭 */
+.asset-sub-tabbar {
+    display: flex;
+    background-color: var(--bg);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+    padding: 0;
+}
+
+.asset-sub-btn {
+    flex: 1;
+    text-align: center;
+    padding: 10px 0;
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    letter-spacing: 0.06em;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.asset-sub-btn.active {
+    color: var(--green);
+    border-bottom-color: var(--green);
+    font-weight: 600;
+}
+
+.asset-sub-content {
+    display: none;
 }

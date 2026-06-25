@@ -8,12 +8,11 @@ from app.price_signal import price_signal as _price_signal, daily_insert_signal 
 from app.utils.metrics import (
     to_f, calculate_xirr, calculate_monthly_irr, calculate_period_irr,
     calculate_alpha, calculate_beta, calculate_drawdown_metrics,
-    calculate_daily_profit, calculate_retirement_asset,
+    calculate_retirement_asset,
     calculate_exposure_and_ratios,
 )
 from app.modules.components import fmt_krw, fmt_pct
 from app.utils.display_diff import diff_display
-
 
 # ── 포맷 헬퍼 ────────────────────────────────────────────────
 
@@ -43,7 +42,6 @@ def _fmt_krw_short(val: float) -> str:
         return f"₩{abs_val / 10_000:.0f}만"
     return fmt_krw(abs_val)
 
-
 # ── DAL ──────────────────────────────────────────────────────
 
 def _load_summary_data(rows, raw_rows) -> dict:
@@ -62,7 +60,6 @@ def _load_summary_data(rows, raw_rows) -> dict:
     # usd_krw: prices hash 우선, 없으면 fallback
     fx_data = prices.get("USDKRW=X")
     usd_krw = float(fx_data["price"]) if fx_data else 1300.0
-    usd_chg = float(fx_data["change_pct"]) if fx_data else 0.0
 
     # ^NDX: prices hash 우선, 없으면 None (live_ndx100 = None → prev 사용)
     ndx_data    = prices.get("^NDX")
@@ -107,10 +104,6 @@ def _load_summary_data(rows, raw_rows) -> dict:
     prev_asset  = to_f(latest[1])
     prev_twr    = to_f(latest[9])
     prev_ndx100 = to_f(latest[3])
-
-    asset_delta     = total_asset - prev_asset
-    asset_delta_pct = (asset_delta / prev_asset) if prev_asset else 0.0
-    daily_profit    = calculate_daily_profit(total_asset, prev_asset)
 
     # 오늘 입출금 — Redis에서 읽기 (실패 시 0으로 진행)
     today_cash_flow = 0
@@ -172,23 +165,9 @@ def _load_summary_data(rows, raw_rows) -> dict:
 
     retirement_asset = calculate_retirement_asset(total_asset, monthly_irr, retirement_date)
 
-    # 히어로 차트용: total_asset 이력 최대 100포인트 샘플링 (실시간 마지막 포인트 추가)
-    all_assets = [to_f(r[1]) for r in rows] + [total_asset]
-    n = len(all_assets)
-    if n > 100:
-        step = n / 100
-        sampled = [all_assets[int(i * step)] for i in range(100)]
-        sampled[-1] = total_asset
-    else:
-        sampled = all_assets
-    chart_data = sampled
-
     return {
         "latest_date":      today,
         "total_asset":      total_asset,
-        "asset_delta":      asset_delta,
-        "asset_delta_pct":  asset_delta_pct,
-        "daily_profit":     daily_profit,
         "exposure":         exposure,
         "cash_ratio":       cash_ratio,
         "cash_eval":        cash_eval,
@@ -209,11 +188,7 @@ def _load_summary_data(rows, raw_rows) -> dict:
         "dd_ndx":           dd_ndx,
         "retirement_asset": retirement_asset,
         "retirement_date":  retirement_date,
-        "chart_data":       chart_data,
-        "usd_krw":          usd_krw,
-        "usd_chg":          usd_chg,
     }
-
 
 def _load_position_data(rows) -> list[dict]:
     # ---------------------------------------------------------------------------
@@ -252,7 +227,6 @@ def _load_position_data(rows) -> list[dict]:
             "eval_krw": eval_krw,
         })
     return result
-
 
 # ── SVG 헬퍼 ─────────────────────────────────────────────────
 
@@ -319,42 +293,6 @@ def _donut_svg(slices: list[dict]) -> str:
     return f'''<svg viewBox="0 0 130 130" xmlns="http://www.w3.org/2000/svg">
 {paths_html}
 </svg>'''
-
-def _hero_line_svg(values: list[float]) -> str:
-    if not values or len(values) < 2:
-        return ""
-    
-    # 1. 데이터를 0~100 좌표계로 정규화
-    min_v, max_v = min(values), max(values)
-    v_range = (max_v - min_v) or 1
-    
-    pts = []
-    for i, v in enumerate(values):
-        x = (i / (len(values) - 1)) * 100
-        y = 100 - ((v - min_v) / v_range) * 100
-        pts.append((x, y))
-    
-    # 2. Path와 Polyline 생성
-    polyline = " ".join(f"{x:.0f},{y:.0f}" for x, y in pts)
-    fill_d = f"M {pts[0][0]:.0f},{pts[0][1]:.0f} " + \
-             " ".join(f"L {x:.0f},{y:.0f}" for x, y in pts[1:]) + \
-             f" L {pts[-1][0]:.0f},100 L {pts[0][0]:.0f},100 Z"
-             
-    # 3. 뷰박스 고정 + preserveAspectRatio="none" (강제 맵핑)
-    # vector-effect="non-scaling-stroke" (선 굵기 유지)
-    return f'''<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="display:block; width:100%; height:100%;">
-  <defs>
-    <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#00c073" stop-opacity="0.25"/>
-      <stop offset="100%" stop-color="#00c073" stop-opacity="0.0"/>
-    </linearGradient>
-  </defs>
-  <path d="{fill_d}" fill="url(#hg)" />
-  <polyline points="{polyline}" fill="none" stroke="#00c073" stroke-width="2" 
-            vector-effect="non-scaling-stroke" 
-            stroke-linejoin="round" stroke-linecap="round"/>
-</svg>'''
-
 
 # ── 도넛 데이터 빌더 (server에서 공유) ───────────────────────
 
@@ -444,7 +382,6 @@ def _build_donut_payload(positions: list[dict]) -> dict:
         "subtitle": subtitle,
     }
 
-
 # ── UI ───────────────────────────────────────────────────────
 
 def _dashboard_ui_dom_patch():
@@ -482,19 +419,6 @@ def _dashboard_ui_dom_patch():
   }
 
   Shiny.addCustomMessageHandler('db_update', function(m) {
-
-    // ── 히어로 (텍스트) ───────────────────────────────
-    if (m.hero_text) {
-      setText('db-hero-amount',      m.hero_text.total_asset);
-      setText('db-hero-delta-text',  m.hero_text.delta_text);
-      setClass('db-hero-delta-text', 'db-hero-delta', pnlClass(m.hero_text.delta_val));
-      setText('db-hero-usd-text', m.hero_text.usd_text);
-      setClass('db-hero-usd-text', '', pnlClass(m.hero_text.usd_chg_val));
-    }
-    // ── 히어로 (차트 SVG) ─────────────────────────────
-    if (m.hero_chart_svg !== undefined) {
-      setHTML('db-hero-chart-inner', m.hero_chart_svg);
-    }
 
     // ── Exposure ─────────────────────────────────────
     if (m.exposure) {
@@ -585,33 +509,6 @@ def _dashboard_ui_dom_patch():
 
         ui.div(
             {"class": "page-inner"},
-
-            # ── 총자산 히어로 ─────────────────────────────
-            ui.div(
-                {"class": "db-hero"},
-                ui.div({"id": "db-hero-chart-inner", "class": "db-hero-chart"}),
-                ui.div(
-                    {"class": "db-hero-content"},
-                    ui.div(
-                        ui.div(
-                            {"class": "summary-badge"},
-                            ui.span("총자산", class_="summary-badge-text"),
-                        ),
-                        style="display:flex; align-items:center; height:20px; margin-bottom:4px;",
-                    ),
-                    ui.div("–", id="db-hero-amount", class_="db-hero-amount"),
-                    ui.div(
-                        {"class": "db-hero-delta-row"},
-                        ui.span("–", id="db-hero-delta-text", class_="db-hero-delta"),
-                        ui.span(
-                            {"id": "db-hero-usd-wrap",
-                             "style": "margin-left:auto; display:flex; align-items:baseline; gap:4px;"},
-                            ui.span("USD", style="font-size:11px; color:#888888;"),
-                            ui.span("–", id="db-hero-usd-text", style="font-size:13px;"),
-                        ),
-                    ),
-                ),
-            ),
 
             # ── 오늘 ──────────────────────────────────────
             ui.div(
@@ -768,57 +665,58 @@ def _dashboard_ui_dom_patch():
         ),
     )
 
-
 @module.ui
 def dashboard_ui():
     return _dashboard_ui_dom_patch()
 
-
 # ── Server ───────────────────────────────────────────────────
 @module.server
-def dashboard_server(input, output, session, active_tab: reactive.value = None):
+def dashboard_server(input, output, session, active_tab: reactive.value = None,
+                     active_sub_tab: reactive.value = None,
+                     db_summary_rows=None, db_position_rows=None):
 
     _initialized = False  # 일반 변수: data()/position_data()/_send_update() 자기-재트리거 방지
     _last_display: dict = {}
 
     # ── DB 캐시 ──────────────────────────────────────────────────────────────
-    # positions 메타, tickers 메타, daily_summary 이력은
-    # position_changed / ticker_changed / daily_insert_signal 때만 DB 재조회.
-    # price_updated 시에는 캐시 그대로 사용 — Redis 시세만 새로 읽음.
+    # asset 서버에서 주입된 경우 그대로 사용, 없으면 자체 조회 (독립 실행 대비).
+    if db_summary_rows is None:
+        @reactive.calc
+        def _db_summary_rows():
+            _daily_insert_signal.get()
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT date, total_asset, cash_flow, ndx100,
+                           exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
+                    FROM daily_summary
+                    ORDER BY date ASC
+                """)
+                rows = cur.fetchall()
+                cur.close()
+            return rows
+    else:
+        _db_summary_rows = db_summary_rows
 
-    @reactive.calc
-    def _db_summary_rows():
-        """daily_summary 전체 이력 — daily_insert_signal 시에만 재조회."""
-        _daily_insert_signal.get()
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT date, total_asset, cash_flow, ndx100,
-                       exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
-                FROM daily_summary
-                ORDER BY date ASC
-            """)
-            rows = cur.fetchall()
-            cur.close()
-        return rows
-
-    @reactive.calc
-    def _db_position_rows():
-        """positions + tickers 메타 — position_changed / ticker_changed 시에만 재조회."""
-        _position_signal.get()
-        _ticker_signal.get()
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT p.ticker, p.quantity, t.leverage, t.market
-                FROM positions p
-                LEFT JOIN tickers t ON p.ticker = t.ticker
-                LEFT JOIN accounts a ON p.account_id = a.id
-                WHERE a.is_watch = false
-            """)
-            rows = cur.fetchall()
-            cur.close()
-        return rows
+    if db_position_rows is None:
+        @reactive.calc
+        def _db_position_rows():
+            _position_signal.get()
+            _ticker_signal.get()
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT p.ticker, p.quantity, t.leverage, t.market
+                    FROM positions p
+                    LEFT JOIN tickers t ON p.ticker = t.ticker
+                    LEFT JOIN accounts a ON p.account_id = a.id
+                    WHERE a.is_watch = false
+                """)
+                rows = cur.fetchall()
+                cur.close()
+            return rows
+    else:
+        _db_position_rows = db_position_rows
 
     @reactive.calc
     def _db_position_detail_rows():
@@ -849,7 +747,8 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
         _daily_insert_signal.get()
         _position_signal.get()
         _ticker_signal.get()
-        if _initialized and active_tab and active_tab.get() != "dashboard":
+        tab = active_sub_tab if active_sub_tab is not None else active_tab
+        if _initialized and tab and tab.get() != "dashboard":
             return None
         return _load_summary_data(_db_summary_rows(), _db_position_rows())
 
@@ -862,7 +761,8 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
         _price_signal.get()
         _position_signal.get()
         _ticker_signal.get()
-        if _initialized and active_tab and active_tab.get() != "dashboard":
+        tab = active_sub_tab if active_sub_tab is not None else active_tab
+        if _initialized and tab and tab.get() != "dashboard":
             return None
         return _load_position_data(_db_position_detail_rows())
 
@@ -874,25 +774,13 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
     @reactive.effect
     async def _send_update():
             nonlocal _initialized
-            if _initialized and active_tab and active_tab.get() != "dashboard":
+            tab = active_sub_tab if active_sub_tab is not None else active_tab
+            if _initialized and tab and tab.get() != "dashboard":
                 return
             d = data()
             positions = position_data()
             if not d:
                 return
-
-            # ── 히어로 ──────────────────────────────────────
-            delta     = d["asset_delta"]
-            pct       = d["asset_delta_pct"]
-            chart_svg = _hero_line_svg(d.get("chart_data", []))
-            hero = {
-                "total_asset": fmt_krw(d["total_asset"]),
-                "delta_text":  f"{_arrow(delta)}{fmt_krw(abs(delta))}  {_fmt_ratio_pct(pct)}",
-                "delta_val":   delta,
-                "chart_svg":   chart_svg,
-                "usd_text":    f"{d['usd_krw']:,.2f} {fmt_pct(d['usd_chg'])}",
-                "usd_chg_val": d["usd_chg"],
-            }
 
             # ── Exposure ─────────────────────────────────────
             exposure   = d["exposure"]
@@ -1022,14 +910,6 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None):
             }
 
             current = {
-                "hero_text": {
-                    "total_asset": hero["total_asset"],
-                    "delta_text":  hero["delta_text"],
-                    "delta_val":   hero["delta_val"],
-                    "usd_text":    hero["usd_text"],
-                    "usd_chg_val": hero["usd_chg_val"],
-                },
-                "hero_chart_svg": hero["chart_svg"],
                 "exposure": exposure_payload,
                 "irr":   irr,
                 "alpha": alpha,
