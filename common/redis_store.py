@@ -153,6 +153,22 @@ def publish_news_keyword_changed() -> None:
         print(f"[redis_store] publish_news_keyword_changed 실패: {e}")
 
 
+def publish_news_source_changed() -> None:
+    """
+    news_source_changed 채널에 신호 발행.
+    settings.py에서 소스 추가/수정/삭제/토글 완료 후 호출.
+    news_fetcher.py가 구독 중이며, 수신 즉시 재폴링을 실행한다.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return
+        r.publish("news_source_changed", "1")
+    except Exception as e:
+        print(f"[redis_store] publish_news_source_changed 실패: {e}")
+
+
 def publish_news_feed_updated() -> None:
     """
     news_feed_updated 채널에 신호 발행.

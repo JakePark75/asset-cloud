@@ -4,12 +4,17 @@ news_fetcher.py
 단어 단위로 매칭되는 기사만 번역 후 Redis에 캐시한다.
 
 동작 방식:
-    1. DB에서 enabled=true 인 news_sources, 전체 news_keywords 로드
-    2. 각 소스를 feedparser로 폴링, 제목 키워드 매칭(단어 단위, 대소문자 무시)
+    1. DB에서 enabled=true 인 news_sources(+lang), 전체 news_keywords(+lang) 로드
+    2. 각 소스를 feedparser로 폴링, 소스 lang에 따라 적용 키워드 결정:
+       - 소스 lang=en → en 키워드만 매칭
+       - 소스 lang=ko → en + ko 키워드 모두 매칭
     3. 매칭된 기사만 제목 번역 (URL 해시 기준 Redis 캐시, TTL 1시간)
-       - 번역 실패 시 원문 제목 + "[번역실패]" 표시, 해당 기사만 스킵하지 않고 진행
-    4. 매칭 기사 리스트를 발행시각 내림차순 정렬 후 Redis news:feed 에 저장 (TTL 5분)
-    5. asyncio 기반 두 태스크 병렬 실행:
+       - ko 소스 기사는 번역 없이 원문 그대로 표시 (이미 한국어)
+       - en 소스 번역 실패 시 원문 제목 + "[번역실패]" 표시, 스킵하지 않고 진행
+    4. 동일 제목 중복 제거 (제목 정규화 후 첫 번째 기사만 유지)
+    5. 매칭 기사 리스트에 matched_keywords 필드 포함, 발행시각 내림차순 정렬 후
+       Redis news:feed 에 저장 (TTL 5분)
+    6. asyncio 기반 두 태스크 병렬 실행:
        - _poll_loop: 5분 주기 정기 폴링
        - _keyword_listener: news_keyword_changed 채널 구독, 수신 시 즉시 재폴링
 
@@ -54,26 +59,27 @@ POLL_INTERVAL_SECONDS = 300  # 5분
 # ---------------------------------------------------------------------------
 # DB 로드
 # ---------------------------------------------------------------------------
-def _fetch_enabled_sources() -> list[tuple[str, str]]:
-    """enabled=true 인 (name, url) 목록 반환."""
+def _fetch_enabled_sources() -> list[tuple[str, str, str]]:
+    """enabled=true 인 (name, url, lang) 목록 반환."""
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT name, url FROM news_sources WHERE enabled = TRUE")
+            cur.execute("SELECT name, url, lang FROM news_sources WHERE enabled = TRUE")
             return cur.fetchall()
 
 
-def _fetch_keywords() -> list[str]:
-    """등록된 키워드 문자열 목록 반환."""
+def _fetch_keywords() -> list[tuple[str, str]]:
+    """등록된 (keyword, lang) 목록 반환."""
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT keyword FROM news_keywords")
-            return [row[0] for row in cur.fetchall()]
+            cur.execute("SELECT keyword, lang FROM news_keywords")
+            return cur.fetchall()
 
 
 # ---------------------------------------------------------------------------
-# 키워드 매칭 (단어 단위, 대소문자 무시)
+# 키워드 패턴 빌드 (단어 단위, 대소문자 무시)
 # ---------------------------------------------------------------------------
-def _build_keyword_pattern(keywords: list[str]) -> re.Pattern | None:
+def _build_pattern(keywords: list[str]) -> re.Pattern | None:
+    """주어진 키워드 목록으로 단어 단위 매칭 패턴 생성."""
     if not keywords:
         return None
     escaped = [re.escape(kw) for kw in keywords if kw.strip()]
@@ -83,10 +89,18 @@ def _build_keyword_pattern(keywords: list[str]) -> re.Pattern | None:
     return re.compile(pattern, re.IGNORECASE)
 
 
-def _matches(title: str, pattern: re.Pattern | None) -> bool:
-    if pattern is None:
-        return False
-    return pattern.search(title) is not None
+def _find_matched_keywords(title: str, keywords: list[str]) -> list[str]:
+    """title에서 매칭된 키워드 목록 반환 (중복 제거, 순서 유지)."""
+    matched = []
+    seen = set()
+    for kw in keywords:
+        if not kw.strip():
+            continue
+        pat = re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE)
+        if pat.search(title) and kw not in seen:
+            matched.append(kw)
+            seen.add(kw)
+    return matched
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +115,12 @@ def _parse_published_utc(entry) -> datetime.datetime:
 
 
 # ---------------------------------------------------------------------------
-# 번역 (Redis 캐시 경유)
+# 번역 (Redis 캐시 경유) — en 소스 전용
 # ---------------------------------------------------------------------------
-def _translate_title(title: str, url: str) -> str:
+def _translate_title(title: str, cache_key: str) -> str:
     from common.redis_store import get_news_translation_cache, set_news_translation_cache
 
-    url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()
+    url_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
 
     cached = get_news_translation_cache(url_hash)
     if cached:
@@ -128,6 +142,14 @@ def _translate_title(title: str, url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 제목 정규화 (중복 제거용)
+# ---------------------------------------------------------------------------
+def _normalize_title(title: str) -> str:
+    """대소문자·공백·특수문자 정규화 → 중복 판별 키."""
+    return re.sub(r"[\s\W]+", "", title).lower()
+
+
+# ---------------------------------------------------------------------------
 # 폴링 + 매칭 + 캐시 저장 (동기, executor에서 실행)
 # ---------------------------------------------------------------------------
 def _fetch_and_cache() -> None:
@@ -138,21 +160,41 @@ def _fetch_and_cache() -> None:
 
     try:
         sources = _fetch_enabled_sources()
-        keywords = _fetch_keywords()
+        keyword_rows = _fetch_keywords()
     except Exception as e:
         print(f"[news_fetcher] DB 조회 실패: {e}", flush=True)
         return
 
-    pattern = _build_keyword_pattern(keywords)
-    if pattern is None:
+    # 언어별 키워드 분리
+    en_keywords = [kw for kw, lang in keyword_rows if lang == "en"]
+    ko_keywords = [kw for kw, lang in keyword_rows if lang == "ko"]
+    all_keywords = en_keywords + ko_keywords  # ko 소스용
+
+    if not keyword_rows:
         print("[news_fetcher] 등록된 키워드 없음 → 매칭 기사 없음, 캐시 비움", flush=True)
         set_news_feed_cache([])
         publish_news_feed_updated()
         return
 
-    matched_items = []
+    # 소스 lang별 패턴 빌드
+    en_pattern = _build_pattern(en_keywords)
+    ko_pattern = _build_pattern(all_keywords)  # ko 소스는 en+ko 모두
 
-    for source_name, source_url in sources:
+    matched_items = []
+    seen_titles: set[str] = set()  # 중복 제목 추적
+
+    for source_name, source_url, source_lang in sources:
+        # 이 소스에 적용할 패턴과 키워드 목록 결정
+        if source_lang == "ko":
+            pattern = ko_pattern
+            applicable_keywords = all_keywords
+        else:
+            pattern = en_pattern
+            applicable_keywords = en_keywords
+
+        if pattern is None:
+            continue
+
         try:
             feed = feedparser.parse(source_url)
         except Exception as e:
@@ -167,14 +209,34 @@ def _fetch_and_cache() -> None:
             link = getattr(entry, "link", None)
             if not title or not link:
                 continue
-            if not _matches(title, pattern):
+
+            # 키워드 매칭
+            matched_kws = _find_matched_keywords(title, applicable_keywords)
+            if not matched_kws:
                 continue
 
+            # 중복 제목 제거
+            title_key = _normalize_title(title)
+            if title_key in seen_titles:
+                continue
+            seen_titles.add(title_key)
+
             published_utc = _parse_published_utc(entry)
-            translated_title = _translate_title(title, link)
+
+            # ko 소스는 번역 불필요 (이미 한국어)
+            if source_lang == "ko":
+                translated_title = title
+            else:
+                translated_title = _translate_title(title, link)
 
             summary = getattr(entry, "summary", None) or ""
-            translated_summary = _translate_title(summary, link + ":summary") if summary else ""
+            if summary:
+                if source_lang == "ko":
+                    translated_summary = summary
+                else:
+                    translated_summary = _translate_title(summary, link + ":summary")
+            else:
+                translated_summary = ""
 
             matched_items.append({
                 "title": title,
@@ -183,7 +245,9 @@ def _fetch_and_cache() -> None:
                 "translated_summary": translated_summary,
                 "link": link,
                 "source": source_name,
+                "source_lang": source_lang,
                 "published_at": published_utc.isoformat(),
+                "matched_keywords": matched_kws,
             })
 
     matched_items.sort(key=lambda x: x["published_at"], reverse=True)
@@ -207,24 +271,32 @@ async def _poll_loop() -> None:
 
 
 # ---------------------------------------------------------------------------
-# asyncio 태스크 2: news_keyword_changed 구독 → 즉시 재폴링
+# asyncio 태스크 2: news_keyword_changed / news_source_changed 구독 → 즉시 재폴링
 # ---------------------------------------------------------------------------
-async def _keyword_listener() -> None:
+async def _change_listener() -> None:
+    """키워드·소스 변경 채널을 함께 구독, 수신 시 즉시 재폴링."""
     loop = asyncio.get_running_loop()
     r = aioredis.Redis(host="127.0.0.1", port=6379, db=0)
 
+    _channel_labels = {
+        "news_keyword_changed": "키워드",
+        "news_source_changed":  "소스",
+    }
+
     async with r.pubsub() as pubsub:
-        await pubsub.subscribe("news_keyword_changed")
+        await pubsub.subscribe("news_keyword_changed", "news_source_changed")
         now_kst = datetime.datetime.now(KST)
         print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
-              f"📡 news_keyword_changed 채널 구독 시작", flush=True)
+              f"📡 news_keyword_changed / news_source_changed 채널 구독 시작", flush=True)
 
         async for message in pubsub.listen():
             if message["type"] != "message":
                 continue
+            channel = message.get("channel", "")
+            label = _channel_labels.get(channel, channel)
             now_kst = datetime.datetime.now(KST)
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
-                  f"🔄 키워드 변경 감지 → 즉시 재폴링", flush=True)
+                  f"🔄 {label} 변경 감지 → 즉시 재폴링", flush=True)
             await loop.run_in_executor(None, _fetch_and_cache)
 
 
@@ -238,7 +310,7 @@ async def _main() -> None:
 
     await asyncio.gather(
         _poll_loop(),
-        _keyword_listener(),
+        _change_listener(),
     )
 
 
