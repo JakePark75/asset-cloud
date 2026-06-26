@@ -1,6 +1,7 @@
 import datetime
 import json
 import math
+from zoneinfo import ZoneInfo
 from shiny import module, ui, render, reactive
 
 from app.db import get_db, get_market_currency
@@ -11,7 +12,7 @@ from app.utils.metrics import (
     calculate_retirement_asset,
     calculate_exposure_and_ratios,
 )
-from app.modules.components import fmt_krw, fmt_pct
+from app.modules.components import fmt_krw
 from app.utils.display_diff import diff_display
 
 # ── 포맷 헬퍼 ────────────────────────────────────────────────
@@ -70,7 +71,7 @@ def _load_summary_data(rows, raw_rows) -> dict:
             price  = float(p_data["price"]) if p_data else 0.0
             pos_rows.append((ticker, qty, price, leverage, market))
 
-    today = datetime.date.today()
+    today = datetime.datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     if not rows:
         return {}
@@ -844,7 +845,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
             ret_asset   = d["retirement_asset"]
             ret_date    = d["retirement_date"]
             monthly_irr = d["monthly_irr"]
-            today       = datetime.date.today()
+            today       = datetime.datetime.now(ZoneInfo("Asia/Seoul")).date()
             months      = max(0, (ret_date.year - today.year) * 12 + (ret_date.month - today.month))
             years       = months / 12
             retirement = {

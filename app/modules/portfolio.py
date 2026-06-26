@@ -4,10 +4,8 @@ import sys
 from app.db import get_db, get_usd_krw, get_config, get_market_currency
 from app.price_signal import price_signal, position_signal, ticker_signal
 from app.modules.components import (
-    fmt_pct,
     build_ticker_row_skeleton, build_ticker_row_values,
     build_account_row_skeleton, build_account_row_values,
-    build_summary_payload,
 )
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display, diff_display_split
