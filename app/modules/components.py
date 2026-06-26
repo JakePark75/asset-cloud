@@ -211,22 +211,31 @@ def build_ticker_row_values(
         }
         status_dot, status_text, status_cls = dot_map.get(status, ("○", "Closed", "status-closed"))
 
+    # ── static: position_signal/ticker_signal 시에만 바뀌는 필드 ──
+    # ── dynamic: price_signal 때마다 바뀔 수 있는 필드 ────────────
+    # pf_tick 은 dynamic 필드 단위 diff만 전송하여 페이로드 최소화.
+    # static은 pf_init(structure_changed) 또는 pf_static_tick(신호 변경 시)으로만 전송.
     return {
-        "id":          row_id,
-        "name":        name,
-        "leverage":    leverage,
-        "currency":    currency,
-        "amount":      amount_str,
-        "qty":         qty_str,
-        "price":       price_str,
-        "chg":         chg_str,
-        "chg_css":     chg_css,
-        "avgprice":    avgprice_str,
-        "pnl":         pnl_str,
-        "pnl_css":     pnl_css,
-        "status_dot":  status_dot,
-        "status_txt":  status_text,
-        "status_cls":  status_cls,
+        "static": {
+            "id":         row_id,
+            "name":       name,
+            "leverage":   leverage,
+            "currency":   currency,
+            "qty":        qty_str,
+            "avgprice":   avgprice_str,
+            "status_dot": status_dot,
+            "status_txt": status_text,
+            "status_cls": status_cls,
+        },
+        "dynamic": {
+            "id":      row_id,
+            "amount":  amount_str,
+            "price":   price_str,
+            "chg":     chg_str,
+            "chg_css": chg_css,
+            "pnl":     pnl_str,
+            "pnl_css": pnl_css,
+        },
     }
 
 

@@ -19,7 +19,7 @@ from app.db import get_db, get_usd_krw, get_market_map, get_market_label, get_ma
 from app.modules.components import fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change
 from app.price_signal import price_signal, daily_insert_signal
 from scheduler.price_updater_common import get_market_status
-from app.utils.display_diff import diff_display
+from app.utils.display_diff import diff_display, diff_display_split
 
 
 def _notify_position_changed():
@@ -130,6 +130,13 @@ def accounts_ui():
     });
   });
 
+  // ── ac_acc_static_tick: static 필드만 patch ────────────────────────────
+  Shiny.addCustomMessageHandler('ac_acc_static_tick', function(m) {
+    Object.keys(m.positions || {}).forEach(function(key) {
+      _applyOnePositionStatic(m.positions[key]);
+    });
+  });
+
   // ── 아코디언 토글 (한번에 하나만 열림) ────────────────────────────────
   window.acToggleCard = function(acc_id) {
     var el = document.getElementById('ac-acc-' + acc_id);
@@ -155,58 +162,93 @@ def accounts_ui():
   };
 
   function _applyPositions(positions) {
-    Object.values(positions).forEach(function(p) { _applyOnePosition(p); });
+    Object.values(positions).forEach(function(p) { _applyOnePositionFull(p); });
   }
-  function _applyOnePosition(p) {
-    var nameEl = document.getElementById('ac-name-' + p.id);
-    if (nameEl && p.name != null) nameEl.textContent = p.name;
 
-    var levEl = document.getElementById('ac-lev-' + p.id);
-    if (levEl && p.leverage != null) {
-      levEl.textContent = 'x' + p.leverage;
-      levEl.className   = 'lev-badge lev-x' + p.leverage;
-      levEl.style.display = p.leverage > 1 ? '' : 'none';
+  // ac_acc_init용: static + dynamic 전체 적용
+  function _applyOnePositionFull(p) {
+    _applyOnePositionStatic(p);
+    _applyOnePosition(p);
+  }
+
+  // ac_acc_static_tick용: static 필드만 적용 (수신된 필드만 존재)
+  function _applyOnePositionStatic(p) {
+    if (p.name != null) {
+      var nameEl = document.getElementById('ac-name-' + p.id);
+      if (nameEl) nameEl.textContent = p.name;
     }
 
-    var qtyEl = document.getElementById('ac-qty-' + p.id);
-    if (qtyEl) qtyEl.textContent = p.qty || '';
+    if (p.leverage != null) {
+      var levEl = document.getElementById('ac-lev-' + p.id);
+      if (levEl) {
+        levEl.textContent = 'x' + p.leverage;
+        levEl.className   = 'lev-badge lev-x' + p.leverage;
+        levEl.style.display = p.leverage > 1 ? '' : 'none';
+      }
+    }
 
+    if (p.qty != null) {
+      var qtyEl = document.getElementById('ac-qty-' + p.id);
+      if (qtyEl) qtyEl.textContent = p.qty || '';
+    }
+
+    if (p.avgprice != null) {
+      var avgEl = document.getElementById('ac-avgprice-' + p.id);
+      if (avgEl) avgEl.textContent = p.avgprice || '';
+    }
+
+    if (p.status_dot != null || p.status_txt != null || p.status_cls != null) {
+      var stEl = document.getElementById('ac-status-' + p.id);
+      if (stEl) {
+        stEl.textContent = p.status_dot ? p.status_dot + ' ' + p.status_txt : '';
+        stEl.className   = 'ticker-status ' + (p.status_cls || '');
+      }
+    }
+
+    // data-* 속성 갱신 (모달을 같은 세션에서 다시 열 때 최신값이 채워지도록)
     var amountEl = document.getElementById('ac-amount-' + p.id);
-    if (amountEl) amountEl.textContent = p.amount;
-    var priceEl = document.getElementById('ac-price-' + p.id);
-    if (priceEl) {
-      priceEl.textContent = p.price;
-      priceEl.className   = p.chg_css;
-      priceEl.style.marginRight = p.price ? '4px' : '0';
-    }
-    var chgEl = document.getElementById('ac-chg-' + p.id);
-    if (chgEl) { chgEl.textContent = p.chg; chgEl.className = p.chg_css; }
-    var avgEl = document.getElementById('ac-avgprice-' + p.id);
-    if (avgEl) avgEl.textContent = p.avgprice || '';
-
-    var pnlEl = document.getElementById('ac-pnl-' + p.id);
-    if (pnlEl) { pnlEl.textContent = p.pnl || ''; pnlEl.className = p.pnl_css || ''; }
-
-    var stEl = document.getElementById('ac-status-' + p.id);
-    if (stEl) {
-      stEl.textContent = p.status_dot ? p.status_dot + ' ' + p.status_txt : '';
-      stEl.className   = 'ticker-status ' + p.status_cls;
-    }
-    // ── data-* 속성 갱신 (모달을 같은 세션에서 다시 열 때 최신값이 채워지도록) ──
     if (amountEl) {
       var parentEl = amountEl.closest('[data-pos-id]');
       if (parentEl) {
-        if (p.avg_price !== undefined && p.avg_price !== null) {
-          parentEl.setAttribute('data-avg-price', p.avg_price);
-        }
-        if (p.cash_amount !== undefined && p.cash_amount !== null) {
-          parentEl.setAttribute('data-amount', p.cash_amount);
-        }
-        if (p.name != null)     parentEl.setAttribute('data-name', p.name);
-        if (p.market != null)   parentEl.setAttribute('data-market', p.market);
+        if (p.avg_price  !== undefined && p.avg_price  !== null) parentEl.setAttribute('data-avg-price', p.avg_price);
+        if (p.cash_amount !== undefined && p.cash_amount !== null) parentEl.setAttribute('data-amount', p.cash_amount);
+        if (p.name     != null) parentEl.setAttribute('data-name',     p.name);
+        if (p.market   != null) parentEl.setAttribute('data-market',   p.market);
         if (p.leverage != null) parentEl.setAttribute('data-leverage', p.leverage);
         if (p.currency != null) parentEl.setAttribute('data-currency', p.currency);
-        if (p.raw_qty != null)  parentEl.setAttribute('data-qty', p.raw_qty);
+        if (p.raw_qty  != null) parentEl.setAttribute('data-qty',      p.raw_qty);
+      }
+    }
+  }
+
+  // ac_acc_tick용: dynamic 필드만 적용 (수신된 필드만 존재)
+  function _applyOnePosition(p) {
+    if (p.amount != null) {
+      var amountEl = document.getElementById('ac-amount-' + p.id);
+      if (amountEl) amountEl.textContent = p.amount;
+    }
+
+    if (p.price != null || p.chg_css != null) {
+      var priceEl = document.getElementById('ac-price-' + p.id);
+      if (priceEl) {
+        if (p.price   != null) { priceEl.textContent = p.price; priceEl.style.marginRight = p.price ? '4px' : '0'; }
+        if (p.chg_css != null) priceEl.className = p.chg_css;
+      }
+    }
+
+    if (p.chg != null || p.chg_css != null) {
+      var chgEl = document.getElementById('ac-chg-' + p.id);
+      if (chgEl) {
+        if (p.chg     != null) chgEl.textContent = p.chg;
+        if (p.chg_css != null) chgEl.className   = p.chg_css;
+      }
+    }
+
+    if (p.pnl != null || p.pnl_css != null) {
+      var pnlEl = document.getElementById('ac-pnl-' + p.id);
+      if (pnlEl) {
+        if (p.pnl     != null) pnlEl.textContent = p.pnl;
+        if (p.pnl_css != null) pnlEl.className   = p.pnl_css;
       }
     }
   }
@@ -732,13 +774,17 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
                 await session.send_custom_message("ac_acc_init", {
                     "acc_id":             acc_id,
                     "position_list_html": skeleton_html,
-                    "positions":          pos_values,
+                    "positions":          {k: {**v["static"], **v["dynamic"]} for k, v in pos_values.items()},
                 })
             else:
-                diff = diff_display(pos_values, _last_acc_disp)
-                if diff:
+                dyn_diff, sta_diff = diff_display_split(pos_values, _last_acc_disp)
+                if dyn_diff:
                     await session.send_custom_message("ac_acc_tick", {
-                        "positions": diff,
+                        "positions": dyn_diff,
+                    })
+                if sta_diff:
+                    await session.send_custom_message("ac_acc_static_tick", {
+                        "positions": sta_diff,
                     })
 
             _last_acc_disp.update(pos_values)

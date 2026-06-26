@@ -139,12 +139,11 @@ def _build_position_row_values(pos, usd_rate):
 
     # accounts 전용 추가 필드 — 종목 수정 모달을 같은 세션에서 다시 열 때
     # data-* 프리필 값(이름/시장/레버리지/평단가/통화/수량)이 최신 상태를 유지하도록
-    # raw 값을 같이 보냄 (JS에서 closest('[data-pos-id]')로 찾은 wrap div의
-    # data-* 속성을 갱신하는 데 사용)
-    result["avg_price"]   = float(avg_price) if avg_price is not None else None
-    result["cash_amount"] = qty_f if is_cash else None
-    result["raw_qty"]     = qty_f if not is_cash else None
-    result["market"]      = t_market if not is_cash else None
+    # raw 값을 같이 보냄. position_signal 때만 바뀌는 값이므로 static에 포함.
+    result["static"]["avg_price"]   = float(avg_price) if avg_price is not None else None
+    result["static"]["cash_amount"] = qty_f if is_cash else None
+    result["static"]["raw_qty"]     = qty_f if not is_cash else None
+    result["static"]["market"]      = t_market if not is_cash else None
 
     return result
 

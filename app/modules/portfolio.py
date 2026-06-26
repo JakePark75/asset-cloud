@@ -10,7 +10,7 @@ from app.modules.components import (
     build_summary_payload,
 )
 from scheduler.price_updater_common import get_market_status
-from app.utils.display_diff import diff_display
+from app.utils.display_diff import diff_display, diff_display_split
 
 
 # ── DAL ───────────────────────────────────────────────────────────────────────
@@ -258,6 +258,13 @@ def portfolio_ui():
     });
   });
 
+  // ── pf_static_tick: static 필드만 patch (종목명/레버리지/수량/평단/시장상태) ──
+  Shiny.addCustomMessageHandler('pf_static_tick', function(m) {
+    Object.keys(m).forEach(function(key) {
+      _applyOneTickerStatic(m[key]);
+    });
+  });
+
   // ── pf_acc_init: 아코디언 내용 통째 교체 ────────────────────
   Shiny.addCustomMessageHandler('pf_acc_init', function(m) {
     var el = document.getElementById('pf-acc-' + m.tid);
@@ -299,11 +306,12 @@ def portfolio_ui():
     Shiny.setInputValue(window._pfNs + '-ticker_clicked', { ticker: ticker }, { priority: 'event' });
   };
 
+  // pf_init용: static + dynamic 전체 적용
   function _applyTickers(tickers) {
-    Object.values(tickers).forEach(function(t) { _applyOneTicker(t); });
+    Object.values(tickers).forEach(function(t) { _applyOneTickerFull(t); });
   }
 
-  function _applyOneTicker(t) {
+  function _applyOneTickerFull(t) {
     var nameEl = document.getElementById('pf-name-' + t.id);
     if (nameEl && t.name != null) nameEl.textContent = t.name;
 
@@ -314,32 +322,85 @@ def portfolio_ui():
       levEl.style.display = t.leverage > 1 ? '' : 'none';
     }
 
-    var amountEl = document.getElementById('pf-amount-' + t.id);
-    if (amountEl) amountEl.textContent = t.amount;
-
     var qtyEl = document.getElementById('pf-qty-' + t.id);
     if (qtyEl) qtyEl.textContent = t.qty || '';
 
-    var priceEl = document.getElementById('pf-price-' + t.id);
-    if (priceEl) {
-      priceEl.textContent  = t.price;
-      priceEl.className    = t.chg_css;
-      priceEl.style.marginRight = t.price ? '4px' : '0';
-    }
-
-    var chgEl = document.getElementById('pf-chg-' + t.id);
-    if (chgEl) { chgEl.textContent = t.chg; chgEl.className = t.chg_css; }
-
     var avgEl = document.getElementById('pf-avgprice-' + t.id);
     if (avgEl) avgEl.textContent = t.avgprice || '';
-
-    var pnlEl = document.getElementById('pf-pnl-' + t.id);
-    if (pnlEl) { pnlEl.textContent = t.pnl || ''; pnlEl.className = t.pnl_css || ''; }
 
     var stEl = document.getElementById('pf-status-' + t.id);
     if (stEl) {
       stEl.textContent = t.status_dot ? t.status_dot + ' ' + t.status_txt : '';
       stEl.className   = 'ticker-status ' + t.status_cls;
+    }
+
+    _applyOneTicker(t);
+  }
+
+  // pf_static_tick용: static 필드만 적용 (수신된 필드만 존재)
+  function _applyOneTickerStatic(t) {
+    if (t.name != null) {
+      var nameEl = document.getElementById('pf-name-' + t.id);
+      if (nameEl) nameEl.textContent = t.name;
+    }
+
+    if (t.leverage != null) {
+      var levEl = document.getElementById('pf-lev-' + t.id);
+      if (levEl) {
+        levEl.textContent = 'x' + t.leverage;
+        levEl.className   = 'lev-badge lev-x' + t.leverage;
+        levEl.style.display = t.leverage > 1 ? '' : 'none';
+      }
+    }
+
+    if (t.qty != null) {
+      var qtyEl = document.getElementById('pf-qty-' + t.id);
+      if (qtyEl) qtyEl.textContent = t.qty || '';
+    }
+
+    if (t.avgprice != null) {
+      var avgEl = document.getElementById('pf-avgprice-' + t.id);
+      if (avgEl) avgEl.textContent = t.avgprice || '';
+    }
+
+    if (t.status_dot != null || t.status_txt != null || t.status_cls != null) {
+      var stEl = document.getElementById('pf-status-' + t.id);
+      if (stEl) {
+        stEl.textContent = t.status_dot ? t.status_dot + ' ' + t.status_txt : '';
+        stEl.className   = 'ticker-status ' + (t.status_cls || '');
+      }
+    }
+  }
+
+  // pf_tick용: dynamic 필드만 적용 (수신된 필드만 존재)
+  function _applyOneTicker(t) {
+    if (t.amount != null) {
+      var amountEl = document.getElementById('pf-amount-' + t.id);
+      if (amountEl) amountEl.textContent = t.amount;
+    }
+
+    if (t.price != null || t.chg_css != null) {
+      var priceEl = document.getElementById('pf-price-' + t.id);
+      if (priceEl) {
+        if (t.price != null)   { priceEl.textContent = t.price; priceEl.style.marginRight = t.price ? '4px' : '0'; }
+        if (t.chg_css != null)   priceEl.className = t.chg_css;
+      }
+    }
+
+    if (t.chg != null || t.chg_css != null) {
+      var chgEl = document.getElementById('pf-chg-' + t.id);
+      if (chgEl) {
+        if (t.chg != null)     chgEl.textContent = t.chg;
+        if (t.chg_css != null) chgEl.className   = t.chg_css;
+      }
+    }
+
+    if (t.pnl != null || t.pnl_css != null) {
+      var pnlEl = document.getElementById('pf-pnl-' + t.id);
+      if (pnlEl) {
+        if (t.pnl != null)     pnlEl.textContent = t.pnl;
+        if (t.pnl_css != null) pnlEl.className   = t.pnl_css;
+      }
     }
   }
 
@@ -576,15 +637,19 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
                     _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
                     for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
                 )
+            # pf_init: static(이름/레버리지/수량/평단/상태) + dynamic(가격/평가금액/손익) 모두 전송
             await session.send_custom_message("pf_init", {
                 "ticker_list_html": ticker_list_html,
                 "show_force_btn":   show_force,
-                "tickers":          ticker_values,
+                "tickers": {t: {**v["static"], **v["dynamic"]} for t, v in ticker_values.items()},
             })
         else:
-            diff = diff_display(ticker_values, _last_display)
-            if diff:
-                await session.send_custom_message("pf_tick", diff)
+            # pf_tick: dynamic 필드 단위 diff / pf_static_tick: static 필드 단위 diff
+            dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
+            if dyn_diff:
+                await session.send_custom_message("pf_tick", dyn_diff)
+            if sta_diff:
+                await session.send_custom_message("pf_static_tick", sta_diff)
 
         # ── 아코디언 (열려있는 종목이 있을 때만 추가 계산) ───────────────────
         if cur_open_ticker:
