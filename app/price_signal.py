@@ -38,7 +38,7 @@ async def _listen_loop():
                     await reactive.flush()
                 t_flush = time.perf_counter()
                 elapsed_ms = (t_flush - t_recv) * 1000
-                print(f"[price_updated #{_price_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
+                # print(f"[price_updated #{_price_counter}] recv→flush: {elapsed_ms:.1f}ms", flush=True)
 
             elif channel == "daily_inserted":
                 global _insert_counter
