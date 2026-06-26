@@ -331,7 +331,7 @@ def modal_edit_position_js() -> str:
     var lEl   = document.getElementById('ac-edit-pos-leverage');
     var qEl   = document.getElementById('ac-edit-pos-qty');
     var avgEl = document.getElementById('ac-edit-pos-avg-price');
-    Shiny.setInputValue('accounts-btn_confirm_edit_position', {
+    Shiny.setInputValue(window._acNs + '-btn_confirm_edit_position', {
       pos_id:    _editPosId,
       name:      nEl   ? nEl.value   : '',
       market:    mEl   ? mEl.value   : 'KR',
@@ -353,7 +353,7 @@ def modal_edit_position_js() -> str:
       alert('매수금액(' + cost.toLocaleString('ko-KR', {maximumFractionDigits:4}) + ' ' + _editCurrency + ')이 보유현금(' + cashHeld.toLocaleString('ko-KR', {maximumFractionDigits:4}) + ' ' + _editCurrency + ')을 초과합니다.');
       return;
     }
-    Shiny.setInputValue('accounts-btn_confirm_buy', {
+    Shiny.setInputValue(window._acNs + '-btn_confirm_buy', {
       pos_id: _editPosId,
       qty:    buyQty,
       price:  buyPrice,
@@ -367,7 +367,7 @@ def modal_edit_position_js() -> str:
     var sellPrice = parseFloat(document.getElementById('ac-sell-price') ? document.getElementById('ac-sell-price').value : 0) || 0;
     if (sellQty <= 0 || sellPrice <= 0) { alert('수량과 단가를 입력하세요.'); return; }
     if (sellQty > _editCurQty) { alert('보유 수량(' + _editCurQty + ')을 초과합니다.'); return; }
-    Shiny.setInputValue('accounts-btn_confirm_sell', {
+    Shiny.setInputValue(window._acNs + '-btn_confirm_sell', {
       pos_id: _editPosId,
       qty:    sellQty,
       price:  sellPrice,
@@ -378,7 +378,7 @@ def modal_edit_position_js() -> str:
   // ── 종목 삭제 트리거 ─────────────────────────────────────────────────────
   window.acTriggerPositionDelete = function() {
     if (confirm('종목을 삭제하시겠습니까?')) {
-      Shiny.setInputValue('accounts-confirm_delete_position',
+      Shiny.setInputValue(window._acNs + '-confirm_delete_position',
         { pos_id: _editPosId }, {priority: 'event'});
       acHideModal('ac-modal-edit-position');
     }

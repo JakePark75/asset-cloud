@@ -65,17 +65,17 @@ def _build_position_row_skeleton(pos, ns_str):
     if ticker == 'KRW':
         display_name = "현금(KRW)"
         qty_fixed    = ""          # 수량 영역 없음
-        onclick_attr = "acOpenEditCashModal(this);"
+        onclick_attr = "event.stopPropagation(); acOpenEditCashModal(this);"
         data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
     elif ticker == 'USD':
         display_name = "현금(USD)"
         qty_fixed    = fmt_usd(qty_f)
-        onclick_attr = "acOpenEditCashModal(this);"
+        onclick_attr = "event.stopPropagation(); acOpenEditCashModal(this);"
         data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
     else:
         display_name  = tname or ticker
         qty_fixed     = None  # span으로 비워둠 — tick에서 채움(매수/매도 직후 즉시 반영)
-        onclick_attr  = "acOpenEditPositionModal(this);"
+        onclick_attr  = "event.stopPropagation(); acOpenEditPositionModal(this);"
         avg_price_val = float(avg_price) if avg_price is not None else ""
         currency      = get_market_currency(t_market) if t_market else "KRW"
         data_attrs    = (
