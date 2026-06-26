@@ -117,6 +117,66 @@ def asset_ui():
     var idx = subNames.indexOf(saved);
     if (btns[idx]) switchSubTab(saved, btns[idx]);
   });
+
+  // ── 서브탭 스와이프 ────────────────────────────────────────
+  // asset-root가 DOM에 생긴 뒤 한 번만 등록
+  var _subSwipeInit = false;
+  function initSubSwipe() {
+    if (_subSwipeInit) return;
+    var root = document.getElementById('asset-root');
+    if (!root) return;
+    _subSwipeInit = true;
+
+    var subNames = ['dashboard', 'portfolio', 'accounts'];
+    var touchStartX = 0;
+    var touchStartY = 0;
+
+    root.addEventListener('touchstart', function(e) {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    root.addEventListener('touchend', function(e) {
+      var dx = e.changedTouches[0].clientX - touchStartX;
+      var dy = e.changedTouches[0].clientY - touchStartY;
+
+      // 수평 스와이프만 처리 (수직 스크롤과 구분)
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+
+      // 현재 서브탭 인덱스 파악
+      var currentIdx = -1;
+      subNames.forEach(function(name, i) {
+        var el = document.getElementById('asset-sub-' + name);
+        if (el && el.style.display !== 'none') currentIdx = i;
+      });
+      if (currentIdx === -1) return;
+
+      var nextIdx;
+      if (dx < 0) {
+        // 왼쪽 스와이프 → 다음 서브탭
+        nextIdx = Math.min(currentIdx + 1, subNames.length - 1);
+      } else {
+        // 오른쪽 스와이프 → 이전 서브탭
+        nextIdx = Math.max(currentIdx - 1, 0);
+      }
+      if (nextIdx === currentIdx) return;
+
+      var btns = document.querySelectorAll('.asset-sub-btn');
+      switchSubTab(subNames[nextIdx], btns[nextIdx]);
+    }, { passive: true });
+  }
+
+  // asset 탭이 활성화될 때 스와이프 초기화 (DOM 준비 보장)
+  Shiny.addCustomMessageHandler('restore_sub_tab', function(msg) {
+    var saved = localStorage.getItem('activeSubTab') || 'dashboard';
+    var subNames = ['dashboard', 'portfolio', 'accounts'];
+    if (subNames.indexOf(saved) === -1) saved = 'dashboard';
+    var btns = document.querySelectorAll('.asset-sub-btn');
+    var idx = subNames.indexOf(saved);
+    if (btns[idx]) switchSubTab(saved, btns[idx]);
+    initSubSwipe();
+  });
+
 })();
         """),
 
