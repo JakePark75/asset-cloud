@@ -64,7 +64,7 @@ def load_ticker_accounts(ticker: str, db_rows, usd_rate: float):
         (acc_id, acc_name, alias, is_watch, qty, avg_price, market, leverage, price, chg_pct, ticker_name)
         for acc_id, acc_name, alias, is_watch, qty, avg_price, market, leverage, ticker_name in db_rows
     ]
-    return result, price, chg_pct
+    return result
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────────────
@@ -242,17 +242,10 @@ def portfolio_ui():
     el = document.getElementById('pf-force-btn-wrap');
     if (el) el.style.display = m.show_force_btn ? '' : 'none';
 
-    // 리스트가 다시 그려졌으므로, 열려있던 아코디언이 있으면 재오픈 표시
-    // (내용은 뒤따르는 pf_acc_init/tick 메시지가 채움)
+    // 열려있던 아코디언은 pf_acc_init/tick 이 오면 그때 열림
     if (window._pfOpenTid) {
       var accEl = document.getElementById('pf-acc-' + window._pfOpenTid);
-      if (accEl) {
-        accEl.style.display = '';
-        accEl.innerHTML = '<div class="pf-acc-loading">불러오는 중...</div>';
-      } else {
-        // 더 이상 존재하지 않는 종목(보유 청산 등) — 상태 정리
-        window._pfOpenTid = null;
-      }
+      if (!accEl) window._pfOpenTid = null;
     }
 
     _applyTickers(m.tickers);
@@ -303,8 +296,6 @@ def portfolio_ui():
     }
 
     window._pfOpenTid = tid;
-    el.style.display = '';
-    el.innerHTML = '<div class="pf-acc-loading">불러오는 중...</div>';
     Shiny.setInputValue(window._pfNs + '-ticker_clicked', { ticker: ticker }, { priority: 'event' });
   };
 
@@ -522,9 +513,14 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
     @reactive.effect
     @reactive.event(input.ticker_clicked)
     def _handle_ticker_click():
+        nonlocal _last_dd_accounts, _last_dd_display
         payload = input.ticker_clicked()
         ticker  = payload.get("ticker") if payload else None
-        open_ticker.set(ticker)  # ticker가 None이면 닫힘
+        if not ticker:
+            # 닫기 — 상태 초기화
+            _last_dd_accounts.clear()
+            _last_dd_display.clear()
+        open_ticker.set(ticker)
 
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 
@@ -594,7 +590,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
         if cur_open_ticker:
             tid = _ticker_to_id(cur_open_ticker)
             db_rows = _db_ticker_accounts()
-            acc_rows, price, chg_pct = load_ticker_accounts(cur_open_ticker, db_rows, usd_rate)
+            acc_rows = load_ticker_accounts(cur_open_ticker, db_rows, usd_rate)
 
             current_accounts = [r[0] for r in acc_rows]
             ticker_switched   = (cur_open_ticker != _last_open_ticker)
@@ -622,9 +618,6 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
 
             _last_open_ticker = cur_open_ticker
         else:
-            if _last_open_ticker is not None:
-                _last_dd_accounts = []
-                _last_dd_display.clear()
-                _last_open_ticker = None
+            _last_open_ticker = None
 
         _initialized = True
