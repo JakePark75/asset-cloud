@@ -1,6 +1,5 @@
 import json
 import re
-import time
 
 import yfinance as yf
 from shiny import ui, module, reactive
@@ -116,24 +115,12 @@ def accounts_ui():
 
   // ── ac_acc_init: 아코디언 내용 통째 교체 ──────────────────────────────
   Shiny.addCustomMessageHandler('ac_acc_init', function(m) {
-    // ── [TEMP DEBUG] ────────────────────────────────────────────────────
-    var _t0 = performance.now();
-    if (window._acClickT != null) {
-      console.log('[ACC-DEBUG] ac_acc_init 수신 +' + (_t0 - window._acClickT).toFixed(1) + 'ms (클릭 기준)');
-    }
-    // ────────────────────────────────────────────────────────────────────
     var el = document.getElementById('ac-acc-' + m.acc_id);
     if (el) {
       el.innerHTML = m.position_list_html;
       el.style.display = '';
     }
     _applyPositions(m.positions);
-    // ── [TEMP DEBUG] ────────────────────────────────────────────────────
-    if (window._acClickT != null) {
-      console.log('[ACC-DEBUG] ac_acc_init DOM 반영 완료 +' + (performance.now() - window._acClickT).toFixed(1) + 'ms');
-      window._acClickT = null;
-    }
-    // ────────────────────────────────────────────────────────────────────
   });
 
   // ── ac_acc_tick: 아코디언 변경값만 patch ──────────────────────────────
@@ -164,10 +151,6 @@ def accounts_ui():
     }
 
     window._acOpenId = acc_id;
-    // ── [TEMP DEBUG] 클릭 → setInputValue 시점 ──────────────────────────
-    window._acClickT = performance.now();
-    console.log('[ACC-DEBUG] acToggleCard 클릭 acc_id=' + acc_id);
-    // ────────────────────────────────────────────────────────────────────
     Shiny.setInputValue(window._acNs + '-card_clicked', acc_id, { priority: 'event' });
   };
 
@@ -635,9 +618,6 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
     _last_positions: dict = {}   # open_account → [pos_id, ...] (아코디언 구조 변경 감지)
     _last_acc_disp:  dict = {}   # 아코디언 종목 diff 캐시
 
-    # ── [TEMP DEBUG] 아코디언 오픈 딜레이 측정용 ────────────────────────────
-    _click_ts: dict = {"t": None, "acc_id": None, "n_send_update": 0}
-
     # ── DB 캐시 (price_signal 비의존, 구조만) ───────────────────────────────
 
     @reactive.calc
@@ -686,14 +666,6 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         if _initialized and tab and tab.get() != "accounts":
             return
 
-        # ── [TEMP DEBUG] ──────────────────────────────────────────────────
-        _t0 = time.perf_counter()
-        _click_ts["n_send_update"] += 1
-        _is_click_target = (acc_id is not None and _click_ts["acc_id"] == acc_id and _click_ts["t"] is not None)
-        if _is_click_target:
-            print(f"[ACC-DEBUG] _send_update #{_click_ts['n_send_update']} 진입 "
-                  f"(클릭 후 +{(_t0 - _click_ts['t'])*1000:.1f}ms) acc_id={acc_id}", flush=True)
-
         usd_rate_val, usd_chg = get_usd_krw()
 
         # ── 계좌 목록 갱신 ──────────────────────────────────────────────────
@@ -702,9 +674,6 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         accounts = calc_accounts_summary(_db_accounts(), prices, usd_rate_val)
         normal   = [a for a in accounts if not a[5]]
         watch    = [a for a in accounts if a[5]]
-
-        if _is_click_target:
-            print(f"[ACC-DEBUG]   목록계산 완료 +{(time.perf_counter() - _t0)*1000:.1f}ms", flush=True)
 
         card_values = {str(a[0]): _build_account_card_values(a) for a in accounts}
         current_accounts = [a[0] for a in accounts]
@@ -742,19 +711,9 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
                 return
             acc_row, db_rows = db_detail
 
-            if _is_click_target:
-                print(f"[ACC-DEBUG]   DB조회(fetch_account_details) 완료 "
-                      f"+{(time.perf_counter() - _t0)*1000:.1f}ms (종목수={len(db_rows)})", flush=True)
-
             acc, positions, usd_rate = calc_account_details(acc_row, db_rows, prices, usd_rate_val)
 
-            if _is_click_target:
-                print(f"[ACC-DEBUG]   calc_account_details 완료 +{(time.perf_counter() - _t0)*1000:.1f}ms", flush=True)
-
             pos_values = {str(p[0]): _build_position_row_values(p, usd_rate) for p in positions}
-
-            if _is_click_target:
-                print(f"[ACC-DEBUG]   _build_position_row_values 전체 완료 +{(time.perf_counter() - _t0)*1000:.1f}ms", flush=True)
 
             current_pos_ids = [p[0] for p in positions]
             pos_structure_changed = (_last_positions.get(acc_id) != current_pos_ids)
@@ -770,19 +729,11 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
                     skeleton_html = '<p style="color:#888; padding:16px;">종목이 없습니다.</p>'
                 skeleton_html += _build_accordion_footer(acc_id)
 
-                if _is_click_target:
-                    print(f"[ACC-DEBUG]   skeleton_html 빌드 완료 +{(time.perf_counter() - _t0)*1000:.1f}ms", flush=True)
-
                 await session.send_custom_message("ac_acc_init", {
                     "acc_id":             acc_id,
                     "position_list_html": skeleton_html,
                     "positions":          pos_values,
                 })
-
-                if _is_click_target:
-                    print(f"[ACC-DEBUG]   ac_acc_init 전송 완료 +{(time.perf_counter() - _t0)*1000:.1f}ms "
-                          f"← 여기서부터는 JS/네트워크/렌더링 구간", flush=True)
-                    _click_ts["t"] = None  # 측정 종료 (중복 로그 방지)
             else:
                 diff = diff_display(pos_values, _last_acc_disp)
                 if diff:
@@ -807,11 +758,6 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
             _last_positions.clear()
             open_account.set(None)
         else:
-            # ── [TEMP DEBUG] 클릭 타임스탬프 기록 ──────────────────────────
-            _click_ts["t"] = time.perf_counter()
-            _click_ts["acc_id"] = acc_id
-            _click_ts["n_send_update"] = 0
-            # ────────────────────────────────────────────────────────────────
             _last_acc_disp.clear()
             _last_positions.pop(acc_id, None)
             open_account.set(acc_id)

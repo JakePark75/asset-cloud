@@ -45,13 +45,6 @@ def _fmt_krw_short(val: float) -> str:
 # ── DAL ──────────────────────────────────────────────────────
 
 def _load_summary_data(rows, raw_rows) -> dict:
-    # ---------------------------------------------------------------------------
-    # Step 6-2: 시세(current_price) 조회를 DB → Redis 전환
-    #   - usd_krw  : Redis get_price('USDKRW=X') → fallback 1300.0
-    #   - ndx100   : Redis get_price('^NDX')      → fallback None
-    #   - positions current_price : Redis get_all_prices() 매핑
-    #   메타데이터(ticker, quantity, leverage, market)는 DB 유지
-    # ---------------------------------------------------------------------------
     from common.redis_store import get_all_prices, get_price
 
     # Redis에서 시세 전체 로드 (실패 시 빈 dict → 가격 0 처리)
@@ -191,11 +184,6 @@ def _load_summary_data(rows, raw_rows) -> dict:
     }
 
 def _load_position_data(rows) -> list[dict]:
-    # ---------------------------------------------------------------------------
-    # Step 6-2: current_price DB JOIN → Redis get_all_prices() 매핑
-    #   메타데이터(name, market, leverage)는 DB 유지
-    #   DB 조회는 호출자(_db_position_detail_rows)가 캐싱해서 전달
-    # ---------------------------------------------------------------------------
     from common.redis_store import get_all_prices
 
     prices = get_all_prices()
@@ -229,14 +217,6 @@ def _load_position_data(rows) -> list[dict]:
     return result
 
 # ── SVG 헬퍼 ─────────────────────────────────────────────────
-
-# 레버리지별 색상 팔레트 (같은 레버리지 내 명도 변화)
-_LEV_PALETTES = {
-    1: ["#00c073", "#00a862", "#009050", "#007840"],
-    2: ["#e6a817", "#c98f0f", "#ad7a0c", "#916509"],
-    3: ["#ff4d4d", "#e63c3c", "#cc2c2c", "#b21c1c"],
-    0: ["#444444", "#555555"],  # 현금
-}
 
 def _donut_svg(slices: list[dict]) -> str:
     """
@@ -678,45 +658,9 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
     _initialized = False  # 일반 변수: data()/position_data()/_send_update() 자기-재트리거 방지
     _last_display: dict = {}
 
-    # ── DB 캐시 ──────────────────────────────────────────────────────────────
-    # asset 서버에서 주입된 경우 그대로 사용, 없으면 자체 조회 (독립 실행 대비).
-    if db_summary_rows is None:
-        @reactive.calc
-        def _db_summary_rows():
-            _daily_insert_signal.get()
-            with get_db() as conn:
-                cur = conn.cursor()
-                cur.execute("""
-                    SELECT date, total_asset, cash_flow, ndx100,
-                           exposure, cash_ratio, x1_ratio, x2_ratio, x3_ratio, twr_asset
-                    FROM daily_summary
-                    ORDER BY date ASC
-                """)
-                rows = cur.fetchall()
-                cur.close()
-            return rows
-    else:
-        _db_summary_rows = db_summary_rows
-
-    if db_position_rows is None:
-        @reactive.calc
-        def _db_position_rows():
-            _position_signal.get()
-            _ticker_signal.get()
-            with get_db() as conn:
-                cur = conn.cursor()
-                cur.execute("""
-                    SELECT p.ticker, p.quantity, t.leverage, t.market
-                    FROM positions p
-                    LEFT JOIN tickers t ON p.ticker = t.ticker
-                    LEFT JOIN accounts a ON p.account_id = a.id
-                    WHERE a.is_watch = false
-                """)
-                rows = cur.fetchall()
-                cur.close()
-            return rows
-    else:
-        _db_position_rows = db_position_rows
+    # ── DB 캐시 (asset_server에서 주입) ─────────────────────────────────────
+    _db_summary_rows  = db_summary_rows
+    _db_position_rows = db_position_rows
 
     @reactive.calc
     def _db_position_detail_rows():
