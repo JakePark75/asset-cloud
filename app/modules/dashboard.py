@@ -412,21 +412,46 @@ def _dashboard_ui_dom_patch():
 
       // 레버리지 바 세그먼트 교체
       var track = document.getElementById('db-lev-bar-track');
-      if (track) track.innerHTML = m.exposure.lev_bar_html;
+      if (track && m.exposure.lev_segs) {
+        var segs = m.exposure.lev_segs; // [x1, x2, x3, cash]
+        var keys = ['x1','x2','x3','cash'];
+        var html = '';
+        for (var i = 0; i < 4; i++) {
+          var v = segs[i];
+          if (v >= 0.5) {
+            var inner = v >= 5 ? Math.round(v) + '%' : '';
+            html += '<div class="db-lev-bar-seg ' + keys[i] + '" style="flex:' + v + '">' + inner + '</div>';
+          }
+        }
+        track.innerHTML = html;
+      }
 
       // 레버리지 범례 교체
       var legend = document.getElementById('db-lev-legend');
-      if (legend) legend.innerHTML = m.exposure.lev_legend_html;
+      if (legend && m.exposure.lev_segs) {
+        var segs = m.exposure.lev_segs;
+        var defs = [['x1','x1'],['x2','x2'],['x3','x3'],['cash','현금']];
+        var html = '';
+        for (var i = 0; i < 4; i++) {
+          var cls   = defs[i][0];
+          var label = defs[i][1];
+          html += '<span class="db-lev-legend-item">'
+                + '<span class="db-lev-legend-dot ' + cls + '"></span>'
+                + label + '  ' + segs[i].toFixed(1) + '%'
+                + '</span>';
+        }
+        legend.innerHTML = html;
+      }
     }
 
     // ── 수익률 ───────────────────────────────────────
     if (m.irr) {
       var annEl = document.getElementById('db-annual-irr');
-      if (annEl) { annEl.textContent = m.irr.annual_text; annEl.className = 'db-metric-value ' + pnlClass(m.irr.annual_val); }
+      if (annEl) { annEl.textContent = m.irr.annual_text; annEl.className = 'db-metric-value ' + pnlClass(m.irr.annual_sign); }
       var monEl = document.getElementById('db-monthly-irr');
-      if (monEl) { monEl.textContent = m.irr.monthly_text; monEl.className = 'db-metric-value ' + pnlClass(m.irr.monthly_val); }
+      if (monEl) { monEl.textContent = m.irr.monthly_text; monEl.className = 'db-metric-value ' + pnlClass(m.irr.monthly_sign); }
       var irr30El = document.getElementById('db-irr-30');
-      if (irr30El) { irr30El.textContent = m.irr.irr30_text; irr30El.className = 'db-metric-value ' + pnlClass(m.irr.irr30_val); }
+      if (irr30El) { irr30El.textContent = m.irr.irr30_text; irr30El.className = 'db-metric-value ' + pnlClass(m.irr.irr30_sign); }
       var cfEl = document.getElementById('db-cash-flow-val');
       if (cfEl) { cfEl.textContent = m.irr.cash_flow_text; cfEl.className = 'db-cashflow-val ' + pnlClass(m.irr.cash_flow_sign); }
     }
@@ -434,11 +459,11 @@ def _dashboard_ui_dom_patch():
     // ── 알파 ─────────────────────────────────────────
     if (m.alpha) {
       var caEl = document.getElementById('db-cumul-alpha');
-      if (caEl) { caEl.textContent = m.alpha.cumul_text; caEl.className = 'db-metric-value ' + pnlClass(m.alpha.cumul_val); }
+      if (caEl) { caEl.textContent = m.alpha.cumul_text; caEl.className = 'db-metric-value ' + pnlClass(m.alpha.cumul_sign); }
       var maEl = document.getElementById('db-monthly-alpha');
-      if (maEl) { maEl.textContent = m.alpha.monthly_text; maEl.className = 'db-metric-value ' + pnlClass(m.alpha.monthly_val); }
+      if (maEl) { maEl.textContent = m.alpha.monthly_text; maEl.className = 'db-metric-value ' + pnlClass(m.alpha.monthly_sign); }
       var a30El = document.getElementById('db-alpha-30');
-      if (a30El) { a30El.textContent = m.alpha.alpha30_text; a30El.className = 'db-metric-value ' + pnlClass(m.alpha.alpha30_val); }
+      if (a30El) { a30El.textContent = m.alpha.alpha30_text; a30El.className = 'db-metric-value ' + pnlClass(m.alpha.alpha30_sign); }
     }
 
     // ── 베타 ─────────────────────────────────────────
@@ -450,25 +475,35 @@ def _dashboard_ui_dom_patch():
     // ── 낙폭 분석 (MDD / Current DD / Recovery) ───────
     // 색상은 절대값이 아니라 NDX 대비 우위(diff = 내 - NDX) 기준으로 빨강~초록 결정
     if (m.dd) {
-      var mddDiff = m.dd.mdd_mine_val - m.dd.mdd_ndx_val;
       var mddMineEl = document.getElementById('db-mdd-mine');
-      if (mddMineEl) { mddMineEl.textContent = m.dd.mdd_mine_text; mddMineEl.style.color = ddColor(mddDiff, -0.10, 0.10); }
+      if (mddMineEl) { mddMineEl.textContent = m.dd.mdd_mine_text; mddMineEl.style.color = ddColor(m.dd.mdd_diff, -0.10, 0.10); }
       setText('db-mdd-ndx', m.dd.mdd_ndx_text);
 
-      var cddDiff = m.dd.cdd_mine_val - m.dd.cdd_ndx_val;
       var cddMineEl = document.getElementById('db-cdd-mine');
-      if (cddMineEl) { cddMineEl.textContent = m.dd.cdd_mine_text; cddMineEl.style.color = ddColor(cddDiff, -0.10, 0.10); }
+      if (cddMineEl) { cddMineEl.textContent = m.dd.cdd_mine_text; cddMineEl.style.color = ddColor(m.dd.cdd_diff, -0.10, 0.10); }
       setText('db-cdd-ndx', m.dd.cdd_ndx_text);
 
-      var recDiff = m.dd.rec_mine_val - m.dd.rec_ndx_val;
       var recMineEl = document.getElementById('db-rec-mine');
-      if (recMineEl) { recMineEl.textContent = m.dd.rec_mine_text; recMineEl.style.color = ddColor(recDiff, -0.20, 0.20); }
+      if (recMineEl) { recMineEl.textContent = m.dd.rec_mine_text; recMineEl.style.color = ddColor(m.dd.rec_diff, -0.20, 0.20); }
       setText('db-rec-ndx', m.dd.rec_ndx_text);
     }
 
     // ── 도넛 (텍스트) ─────────────────────────────────
     if (m.donut_text) {
-      setHTML('db-donut-legend',    m.donut_text.legend_html);
+      var legendEl = document.getElementById('db-donut-legend');
+      if (legendEl && m.donut_text.legend) {
+        var html = '';
+        for (var i = 0; i < m.donut_text.legend.length; i++) {
+          var it = m.donut_text.legend[i];
+          var dotCls = 'db-donut-legend-dot' + (it.is_cash ? ' cash' : '');
+          html += '<div class="db-donut-legend-row">'
+                + '<span class="' + dotCls + '" style="background:' + it.color + '"></span>'
+                + '<span class="db-donut-legend-name">' + it.label + '</span>'
+                + '<span class="db-donut-legend-pct">' + it.pct + '</span>'
+                + '</div>';
+        }
+        legendEl.innerHTML = html;
+      }
       setText('db-donut-title-sub', '(' + m.donut_text.subtitle + ')');
     }
     // ── 도넛 (SVG) ────────────────────────────────────
@@ -736,62 +771,40 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
             cash = cash_ratio * 100
             exp_cls = "db-neg" if exposure >= 1.5 else "db-warn" if exposure >= 1.2 else "db-pos"
 
-            lev_bar_parts = []
-            for seg_cls, val, label in [
-                ("x1",   x1,   f"{x1:.0f}%"),
-                ("x2",   x2,   f"{x2:.0f}%"),
-                ("x3",   x3,   f"{x3:.0f}%"),
-                ("cash", cash, f"{cash:.0f}%"),
-            ]:
-                if val >= 0.5:
-                    inner = label if val >= 5 else ""
-                    lev_bar_parts.append(
-                        f'<div class="db-lev-bar-seg {seg_cls}" style="flex:{val:.1f}">{inner}</div>'
-                    )
-
-            lev_legend_parts = []
-            for seg_cls, val, label in [
-                ("x1",   x1,   f"x1  {x1:.1f}%"),
-                ("x2",   x2,   f"x2  {x2:.1f}%"),
-                ("x3",   x3,   f"x3  {x3:.1f}%"),
-                ("cash", cash, f"현금  {cash:.1f}%"),
-            ]:
-                lev_legend_parts.append(
-                    f'<span class="db-lev-legend-item">'
-                    f'<span class="db-lev-legend-dot {seg_cls}"></span>'
-                    f'{label}</span>'
-                )
+            # lev 비중: JS에서 DOM 생성 — [x1, x2, x3, cash] 소수점 1자리
+            lev_segs = [round(x1, 1), round(x2, 1), round(x3, 1), round(cash, 1)]
 
             exposure_payload = {
                 "exposure_text":   f"{exposure:.2f}x",
                 "exp_cls":         exp_cls,
                 "cash_ratio_text": _fmt_ratio_pct_plain(cash_ratio),
                 "cash_eval_text":  fmt_krw(cash_eval),
-                "lev_bar_html":    "".join(lev_bar_parts),
-                "lev_legend_html": "".join(lev_legend_parts),
+                "lev_segs":        lev_segs,
             }
 
             # ── 수익률 ───────────────────────────────────────
+            # _sign: 1(양수) / -1(음수) / 0 — JS pnlClass() 색상 판단용
+            def _sign(v): return 1 if v > 0 else (-1 if v < 0 else 0)
             total_cash_flow = d["total_cash_flow"]
             irr = {
-                "annual_text":       _fmt_ratio_pct(d["annual_irr"]),
-                "annual_val":        d["annual_irr"],
-                "monthly_text":      _fmt_ratio_pct(d["monthly_irr"]),
-                "monthly_val":       d["monthly_irr"],
-                "irr30_text":        _fmt_ratio_pct(d["irr_30"]),
-                "irr30_val":         d["irr_30"],
-                "cash_flow_text":    fmt_krw(total_cash_flow),
-                "cash_flow_sign":    total_cash_flow,
+                "annual_text":    _fmt_ratio_pct(d["annual_irr"]),
+                "annual_sign":    _sign(d["annual_irr"]),
+                "monthly_text":   _fmt_ratio_pct(d["monthly_irr"]),
+                "monthly_sign":   _sign(d["monthly_irr"]),
+                "irr30_text":     _fmt_ratio_pct(d["irr_30"]),
+                "irr30_sign":     _sign(d["irr_30"]),
+                "cash_flow_text": fmt_krw(total_cash_flow),
+                "cash_flow_sign": _sign(total_cash_flow),
             }
 
             # ── 알파 ─────────────────────────────────────────
             alpha = {
                 "cumul_text":    _fmt_ratio_pct(d["cumul_alpha"]),
-                "cumul_val":     d["cumul_alpha"],
+                "cumul_sign":    _sign(d["cumul_alpha"]),
                 "monthly_text":  _fmt_ratio_pct(d["monthly_alpha"]),
-                "monthly_val":   d["monthly_alpha"],
+                "monthly_sign":  _sign(d["monthly_alpha"]),
                 "alpha30_text":  _fmt_ratio_pct(d["alpha_30"]),
-                "alpha30_val":   d["alpha_30"],
+                "alpha30_sign":  _sign(d["alpha_30"]),
             }
 
             # ── 베타 ─────────────────────────────────────────
@@ -801,43 +814,31 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
             }
 
             # ── 낙폭 분석 (MDD / Current DD / Recovery) ───────
+            # JS ddColor()는 mine - ndx 차이값만 필요 → diff 3개로 압축
             dd_mine = d["dd_mine"]
             dd_ndx  = d["dd_ndx"]
             dd = {
-                "mdd_mine_text": _fmt_ratio_pct(dd_mine["mdd"]),
-                "mdd_mine_val":  dd_mine["mdd"],
-                "mdd_ndx_text":  _fmt_ratio_pct(dd_ndx["mdd"]),
-                "mdd_ndx_val":   dd_ndx["mdd"],
-                "cdd_mine_text": _fmt_ratio_pct(dd_mine["current_dd"]),
-                "cdd_mine_val":  dd_mine["current_dd"],
-                "cdd_ndx_text":  _fmt_ratio_pct(dd_ndx["current_dd"]),
-                "cdd_ndx_val":   dd_ndx["current_dd"],
-                "rec_mine_text": _fmt_ratio_pct_plain(dd_mine["recovery"]),
-                "rec_mine_val":  dd_mine["recovery"],
-                "rec_ndx_text":  _fmt_ratio_pct_plain(dd_ndx["recovery"]),
-                "rec_ndx_val":   dd_ndx["recovery"],
+                "mdd_mine_text":  _fmt_ratio_pct(dd_mine["mdd"]),
+                "mdd_ndx_text":   _fmt_ratio_pct(dd_ndx["mdd"]),
+                "mdd_diff":       round(dd_mine["mdd"]        - dd_ndx["mdd"],        4),
+                "cdd_mine_text":  _fmt_ratio_pct(dd_mine["current_dd"]),
+                "cdd_ndx_text":   _fmt_ratio_pct(dd_ndx["current_dd"]),
+                "cdd_diff":       round(dd_mine["current_dd"] - dd_ndx["current_dd"], 4),
+                "rec_mine_text":  _fmt_ratio_pct_plain(dd_mine["recovery"]),
+                "rec_ndx_text":   _fmt_ratio_pct_plain(dd_ndx["recovery"]),
+                "rec_diff":       round(dd_mine["recovery"]   - dd_ndx["recovery"],   4),
             }
 
             # ── 도넛 ─────────────────────────────────────────
             donut_data = _build_donut_payload(positions)
             if donut_data:
-                legend_html_parts = []
-                for item in donut_data["legend"]:
-                    dot_cls = "db-donut-legend-dot cash" if item["is_cash"] else "db-donut-legend-dot"
-                    legend_html_parts.append(
-                        f'<div class="db-donut-legend-row">'
-                        f'<span class="{dot_cls}" style="background:{item["color"]}"></span>'
-                        f'<span class="db-donut-legend-name">{item["label"]}</span>'
-                        f'<span class="db-donut-legend-pct">{item["pct"]}</span>'
-                        f'</div>'
-                    )
                 donut = {
-                    "svg_html":    donut_data["svg_html"],
-                    "legend_html": "".join(legend_html_parts),
-                    "subtitle":    donut_data["subtitle"],
+                    "svg_html": donut_data["svg_html"],
+                    "legend":   donut_data["legend"],   # [{label, color, pct, is_cash}, ...]
+                    "subtitle": donut_data["subtitle"],
                 }
             else:
-                donut = {"svg_html": "", "legend_html": "", "subtitle": "–"}
+                donut = {"svg_html": "", "legend": [], "subtitle": "–"}
 
             # ── 은퇴 시뮬레이션 ──────────────────────────────
             ret_asset   = d["retirement_asset"]
@@ -855,13 +856,13 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
 
             current = {
                 "exposure": exposure_payload,
-                "irr":   irr,
-                "alpha": alpha,
-                "beta":  beta,
-                "dd":    dd,
+                "irr":      irr,
+                "alpha":    alpha,
+                "beta":     beta,
+                "dd":       dd,
                 "donut_text": {
-                    "legend_html": donut["legend_html"],
-                    "subtitle":    donut["subtitle"],
+                    "legend":   donut["legend"],    # [{label, color, pct, is_cash}, ...]
+                    "subtitle": donut["subtitle"],
                 },
                 "donut_svg": donut["svg_html"],
                 "retirement": retirement,
