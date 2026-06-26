@@ -33,7 +33,7 @@ def _build_account_card_skeleton(acc, ns_str):
         f'      </div>'
         f'    </div>'
         f'  </div>'
-        f'  <div class="ac-accordion" id="ac-acc-{a_id}" style="display:none;"></div>'
+        f'  <div class="subtab-accordion" id="ac-acc-{a_id}" style="display:none;"></div>'
         f'</div>'
     )
 

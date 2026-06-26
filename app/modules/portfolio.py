@@ -133,7 +133,7 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
     if is_cash:
         return row_html
 
-    accordion_html = f'<div class="pf-accordion" id="pf-acc-{tid}" style="display:none;"></div>'
+    accordion_html = f'<div class="subtab-accordion" id="pf-acc-{tid}" style="display:none;"></div>'
     return row_html + accordion_html
 
 

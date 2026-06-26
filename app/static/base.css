@@ -353,3 +353,10 @@ body {
 .asset-sub-content {
     display: none;
 }
+
+.subtab-accordion {
+    background: #1a1a2e;          /* 배경색 — 기존 카드보다 살짝 다른 톤 */
+    border-left: 3px solid #4a9eff;  /* 왼쪽 포인트 테두리 */    
+    margin: 0 4px 8px 4px;
+    padding: 4px 0 4px 14px;
+}

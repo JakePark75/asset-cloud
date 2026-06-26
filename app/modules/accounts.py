@@ -13,7 +13,6 @@ from app.modules.accounts_DAL import (
 from app.modules.accounts_helpers import (
     _build_account_card_skeleton, _build_account_card_values,
     _build_position_row_skeleton, _build_position_row_values,
-    _build_summary_html,
 )
 from app.modules.accounts_modals import modal_edit_position_html, modal_edit_position_js
 from app.db import get_db, get_usd_krw, get_market_map, get_market_label, get_market_currency
@@ -614,7 +613,7 @@ def accounts_ui():
 @module.server
 def accounts_server(input, output, session, active_tab: reactive.value = None,
                     active_sub_tab: reactive.value = None):
-    
+
     ns_str = session.ns("_")[:-1]  # "asset-accounts" 등 실제 prefix
 
     _initialized = False  # 일반 변수: effect 자기-재트리거 방지
@@ -641,6 +640,25 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
             return None
         return fetch_account_details(acc_id)  # 시세 없음, 구조만
 
+    # ── 아코디언 하단 버튼 HTML 생성 ────────────────────────────────────────
+
+    def _build_accordion_footer(acc_id: int) -> str:
+        return (
+            f'<div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">'
+            f'  <button class="btn-add" '
+            f'    onclick="acShowModal(\'ac-modal-add-position\'); acUpdateAddPreview();">'
+            f'    + 종목 추가</button>'
+            f'  <button class="btn-add" '
+            f'    onclick="acShowModal(\'ac-modal-add-cash\');">'
+            f'    + 현금 추가</button>'
+            f'  <button class="btn-account-delete-bottom" '
+            f'    onclick="if(confirm(\'계좌를 삭제하시겠습니까?\')) '
+            f'Shiny.setInputValue(window._acNs + \'-confirm_delete_account\', '
+            f'Math.random(), {{priority: \'event\'}});">'
+            f'    계좌 삭제</button>'
+            f'</div>'
+        )
+
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 
     @reactive.effect
@@ -664,13 +682,6 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         normal   = [a for a in accounts if not a[5]]
         watch    = [a for a in accounts if a[5]]
 
-        total_sum       = sum(a[3] for a in normal)
-        yesterday_total = sum(a[6] for a in normal)
-        pnl_sum         = total_sum - yesterday_total
-        pnl_pct_sum     = (pnl_sum / yesterday_total * 100) if yesterday_total > 0 else 0
-        summary = _build_summary_html("총자산", total_sum, pnl_sum, pnl_pct_sum,
-                                      usd_rate_val, usd_chg)
-
         card_values = {str(a[0]): _build_account_card_values(a) for a in accounts}
         current_accounts = [a[0] for a in accounts]
         structure_changed = (current_accounts != _last_accounts)
@@ -690,15 +701,15 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
                     _build_account_card_skeleton(a, ns_str) for a in watch
                 )
             await session.send_custom_message("ac_list_init", {
-                "summary":           summary,
                 "account_list_html": skeleton_html,
                 "cards":             card_values,
             })
         else:
-            current = {"summary": summary, **card_values}
-            diff = diff_display(current, _last_list_disp)
+            diff = diff_display(card_values, _last_list_disp)
             if diff:
                 await session.send_custom_message("ac_list_tick", diff)
+
+        _last_list_disp.update(card_values)
 
         # ── 아코디언 종목 갱신 (열려있을 때만) ─────────────────────────────
         if acc_id is not None:
@@ -722,6 +733,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
                     )
                 else:
                     skeleton_html = '<p style="color:#888; padding:16px;">종목이 없습니다.</p>'
+                skeleton_html += _build_accordion_footer(acc_id)
                 await session.send_custom_message("ac_acc_init", {
                     "acc_id":             acc_id,
                     "position_list_html": skeleton_html,
@@ -733,6 +745,8 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
                     await session.send_custom_message("ac_acc_tick", {
                         "positions": diff,
                     })
+
+            _last_acc_disp.update(pos_values)
 
         _initialized = True
 
