@@ -192,12 +192,15 @@ def build_ticker_row_values(
 
     # ── 손익액 + 수익률 (우측 2행) ───────────────────────────
     # 평단가·수량·현재가 모두 있을 때만 계산
-    pnl_str = pnl_css = ""
+    pnl_amount_str = pnl_pct_str = pnl_css = ""
     if not is_cash and avg_f > 0 and price_f > 0 and qty_f > 0:
         rate       = usd_rate if currency == "USD" else 1.0
         pnl_amount = (price_f - avg_f) * qty_f * rate   # KRW 환산 손익액
         pnl_pct    = (price_f - avg_f) / avg_f * 100
-        pnl_str, pnl_css = fmt_pnl(pnl_amount, pnl_pct)
+        sign       = "+" if pnl_amount >= 0 else "-"
+        pnl_css    = "positive" if pnl_amount >= 0 else "negative"
+        pnl_amount_str = f"{sign}{fmt_krw(abs(pnl_amount))}"
+        pnl_pct_str    = fmt_pct(pnl_pct)
 
     # ── 시장 상태 ─────────────────────────────────────────────
     status_dot = status_text = status_cls = ""
@@ -228,13 +231,14 @@ def build_ticker_row_values(
             "status_cls": status_cls,
         },
         "dynamic": {
-            "id":      row_id,
-            "amount":  amount_str,
-            "price":   price_str,
-            "chg":     chg_str,
-            "chg_css": chg_css,
-            "pnl":     pnl_str,
-            "pnl_css": pnl_css,
+            "id":         row_id,
+            "amount":     amount_str,
+            "price":      price_str,
+            "chg":        chg_str,
+            "chg_css":    chg_css,
+            "pnl_amount": pnl_amount_str,
+            "pnl_pct":    pnl_pct_str,
+            "pnl_css":    pnl_css,
         },
     }
 

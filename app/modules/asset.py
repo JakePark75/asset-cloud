@@ -71,9 +71,11 @@ def asset_ui():
   Shiny.addCustomMessageHandler('asset_hero_update', function(m) {
     if (m.hero_text) {
       setText('asset-hero-amount',     m.hero_text.total_asset);
-      setText('asset-hero-delta-text', m.hero_text.delta_text);
       var dEl = document.getElementById('asset-hero-delta-text');
-      if (dEl) dEl.className = 'db-hero-delta ' + pnlClass(m.hero_text.delta_val);
+      if (dEl) {
+        if (m.hero_text.delta_text != null) dEl.textContent = m.hero_text.delta_text;
+        if (m.hero_text.delta_val  != null) dEl.className = 'db-hero-delta ' + pnlClass(m.hero_text.delta_val);
+      }
       setText('asset-hero-usd-text', m.hero_text.usd_text);
       var uEl = document.getElementById('asset-hero-usd-text');
       if (uEl && m.hero_text.usd_chg_val != null) uEl.className = pnlClass(m.hero_text.usd_chg_val);

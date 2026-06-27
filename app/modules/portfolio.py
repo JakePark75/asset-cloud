@@ -393,11 +393,13 @@ def portfolio_ui():
       }
     }
 
-    if (t.pnl != null || t.pnl_css != null) {
+    if (t.pnl_amount != null || t.pnl_pct != null || t.pnl_css != null) {
       var pnlEl = document.getElementById('pf-pnl-' + t.id);
       if (pnlEl) {
-        if (t.pnl != null)     pnlEl.textContent = t.pnl;
-        if (t.pnl_css != null) pnlEl.className   = t.pnl_css;
+        if (t.pnl_amount != null) pnlEl.dataset.pnlAmount = t.pnl_amount;
+        if (t.pnl_pct    != null) pnlEl.dataset.pnlPct    = t.pnl_pct;
+        if (t.pnl_css    != null) pnlEl.className          = t.pnl_css;
+        pnlEl.textContent = (pnlEl.dataset.pnlAmount || '') + (pnlEl.dataset.pnlPct ? ' ' + pnlEl.dataset.pnlPct : '');
       }
     }
   }
