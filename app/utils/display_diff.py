@@ -1,16 +1,30 @@
-def diff_display(current: dict, last: dict) -> dict:
+def diff_display(current: dict, last: dict, depth: int = 1) -> dict:
     """
-    current 중 last와 값이 다른 top-level key만 반환.
-    - 비교는 '화면에 표시되는 최종 포맷 문자열/값' 기준 (포맷팅은 호출 전에 끝나 있어야 함).
-    - dict/str 값 모두 ==/!= 로 비교 가능 (Python dict equality는 재귀적 값 비교).
-    - last는 in-place로 current 전체로 갱신됨 (다음 비교 기준이 됨).
+    current 중 last와 값이 다른 key만 반환.
+
+    depth=1 (기본): top-level key 단위로 통째 비교. 기존 동작과 동일.
+    depth=N: N depth까지 dict 내부 필드 단위로 재귀 비교.
+             dict가 아닌 값(str, list, int 등)은 해당 depth에서 통째 비교.
+
+    last는 in-place로 current 전체로 갱신됨 (다음 비교 기준이 됨).
     """
-    changed = {}
-    for k, v in current.items():
-        if last.get(k) != v:
-            changed[k] = v
+    changed = _dict_diff(current, last, depth)
     last.clear()
     last.update(current)
+    return changed
+
+
+def _dict_diff(current: dict, last: dict, depth: int) -> dict:
+    changed = {}
+    for k, v in current.items():
+        prev = last.get(k)
+        if depth >= 2 and isinstance(v, dict) and isinstance(prev, dict):
+            field_diff = _dict_diff(v, prev, depth - 1)
+            if field_diff:
+                changed[k] = field_diff
+        else:
+            if prev != v:
+                changed[k] = v
     return changed
 
 

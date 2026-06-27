@@ -76,7 +76,7 @@ def asset_ui():
       if (dEl) dEl.className = 'db-hero-delta ' + pnlClass(m.hero_text.delta_val);
       setText('asset-hero-usd-text', m.hero_text.usd_text);
       var uEl = document.getElementById('asset-hero-usd-text');
-      if (uEl) uEl.className = pnlClass(m.hero_text.usd_chg_val);
+      if (uEl && m.hero_text.usd_chg_val != null) uEl.className = pnlClass(m.hero_text.usd_chg_val);
     }
     if (m.hero_chart_svg !== undefined) {
       setHTML('asset-hero-chart-inner', m.hero_chart_svg);
@@ -348,23 +348,24 @@ def asset_server(input, output, session, active_tab: reactive.value = None):
 
         def _arrow(v): return "+" if v > 0 else "-" if v < 0 else "–"
         def _fmt_ratio_pct(v): return f"{v * 100:+.2f}%"
+        def _sign(v): return 1 if v > 0 else (-1 if v < 0 else 0)
 
         delta = d["asset_delta"]
         pct   = d["asset_delta_pct"]
         hero = {
             "total_asset": fmt_krw(d["total_asset"]),
             "delta_text":  f"{_arrow(delta)}{fmt_krw(abs(delta))}  {_fmt_ratio_pct(pct)}",
-            "delta_val":   delta,
+            "delta_val":   _sign(delta),
             "usd_text":    f"{d['usd_krw']:,.2f} {fmt_pct(d['usd_chg'])}",
-            "usd_chg_val": d["usd_chg"],
+            "usd_chg_val": _sign(d["usd_chg"]),
         }
         chart_svg = _hero_line_svg(d["chart_data"])
 
         current = {
-            "hero_text":     hero,
+            "hero_text":      hero,
             "hero_chart_svg": chart_svg,
         }
-        diff = diff_display(current, _last_display)
+        diff = diff_display(current, _last_display, depth=2)
         if diff:
             await session.send_custom_message("asset_hero_update", diff)
         _initialized = True

@@ -280,7 +280,7 @@ def _donut_svg(slices: list[dict]) -> str:
 def _build_donut_payload(positions: list[dict]) -> dict:
     """
     position_data() 결과를 받아 도넛 렌더링에 필요한 데이터를 반환.
-    svg_html + legend 리스트를 dict로 반환.
+    svg_html + legend dict를 반환. legend는 {label: {color, pct, is_cash}} 구조.
     """
     if not positions:
         return {}
@@ -345,15 +345,14 @@ def _build_donut_payload(positions: list[dict]) -> dict:
 
     svg_html = _donut_svg(slices)
 
-    legend = []
+    legend = {}
     for s in slices:
         pct = s["value"] / total * 100
-        legend.append({
-            "label":    s["label"],
-            "color":    s["color"],
-            "pct":      f"{pct:.1f}%",
-            "is_cash":  s["label"] == "현금",
-        })
+        legend[s["label"]] = {
+            "color":   s["color"],
+            "pct":     f"{pct:.1f}%",
+            "is_cash": s["label"] == "현금",
+        }
 
     subtitle = f"상위 {min(8, len(items))}"
 
@@ -493,19 +492,55 @@ def _dashboard_ui_dom_patch():
     if (m.donut_text) {
       var legendEl = document.getElementById('db-donut-legend');
       if (legendEl && m.donut_text.legend) {
-        var html = '';
-        for (var i = 0; i < m.donut_text.legend.length; i++) {
-          var it = m.donut_text.legend[i];
-          var dotCls = 'db-donut-legend-dot' + (it.is_cash ? ' cash' : '');
-          html += '<div class="db-donut-legend-row">'
-                + '<span class="' + dotCls + '" style="background:' + it.color + '"></span>'
-                + '<span class="db-donut-legend-name">' + it.label + '</span>'
-                + '<span class="db-donut-legend-pct">' + it.pct + '</span>'
-                + '</div>';
+        var entries = Object.entries(m.donut_text.legend);
+        if (entries.length > 0) {
+          // 기존 행이 없으면(초기 또는 종목 구성 변경) 전체 재렌더
+          // 기존 행이 있으면 pct/color만 패치
+          var isInit = legendEl.children.length === 0;
+          if (isInit) {
+            var html = '';
+            for (var i = 0; i < entries.length; i++) {
+              var label = entries[i][0];
+              var it    = entries[i][1];
+              var dotCls = 'db-donut-legend-dot' + (it.is_cash ? ' cash' : '');
+              html += '<div class="db-donut-legend-row" data-label="' + label + '">'
+                    + '<span class="' + dotCls + '" style="background:' + it.color + '"></span>'
+                    + '<span class="db-donut-legend-name">' + label + '</span>'
+                    + '<span class="db-donut-legend-pct">' + it.pct + '</span>'
+                    + '</div>';
+            }
+            legendEl.innerHTML = html;
+          } else {
+            for (var i = 0; i < entries.length; i++) {
+              var label = entries[i][0];
+              var it    = entries[i][1];
+              var row = legendEl.querySelector('[data-label="' + label + '"]');
+              if (row) {
+                // 기존 행 패치
+                if (it.pct   !== undefined) row.querySelector('.db-donut-legend-pct').textContent = it.pct;
+                if (it.color !== undefined) row.querySelector('.db-donut-legend-dot').style.background = it.color;
+              } else {
+                // 신규 종목 — 전체 재렌더 (순서가 바뀔 수 있으므로)
+                var html = '';
+                var allEntries = Object.entries(m.donut_text.legend);
+                for (var j = 0; j < allEntries.length; j++) {
+                  var l2  = allEntries[j][0];
+                  var it2 = allEntries[j][1];
+                  var dotCls2 = 'db-donut-legend-dot' + (it2.is_cash ? ' cash' : '');
+                  html += '<div class="db-donut-legend-row" data-label="' + l2 + '">'
+                        + '<span class="' + dotCls2 + '" style="background:' + it2.color + '"></span>'
+                        + '<span class="db-donut-legend-name">' + l2 + '</span>'
+                        + '<span class="db-donut-legend-pct">' + it2.pct + '</span>'
+                        + '</div>';
+                }
+                legendEl.innerHTML = html;
+                break;
+              }
+            }
+          }
         }
-        legendEl.innerHTML = html;
       }
-      setText('db-donut-title-sub', '(' + m.donut_text.subtitle + ')');
+      if (m.donut_text.subtitle !== undefined) setText('db-donut-title-sub', '(' + m.donut_text.subtitle + ')');
     }
     // ── 도넛 (SVG) ────────────────────────────────────
     if (m.donut_svg !== undefined) {
@@ -839,7 +874,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
                     "subtitle": donut_data["subtitle"],
                 }
             else:
-                donut = {"svg_html": "", "legend": [], "subtitle": "–"}
+                donut = {"svg_html": "", "legend": {}, "subtitle": "–"}
 
             # ── 은퇴 시뮬레이션 ──────────────────────────────
             ret_asset   = d["retirement_asset"]
@@ -862,14 +897,14 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
                 "beta":     beta,
                 "dd":       dd,
                 "donut_text": {
-                    "legend":   donut["legend"],    # [{label, color, pct, is_cash}, ...]
+                    "legend":   donut["legend"],    # {label: {color, pct, is_cash}, ...}
                     "subtitle": donut["subtitle"],
                 },
                 "donut_svg": donut["svg_html"],
                 "retirement": retirement,
             }
 
-            diff = diff_display(current, _last_display)
+            diff = diff_display(current, _last_display, depth=3)
             if diff:
                 await session.send_custom_message("db_update", diff)
             _initialized = True
