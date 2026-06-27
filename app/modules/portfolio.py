@@ -643,6 +643,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
                 "show_force_btn":   show_force,
                 "tickers": {t: {**v["static"], **v["dynamic"]} for t, v in ticker_values.items()},
             })
+            _last_display.update(ticker_values)
         else:
             # pf_tick: dynamic 필드 단위 diff / pf_static_tick: static 필드 단위 diff
             dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
