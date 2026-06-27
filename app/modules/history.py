@@ -10,7 +10,8 @@ def _today_kst() -> datetime.date:
 
 from app.price_signal import price_signal, daily_insert_signal, position_signal
 from app.db import get_db
-from .history_DAL import load_history, load_today_row, save_cash_flow
+from .history_DAL import load_history, load_today_row, save_cash_flow, build_today_row, build_history_rows
+from app.utils.display_diff import diff_display
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -341,11 +342,11 @@ def history_ui():
             var ndx     = parseFloat(r.ndx100) || 0;
             var cf      = parseFloat(r.cash_flow) || 0;
             var cf_note = r.cash_flow_note || '';
-            var exp     = parseFloat(r.exposure) || 0;
-            var cash    = parseFloat(r.cash_ratio) || 0;
-            var x1      = parseFloat(r.x1_ratio) || 0;
-            var x2      = parseFloat(r.x2_ratio) || 0;
-            var x3      = parseFloat(r.x3_ratio) || 0;
+            var exp     = r.exposure  !== '' ? parseFloat(r.exposure)  : null;
+            var cash    = r.cash_ratio !== '' ? parseFloat(r.cash_ratio) : null;
+            var x1      = r.x1_ratio  !== '' ? parseFloat(r.x1_ratio)  : null;
+            var x2      = r.x2_ratio  !== '' ? parseFloat(r.x2_ratio)  : null;
+            var x3      = r.x3_ratio  !== '' ? parseFloat(r.x3_ratio)  : null;
             var usd_krw = parseFloat(r.usd_krw) || 0;
             var prev    = r.prev_total;
 
@@ -380,8 +381,8 @@ def history_ui():
               '<td>' + dateShort + '</td>' +
               '<td style="text-align:right">' + fmtKrw2(total) + '</td>' +
               '<td style="text-align:right">' + diffCell + '</td>' +
-              '<td style="text-align:right">' + (exp * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + (cash * 100).toFixed(1) + '%</td>' +
+              '<td style="text-align:right">' + (exp  !== null ? (exp  * 100).toFixed(1) + '%' : '-') + '</td>' +
+              '<td style="text-align:right">' + (cash !== null ? (cash * 100).toFixed(1) + '%' : '-') + '</td>' +
               '<td style="text-align:right">' + (function() {
                 if (!twr) return '-';
                 var twrChg = parseFloat(r.twr_change_pct);
@@ -399,9 +400,9 @@ def history_ui():
                 return ndx.toFixed(2) + '<br><span class="' + cls + '" style="font-size:11px">' + sign + ndxChg.toFixed(2) + '%</span>';
               })() + '</td>' +
               '<td style="text-align:right">' + (usd_krw ? usd_krw.toFixed(2) : '-') + '</td>' +
-              '<td style="text-align:right">' + (x3 * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + (x2 * 100).toFixed(1) + '%</td>' +
-              '<td style="text-align:right">' + (x1 * 100).toFixed(1) + '%</td>' +
+              '<td style="text-align:right">' + (x3 !== null ? (x3 * 100).toFixed(1) + '%' : '-') + '</td>' +
+              '<td style="text-align:right">' + (x2 !== null ? (x2 * 100).toFixed(1) + '%' : '-') + '</td>' +
+              '<td style="text-align:right">' + (x1 !== null ? (x1 * 100).toFixed(1) + '%' : '-') + '</td>' +
               '<td style="text-align:right">' + cfCell + '</td>';
             tr.addEventListener('click', function() {
               Shiny.setInputValue('history-selected_date', date, {priority: 'event'});
@@ -448,27 +449,28 @@ def history_ui():
           });
 
           // ── today_row 갱신 — 최상단 행 교체 + 차트 끝단 업데이트 ──────────
+          // diff payload: 변경된 필드만 수신. 각 블록은 필요한 핵심 필드 존재 여부를
+          // 먼저 확인하고, 없으면 해당 블록 스킵 (값 미변화 = 갱신 불필요).
           Shiny.addCustomMessageHandler('today_row_update', function(r) {
 
-            // 1. _allRows 갱신 (DOM 상태와 무관하게 배열 자체의 today 중복을 방지)
+            // 1. _allRows 갱신 — diff를 기존 캐시에 머지해서 항상 완전한 row 유지.
             //    history_data가 이미 today row를 포함해서 보낸 경우와
             //    이후 today_row_update가 추가로 들어오는 경우가 겹칠 수 있으므로,
-            //    배열의 첫 row가 같은 날짜면 교체, 아니면만 unshift.
-            var today = r.date;
+            //    배열의 첫 row가 같은 날짜면 머지, 아니면 unshift.
+            var today = r.date || (_allRows.length > 0 ? _allRows[0].date : null);
             if (_allRows.length > 0 && _allRows[0].date === today) {
-              _allRows[0] = r;
-            } else {
+              Object.assign(_allRows[0], r);
+            } else if (r.date) {
               _allRows.unshift(r);
             }
 
-            // 2. DOM 최상단 행 교체 — 테이블이 이미 실제로 그려져 있을 때만.
-            //    _pendingDraw 상태(탭 숨김 중 history_data 미반영)면 여기서 DOM을
-            //    건드리지 않는다. 탭 진입 시 drawTable(_allRows)가 갱신된 배열로
-            //    처음부터 다시 그리므로, 여기서 직접 insert하면 중복의 원인이 된다.
-            if (!_pendingDraw) {
-              var tbody = document.getElementById('history-tbody');
-              if (tbody) {
-                var newTr    = buildTr(r);
+            // 2. DOM 최상단 행 교체 — total_asset 포함된 경우에만 (행 전체 재생성 필요).
+            //    _pendingDraw 상태면 스킵 (탭 진입 시 drawTable이 _allRows로 다시 그림).
+            if (!_pendingDraw && r.total_asset !== undefined) {
+              var rowData = _allRows[0];
+              var tbody   = document.getElementById('history-tbody');
+              if (tbody && rowData) {
+                var newTr    = buildTr(rowData);
                 var existing = tbody.querySelector('tr[data-date="' + today + '"]');
                 if (existing) {
                   tbody.replaceChild(newTr, existing);
@@ -478,73 +480,77 @@ def history_ui():
               }
             }
 
-            // 2. chart-asset 끝단 업데이트
-            var gdAsset = document.getElementById('chart-asset');
-            if (gdAsset && gdAsset.data) {
-              var date    = r.date;
-              var total   = parseFloat(r.total_asset) || 0;
-              var cf      = parseFloat(r.cash_flow) || 0;
-              var cf_note = r.cash_flow_note || '';
+            // 3. chart-asset 끝단 업데이트 — total_asset 있을 때만.
+            if (r.total_asset !== undefined) {
+              var gdAsset = document.getElementById('chart-asset');
+              if (gdAsset && gdAsset.data) {
+                var date    = today;
+                var total   = parseFloat(r.total_asset) || 0;
+                var cf      = parseFloat(r.cash_flow) || 0;
+                var cf_note = r.cash_flow_note || '';
 
-              var xs0 = gdAsset.data[0].x.slice();
-              var ys0 = gdAsset.data[0].y.slice();
-              var cd0 = (gdAsset.data[0].customdata || []).slice();
+                var xs0 = gdAsset.data[0].x.slice();
+                var ys0 = gdAsset.data[0].y.slice();
+                var cd0 = (gdAsset.data[0].customdata || []).slice();
 
-              if (xs0[xs0.length - 1] === date) {
-                ys0[ys0.length - 1] = total;
-                cd0[cd0.length - 1] = [formatKrwFull(total) + '원', cf, cf_note];
-              } else {
-                xs0.push(date);
-                ys0.push(total);
-                cd0.push([formatKrwFull(total) + '원', cf, cf_note]);
-              }
-              Plotly.restyle(gdAsset, {x: [xs0], y: [ys0], customdata: [cd0]}, [0]);
+                if (xs0[xs0.length - 1] === date) {
+                  ys0[ys0.length - 1] = total;
+                  cd0[cd0.length - 1] = [formatKrwFull(total) + '원', cf, cf_note];
+                } else {
+                  xs0.push(date);
+                  ys0.push(total);
+                  cd0.push([formatKrwFull(total) + '원', cf, cf_note]);
+                }
+                Plotly.restyle(gdAsset, {x: [xs0], y: [ys0], customdata: [cd0]}, [0]);
 
-              // 오늘 마커 트레이스 제거
-              var toDelete = [];
-              for (var ti = gdAsset.data.length - 1; ti >= 1; ti--) {
-                var tx = gdAsset.data[ti].x;
-                if (tx && tx.length === 1 && tx[0] === date) toDelete.push(ti);
-              }
-              if (toDelete.length > 0) Plotly.deleteTraces(gdAsset, toDelete);
+                // 오늘 마커 트레이스 제거
+                var toDelete = [];
+                for (var ti = gdAsset.data.length - 1; ti >= 1; ti--) {
+                  var tx = gdAsset.data[ti].x;
+                  if (tx && tx.length === 1 && tx[0] === date) toDelete.push(ti);
+                }
+                if (toDelete.length > 0) Plotly.deleteTraces(gdAsset, toDelete);
 
-              // 오늘 cf 있으면 마커 추가
-              if (cf !== 0) {
-                var markerColor  = cf > 0 ? '#ff4d4d' : '#4d9fff';
-                var markerSymbol = cf > 0 ? 'triangle-up' : 'triangle-down';
-                var markerName   = cf > 0 ? '입금' : '출금';
-                var markerY      = cf > 0 ? total * 1.012 : total * 0.988;
-                var cdStr        = (cf > 0 ? '+' : '') + Math.round(cf).toLocaleString() + '원' + (cf_note ? String.fromCharCode(10) + cf_note : '');
-                Plotly.addTraces(gdAsset, {
-                  x: [date], y: [markerY], mode: 'markers', name: markerName,
-                  marker: {symbol: markerSymbol, size: 10, color: markerColor, line: {color: '#ffffff', width: 1}},
-                  hovertemplate: '%{customdata}<extra>' + markerName + '</extra>',
-                  customdata: [cdStr],
-                });
+                // 오늘 cf 있으면 마커 추가
+                if (cf !== 0) {
+                  var markerColor  = cf > 0 ? '#ff4d4d' : '#4d9fff';
+                  var markerSymbol = cf > 0 ? 'triangle-up' : 'triangle-down';
+                  var markerName   = cf > 0 ? '입금' : '출금';
+                  var markerY      = cf > 0 ? total * 1.012 : total * 0.988;
+                  var cdStr        = (cf > 0 ? '+' : '') + Math.round(cf).toLocaleString() + '원' + (cf_note ? String.fromCharCode(10) + cf_note : '');
+                  Plotly.addTraces(gdAsset, {
+                    x: [date], y: [markerY], mode: 'markers', name: markerName,
+                    marker: {symbol: markerSymbol, size: 10, color: markerColor, line: {color: '#ffffff', width: 1}},
+                    hovertemplate: '%{customdata}<extra>' + markerName + '</extra>',
+                    customdata: [cdStr],
+                  });
+                }
               }
             }
 
-            // 3. chart-twr 끝단 업데이트
-            var gdTwr = document.getElementById('chart-twr');
-            if (gdTwr && gdTwr.data && gdTwr.data.length >= 2) {
-              var date   = r.date;
-              var twrPct = parseFloat(r.twr_pct);
-              var ndxPct = parseFloat(r.ndx_pct);
+            // 4. chart-twr 끝단 업데이트 — twr_pct / ndx_pct 있을 때만.
+            if (r.twr_pct !== undefined && r.ndx_pct !== undefined) {
+              var gdTwr = document.getElementById('chart-twr');
+              if (gdTwr && gdTwr.data && gdTwr.data.length >= 2) {
+                var date   = today;
+                var twrPct = parseFloat(r.twr_pct);
+                var ndxPct = parseFloat(r.ndx_pct);
 
-              var xs1 = gdTwr.data[0].x.slice();
-              var ys1 = gdTwr.data[0].y.slice();
-              var xs2 = gdTwr.data[1].x.slice();
-              var ys2 = gdTwr.data[1].y.slice();
+                var xs1 = gdTwr.data[0].x.slice();
+                var ys1 = gdTwr.data[0].y.slice();
+                var xs2 = gdTwr.data[1].x.slice();
+                var ys2 = gdTwr.data[1].y.slice();
 
-              if (xs1[xs1.length - 1] === date) {
-                ys1[ys1.length - 1] = twrPct;
-                ys2[ys2.length - 1] = ndxPct;
-              } else {
-                xs1.push(date); ys1.push(twrPct);
-                xs2.push(date); ys2.push(ndxPct);
+                if (xs1[xs1.length - 1] === date) {
+                  ys1[ys1.length - 1] = twrPct;
+                  ys2[ys2.length - 1] = ndxPct;
+                } else {
+                  xs1.push(date); ys1.push(twrPct);
+                  xs2.push(date); ys2.push(ndxPct);
+                }
+                Plotly.restyle(gdTwr, {x: [xs1], y: [ys1]}, [0]);
+                Plotly.restyle(gdTwr, {x: [xs2], y: [ys2]}, [1]);
               }
-              Plotly.restyle(gdTwr, {x: [xs1], y: [ys1]}, [0]);
-              Plotly.restyle(gdTwr, {x: [xs2], y: [ys2]}, [1]);
             }
           });
 
@@ -770,6 +776,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
     _initialized_historytable = False  # 일반 변수: effect 자기-재트리거 방지
     today_cf_trigger = reactive.value(0)  # 오늘 입출금 저장 시 강제 갱신용
     _reload_trigger  = reactive.value(0)  # 입출금 수정(과거) 시 DB rows 재로드용
+    _last_today_row: dict = {}  # diff_display 비교 기준
 
     # ── 과거 DB rows 캐시 ────────────────────────────────────────────────────
     # _reload_trigger / daily_insert_signal 시에만 DB 재조회.
@@ -797,56 +804,19 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         t       = load_today_row()
         today   = _today_kst()
 
-        # today_row를 맨 앞에 붙여서 내림차순으로 전송
+        # today_row를 tuple로 변환해서 build_history_rows에 전달
+        today_tuple = None
         if t and (not rows or rows[-1][0] < today):
-            rows_desc = [
-                (today,
-                 t.get("total_asset"), t.get("twr_asset"), t.get("ndx100"),
-                 t.get("cash_flow", 0), t.get("cash_flow_note"),
-                 t.get("exposure"), t.get("cash_ratio"),
-                 t.get("x1_ratio"), t.get("x2_ratio"), t.get("x3_ratio"),
-                 t.get("usd_krw"))
-            ] + list(reversed(rows))
-        else:
-            rows_desc = list(reversed(rows))
+            today_tuple = (
+                today,
+                t.get("total_asset"), t.get("twr_asset"), t.get("ndx100"),
+                t.get("cash_flow", 0), t.get("cash_flow_note"),
+                t.get("exposure"), t.get("cash_ratio"),
+                t.get("x1_ratio"), t.get("x2_ratio"), t.get("x3_ratio"),
+                t.get("usd_krw"),
+            )
 
-        index_map = {r[0]: i for i, r in enumerate(rows)}
-
-        data = []
-        for r in rows_desc:
-            if r[0] == today:
-                prev     = float(rows[-1][1] or 0) if rows else None
-                prev_ndx = float(rows[-1][3] or 0) if rows else None
-                prev_twr = float(rows[-1][2] or 0) if rows else None
-            else:
-                idx      = index_map.get(r[0])
-                prev     = float(rows[idx - 1][1] or 0) if idx is not None and idx > 0 else None
-                prev_ndx = float(rows[idx - 1][3] or 0) if idx is not None and idx > 0 else None
-                prev_twr = float(rows[idx - 1][2] or 0) if idx is not None and idx > 0 else None
-
-            cur_ndx = float(r[3] or 0)
-            ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100 if prev_ndx and cur_ndx else None
-
-            cur_twr = float(r[2] or 0)
-            twr_change_pct = (cur_twr - prev_twr) / prev_twr * 100 if prev_twr and cur_twr else None
-
-            data.append({
-                "date":           str(r[0]),
-                "total_asset":    str(r[1]),
-                "twr_asset":      str(r[2]),
-                "ndx100":         str(r[3]),
-                "cash_flow":      str(r[4]),
-                "cash_flow_note": r[5] or '',
-                "exposure":       str(r[6]),
-                "cash_ratio":     str(r[7]),
-                "x1_ratio":       str(r[8]),
-                "x2_ratio":       str(r[9]),
-                "x3_ratio":       str(r[10]),
-                "usd_krw":        str(r[11]),
-                "prev_total":     str(prev) if prev is not None else '',
-                "ndx_change_pct": str(ndx_change_pct) if ndx_change_pct is not None else '',
-                "twr_change_pct": str(twr_change_pct) if twr_change_pct is not None else '',
-            })
+        data = build_history_rows(rows, today_tuple)
 
         await session.send_custom_message("history_data", data)
         _initialized_historytable = True
@@ -868,52 +838,17 @@ def history_server(input, output, session, active_tab: reactive.value = None):
             return
 
         rows = _db_rows()
-        today    = _today_kst()
-        prev     = float(rows[-1][1] or 0) if rows else None
-        prev_ndx = float(rows[-1][3] or 0) if rows else None
-        prev_twr = float(rows[-1][2] or 0) if rows else None
+        row  = build_today_row(t, rows)
 
-        twr_pct = 0.0
-        ndx_pct = 0.0
-        if rows:
-            base_twr = float(rows[0][2] or 0)
-            base_ndx = float(rows[0][3] or 0)
-            if base_twr:
-                twr_pct = (float(t.get("twr_asset") or 0) / base_twr - 1) * 100
-            if base_ndx:
-                ndx_pct = (float(t.get("ndx100") or 0) / base_ndx - 1) * 100
-
-        cur_ndx        = float(t.get("ndx100") or 0)
-        ndx_change_pct = (cur_ndx - prev_ndx) / prev_ndx * 100 if prev_ndx and cur_ndx else None
-
-        cur_twr        = float(t.get("twr_asset") or 0)
-        twr_change_pct = (cur_twr - prev_twr) / prev_twr * 100 if prev_twr and cur_twr else None
-
-        row = {
-            "date":           str(t.get("date", str(today))),
-            "total_asset":    str(t.get("total_asset")),
-            "twr_asset":      str(t.get("twr_asset")),
-            "ndx100":         str(t.get("ndx100")),
-            "cash_flow":      str(t.get("cash_flow", 0)),
-            "cash_flow_note": t.get("cash_flow_note") or '',
-            "exposure":       str(t.get("exposure")),
-            "cash_ratio":     str(t.get("cash_ratio")),
-            "x1_ratio":       str(t.get("x1_ratio")),
-            "x2_ratio":       str(t.get("x2_ratio")),
-            "x3_ratio":       str(t.get("x3_ratio")),
-            "usd_krw":        str(t.get("usd_krw")),
-            "prev_total":     str(prev) if prev is not None else '',
-            "twr_pct":        str(twr_pct),
-            "ndx_pct":        str(ndx_pct),
-            "ndx_change_pct": str(ndx_change_pct) if ndx_change_pct is not None else '',
-            "twr_change_pct": str(twr_change_pct) if twr_change_pct is not None else '',
-        }
+        diff = diff_display(row, _last_today_row)
+        if not diff:
+            return
 
         # [DEBUG-HISTORY] 화면 갱신 시점 total_asset 로그
         print(f"[DEBUG-HISTORY] {datetime.datetime.now(KST)} "
-              f"total_asset={row['total_asset']} date={row['date']}")
+              f"total_asset={row['total_asset']} date={row['date']}", flush=True)
 
-        await session.send_custom_message("today_row_update", row)
+        await session.send_custom_message("today_row_update", diff)
         _initialized_today_row = True
 
     # ── 날짜 클릭 → 입출금 수정 모달 ────────────────────────────────────────
@@ -984,7 +919,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
                     r.set("today_cash_flow", int(cf))
                     r.set("today_cash_flow_note", note)
             except Exception as e:
-                print(f"[history] today_cash_flow Redis 저장 실패: {e}")
+                print(f"[history] today_cash_flow Redis 저장 실패: {e}", flush=True)
             from common.redis_store import recalc_today_row
             recalc_today_row()
             today_cf_trigger.set(today_cf_trigger.get() + 1)
