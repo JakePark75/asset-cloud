@@ -6,7 +6,16 @@ config.json 의 realtime_quote = true 일 때 동작.
   - KR/US 종목: KIS 웹소켓 (H0STCNT0 / HDFSCNT0) push 수신
   - FX/INDEX/CRYPTO: Yahoo Finance REST 폴링 (별도 asyncio task)
   - 주간거래(KST 10:00~18:00): US 웹소켓 구독 안 함 (closed 처리)
+
+[테스트 모드]
+  TEST_MODE = 0  정상 운영
+  TEST_MODE = 1  1초마다 USDKRW=X 를 1원씩 토글 후 신호 발행 (DOM patch 테스트)
 """
+
+# ---------------------------------------------------------------------------
+# 테스트 모드
+# ---------------------------------------------------------------------------
+TEST_MODE = 0  # 0: 정상, 1: USDKRW=X 1원 토글
 
 import asyncio
 import json
@@ -406,10 +415,37 @@ async def subscription_refresh_task(approval_key_holder: list):
 
 
 # ---------------------------------------------------------------------------
+# 테스트 태스크
+# ---------------------------------------------------------------------------
+async def test_fx_toggle_task():
+    """TEST_MODE=1: 1초마다 USDKRW=X 를 1원씩 토글."""
+    from common.redis_store import recalc_today_row, publish_price_updated, get_all_prices
+    toggle = False
+    while True:
+        prices = get_all_prices()
+        fx = prices.get("USDKRW=X")
+        base = float(fx["price"]) if fx else 1300.0
+        chg  = float(fx["change_pct"]) if fx else 0.0
+        new_price = base + (1.0 if toggle else -1.0)
+        toggle = not toggle
+        update_price_cache("USDKRW=X", new_price, chg)
+        log.info(f"[TEST] USDKRW=X → {new_price:.2f}")
+        recalc_today_row()
+        publish_price_updated()
+        await asyncio.sleep(2)
+
+
+# ---------------------------------------------------------------------------
 # 메인
 # ---------------------------------------------------------------------------
 def main():
     load_config()
+
+    if TEST_MODE == 1:
+        log.info("price_updater_ws (TEST_MODE=1) 시작 — USDKRW=X 1원 토글")
+        asyncio.run(test_fx_toggle_task())
+        return
+
     log.info("price_updater (웹소켓 모드) 시작")
 
     holiday_cache.refresh_if_needed()
