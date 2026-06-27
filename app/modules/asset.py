@@ -374,6 +374,8 @@ def asset_server(input, output, session, active_tab: reactive.value = None):
     async def _on_tab_active():
         if active_tab and active_tab.get() == "asset":
             await session.send_custom_message("restore_sub_tab", {})
+        else:
+            active_sub_tab.set(None)
 
     # ── 서브 모듈 서버 ────────────────────────────────────────
     dashboard_server("dashboard", active_tab=active_tab, active_sub_tab=active_sub_tab,
