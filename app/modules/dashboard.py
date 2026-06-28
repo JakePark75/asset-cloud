@@ -404,11 +404,11 @@ def _dashboard_ui_dom_patch():
     if (m.exposure) {
       var expEl = document.getElementById('db-exposure-val');
       if (expEl) {
-        expEl.textContent = m.exposure.exposure_text;
-        expEl.className   = 'db-exposure-val ' + m.exposure.exp_cls;
+        if (m.exposure.exposure_text != null) expEl.textContent = m.exposure.exposure_text;
+        if (m.exposure.exp_cls      != null) expEl.className   = 'db-exposure-val ' + m.exposure.exp_cls;
       }
-      setText('db-cash-ratio-val', m.exposure.cash_ratio_text);
-      setText('db-cash-eval-val',  m.exposure.cash_eval_text);
+      if (m.exposure.cash_ratio_text != null) setText('db-cash-ratio-val', m.exposure.cash_ratio_text);
+      if (m.exposure.cash_eval_text  != null) setText('db-cash-eval-val',  m.exposure.cash_eval_text);
 
       // 레버리지 바 세그먼트 교체
       var track = document.getElementById('db-lev-bar-track');
@@ -447,45 +447,75 @@ def _dashboard_ui_dom_patch():
     // ── 수익률 ───────────────────────────────────────
     if (m.irr) {
       var annEl = document.getElementById('db-annual-irr');
-      if (annEl) { annEl.textContent = m.irr.annual_text; annEl.className = 'db-metric-value ' + pnlClass(m.irr.annual_sign); }
+      if (annEl) {
+        if (m.irr.annual_text != null) annEl.textContent = m.irr.annual_text;
+        if (m.irr.annual_sign != null) annEl.className = 'db-metric-value ' + pnlClass(m.irr.annual_sign);
+      }
       var monEl = document.getElementById('db-monthly-irr');
-      if (monEl) { monEl.textContent = m.irr.monthly_text; monEl.className = 'db-metric-value ' + pnlClass(m.irr.monthly_sign); }
+      if (monEl) {
+        if (m.irr.monthly_text != null) monEl.textContent = m.irr.monthly_text;
+        if (m.irr.monthly_sign != null) monEl.className = 'db-metric-value ' + pnlClass(m.irr.monthly_sign);
+      }
       var irr30El = document.getElementById('db-irr-30');
-      if (irr30El) { irr30El.textContent = m.irr.irr30_text; irr30El.className = 'db-metric-value ' + pnlClass(m.irr.irr30_sign); }
+      if (irr30El) {
+        if (m.irr.irr30_text != null) irr30El.textContent = m.irr.irr30_text;
+        if (m.irr.irr30_sign != null) irr30El.className = 'db-metric-value ' + pnlClass(m.irr.irr30_sign);
+      }
       var cfEl = document.getElementById('db-cash-flow-val');
-      if (cfEl) { cfEl.textContent = m.irr.cash_flow_text; cfEl.className = 'db-cashflow-val ' + pnlClass(m.irr.cash_flow_sign); }
+      if (cfEl) {
+        if (m.irr.cash_flow_text != null) cfEl.textContent = m.irr.cash_flow_text;
+        if (m.irr.cash_flow_sign != null) cfEl.className = 'db-cashflow-val ' + pnlClass(m.irr.cash_flow_sign);
+      }
     }
 
     // ── 알파 ─────────────────────────────────────────
     if (m.alpha) {
       var caEl = document.getElementById('db-cumul-alpha');
-      if (caEl) { caEl.textContent = m.alpha.cumul_text; caEl.className = 'db-metric-value ' + pnlClass(m.alpha.cumul_sign); }
+      if (caEl) {
+        if (m.alpha.cumul_text != null) caEl.textContent = m.alpha.cumul_text;
+        if (m.alpha.cumul_sign != null) caEl.className = 'db-metric-value ' + pnlClass(m.alpha.cumul_sign);
+      }
       var maEl = document.getElementById('db-monthly-alpha');
-      if (maEl) { maEl.textContent = m.alpha.monthly_text; maEl.className = 'db-metric-value ' + pnlClass(m.alpha.monthly_sign); }
+      if (maEl) {
+        if (m.alpha.monthly_text != null) maEl.textContent = m.alpha.monthly_text;
+        if (m.alpha.monthly_sign != null) maEl.className = 'db-metric-value ' + pnlClass(m.alpha.monthly_sign);
+      }
       var a30El = document.getElementById('db-alpha-30');
-      if (a30El) { a30El.textContent = m.alpha.alpha30_text; a30El.className = 'db-metric-value ' + pnlClass(m.alpha.alpha30_sign); }
+      if (a30El) {
+        if (m.alpha.alpha30_text != null) a30El.textContent = m.alpha.alpha30_text;
+        if (m.alpha.alpha30_sign != null) a30El.className = 'db-metric-value ' + pnlClass(m.alpha.alpha30_sign);
+      }
     }
 
     // ── 베타 ─────────────────────────────────────────
     if (m.beta) {
-      setText('db-beta-all', m.beta.all_text);
-      setText('db-beta-30',  m.beta.beta30_text);
+      if (m.beta.all_text    != null) setText('db-beta-all', m.beta.all_text);
+      if (m.beta.beta30_text != null) setText('db-beta-30',  m.beta.beta30_text);
     }
 
     // ── 낙폭 분석 (MDD / Current DD / Recovery) ───────
     // 색상은 절대값이 아니라 NDX 대비 우위(diff = 내 - NDX) 기준으로 빨강~초록 결정
     if (m.dd) {
       var mddMineEl = document.getElementById('db-mdd-mine');
-      if (mddMineEl) { mddMineEl.textContent = m.dd.mdd_mine_text; mddMineEl.style.color = ddColor(m.dd.mdd_diff, -0.10, 0.10); }
-      setText('db-mdd-ndx', m.dd.mdd_ndx_text);
+      if (mddMineEl) {
+        if (m.dd.mdd_mine_text != null) mddMineEl.textContent = m.dd.mdd_mine_text;
+        if (m.dd.mdd_diff      != null) mddMineEl.style.color = ddColor(m.dd.mdd_diff, -0.10, 0.10);
+      }
+      if (m.dd.mdd_ndx_text != null) setText('db-mdd-ndx', m.dd.mdd_ndx_text);
 
       var cddMineEl = document.getElementById('db-cdd-mine');
-      if (cddMineEl) { cddMineEl.textContent = m.dd.cdd_mine_text; cddMineEl.style.color = ddColor(m.dd.cdd_diff, -0.10, 0.10); }
-      setText('db-cdd-ndx', m.dd.cdd_ndx_text);
+      if (cddMineEl) {
+        if (m.dd.cdd_mine_text != null) cddMineEl.textContent = m.dd.cdd_mine_text;
+        if (m.dd.cdd_diff      != null) cddMineEl.style.color = ddColor(m.dd.cdd_diff, -0.10, 0.10);
+      }
+      if (m.dd.cdd_ndx_text != null) setText('db-cdd-ndx', m.dd.cdd_ndx_text);
 
       var recMineEl = document.getElementById('db-rec-mine');
-      if (recMineEl) { recMineEl.textContent = m.dd.rec_mine_text; recMineEl.style.color = ddColor(m.dd.rec_diff, -0.20, 0.20); }
-      setText('db-rec-ndx', m.dd.rec_ndx_text);
+      if (recMineEl) {
+        if (m.dd.rec_mine_text != null) recMineEl.textContent = m.dd.rec_mine_text;
+        if (m.dd.rec_diff      != null) recMineEl.style.color = ddColor(m.dd.rec_diff, -0.20, 0.20);
+      }
+      if (m.dd.rec_ndx_text != null) setText('db-rec-ndx', m.dd.rec_ndx_text);
     }
 
     // ── 도넛 (텍스트) ─────────────────────────────────
@@ -549,10 +579,10 @@ def _dashboard_ui_dom_patch():
 
     // ── 은퇴 시뮬레이션 ──────────────────────────────
     if (m.retirement) {
-      setText('db-retirement-subtitle', m.retirement.subtitle);
-      setText('db-retirement-amount',   m.retirement.amount_text);
-      setText('db-retirement-sub',      m.retirement.sub_text);
-      setText('db-retirement-compound', m.retirement.compound_text);
+      if (m.retirement.subtitle      != null) setText('db-retirement-subtitle', m.retirement.subtitle);
+      if (m.retirement.amount_text   != null) setText('db-retirement-amount',   m.retirement.amount_text);
+      if (m.retirement.sub_text      != null) setText('db-retirement-sub',      m.retirement.sub_text);
+      if (m.retirement.compound_text != null) setText('db-retirement-compound', m.retirement.compound_text);
     }
   });
 })();
