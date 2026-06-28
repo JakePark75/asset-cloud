@@ -3,10 +3,16 @@ from app.db import get_db, get_config, save_config, get_market_currency, get_mar
 from app.modules.components import fmt_change
 from app.price_signal import price_signal, ticker_signal
 from scheduler.price_updater_common import get_market_status
-from app.utils.display_diff import diff_display
-import datetime
-from zoneinfo import ZoneInfo
-KST = ZoneInfo("Asia/Seoul")
+from app.utils.display_diff import diff_display, diff_display_split
+from common.redis_store import (
+    get_all_prices,
+    get_news_feed_cache,
+    publish_ticker_changed,
+    publish_news_source_changed,
+    publish_news_keyword_changed,
+)
+import re
+import subprocess
 from deep_translator import GoogleTranslator
 from deep_translator.exceptions import (
     TooManyRequests,
@@ -15,7 +21,6 @@ from deep_translator.exceptions import (
     NotValidLength,
     NotValidPayload,
 )
-import subprocess
 
 
 def _notify_ticker_changed():
@@ -32,7 +37,6 @@ def _notify_ticker_changed():
       - 실패해도 설정 화면 자체의 갱신(refresh)에는 영향 없으므로 예외를 삼킨다.
     """
     try:
-        from common.redis_store import publish_ticker_changed
         publish_ticker_changed()
     except Exception as e:
         print(f"[settings] ticker_changed 신호 발행 실패 (무시): {e}")
@@ -97,115 +101,11 @@ def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
     )
 
 
-def _detect_lang(text: str) -> str:
-    """한글 포함 여부로 lang 자동 판별."""
-    return "ko" if re.search(r"[가-힣]", text) else "en"
 
-
-import re as _re
-def _detect_lang(text: str) -> str:
-    return "ko" if _re.search(r"[가-힣]", text) else "en"
-
-
-def _build_news_sources_html(rows, ns_str) -> str:
-    """rows: [(id, name, url, enabled, lang), ...]"""
-    if not rows:
-        return '<p style="color:#888; padding:8px 0;">등록된 소스가 없습니다.</p>'
-    parts = []
-    for src_id, name, url, enabled, lang in rows:
-        checked = "checked" if enabled else ""
-        lang_badge = (
-            f'<span class="news-lang-badge news-lang-{lang}">{lang.upper()}</span>'
-        )
-        parts.append(
-            f'<div class="news-source-row" style="cursor:pointer;"'
-            f'  onclick="stShowNewsSourceModal({src_id}, \'{_js_escape(name)}\','
-            f' \'{_js_escape(url)}\', \'{lang}\', {str(enabled).lower()}, \'{ns_str}\');">'
-            f'  <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0;">'
-            f'    {lang_badge}'
-            f'    <span class="news-source-name">{name}</span>'
-            f'  </div>'
-            f'  <label style="display:inline-flex; align-items:center; cursor:pointer;" onclick="event.stopPropagation();">'
-            f'    <input type="checkbox" class="news-toggle-checkbox" {checked} style="display:none;"'
-            f'      onchange="Shiny.setInputValue(\'{ns_str}toggle_news_source\','
-            f'        {{id: {src_id}, enabled: this.checked}}, {{priority: \'event\'}});">'
-            f'    <span class="toggle-track"></span>'
-            f'  </label>'
-            f'</div>'
-        )
-    # 추가 버튼
-    parts.append(
-        f'<div style="padding-top:10px;">'
-        f'  <button class="btn-danger-sm" style="color:#00c073;"'
-        f'    onclick="stShowNewsSourceModal(null, \'\', \'\', \'en\', true, \'{ns_str}\');">+ 소스 추가</button>'
-        f'</div>'
-    )
-    return "".join(parts)
-
-
-def _build_news_keywords_html(rows, ns_str) -> str:
-    """rows: [(id, keyword, lang), ...]"""
-    if not rows:
-        return '<p style="color:#888; padding:8px 0; font-size:12px;">등록된 키워드가 없습니다.</p>'
-    parts = []
-    for kw_id, keyword, lang in rows:
-        lang_badge = f'<span class="news-lang-badge news-lang-{lang}">{lang.upper()}</span>'
-        parts.append(
-            f'<span class="news-keyword-chip" style="cursor:pointer;"'
-            f'  onclick="stShowNewsKeywordModal({kw_id}, \'{_js_escape(keyword)}\', \'{lang}\', \'{ns_str}\');">'
-            f'  {lang_badge} {keyword}'
-            f'</span>'
-        )
-    return "".join(parts)
-
-
-def _build_news_feed_html(items: list) -> str:
-    """items: [{title, translated_title, link, source, published_at, matched_keywords, source_lang}, ...]"""
-    if not items:
-        return '<p style="color:#888; padding:8px 0;">표시할 기사가 없습니다.</p>'
-    parts = []
-    for it in items:
-        title = it.get("translated_title") or it.get("title") or ""
-        link = it.get("link", "#")
-        source = it.get("source", "")
-        published_at = it.get("published_at", "")
-        matched_keywords = it.get("matched_keywords") or []
-
-        display_time = published_at
-        try:
-            dt_utc = datetime.datetime.fromisoformat(published_at)
-            display_time = dt_utc.astimezone(KST).strftime("%m-%d %H:%M")
-        except Exception:
-            pass
-
-        kw_html = "".join(
-            f'<span class="news-matched-kw">{kw}</span>'
-            for kw in matched_keywords
-        )
-
-        # data-link 속성에 URL 저장 → JS에서 읽음 처리에 활용
-        safe_link = link.replace('"', "&quot;")
-        source_lang = it.get("source_lang", "en")
-        parts.append(
-            f'<div class="news-feed-item" data-link="{safe_link}" data-source-lang="{source_lang}">'
-            f'  <a class="news-feed-title" href="#" data-url="{safe_link}" data-source-lang="{source_lang}"'
-            f'    onclick="stOpenNewsLink(this); return false;">{title}</a>'
-            f'  <div class="news-feed-meta">'
-            f'    <span>{source} · {display_time}</span>'
-            f'    <span class="news-kw-wrap">{kw_html}</span>'
-            f'  </div>'
-            f'</div>'
-        )
-    return "".join(parts)
-
-
-def _js_escape(s: str) -> str:
-    """JS 문자열 인라인 삽입용 이스케이프 (작은따옴표, 역슬래시)."""
-    return s.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def _build_tick_values(ticker, name, market, leverage, price, change_pct):
-    """시세 갱신 시마다 전송하는 값 dict."""
+    """시세 갱신 시마다 전송하는 값 — static/dynamic 분리 구조."""
     tid      = _ticker_to_id(ticker)
     leverage = int(leverage) if leverage else 1
 
@@ -221,16 +121,21 @@ def _build_tick_values(ticker, name, market, leverage, price, change_pct):
     status_dot, status_text, status_cls = dot_map.get(status, ("○", "Closed", "status-closed"))
 
     return {
-        "id":         tid,
-        "name":       name,
-        "leverage":   leverage,
-        "market":     market,
-        "price":      price_str,
-        "chg":        chg_str,
-        "chg_css":    chg_css,
-        "status_dot": status_dot,
-        "status_txt": status_text,
-        "status_cls": status_cls,
+        "static": {
+            "id":         tid,
+            "name":       name,
+            "leverage":   leverage,
+            "market":     market,
+            "status_dot": status_dot,
+            "status_txt": status_text,
+            "status_cls": status_cls,
+        },
+        "dynamic": {
+            "id":      tid,
+            "price":   price_str,
+            "chg":     chg_str,
+            "chg_css": chg_css,
+        },
     }
 
 
@@ -407,32 +312,368 @@ def settings_ui():
     _applyAutoTickerVisibility();
   });
 
-  // ── st_tick: 변경된 key만 patch ───────────────────────────
+  // ── st_tick: dynamic 필드만 patch ──────────────────────────
   Shiny.addCustomMessageHandler('st_tick', function(m) {
     Object.keys(m).forEach(function(key) {
-      _applyOneTicker(m[key]);
+      _applyOneTickerDynamic(m[key]);
     });
   });
 
-  // ── st_news_sources: RSS 소스 목록 통째 교체 ──────────────
+  // ── st_static_tick: static 필드만 patch ─────────────────────
+  Shiny.addCustomMessageHandler('st_static_tick', function(m) {
+    Object.keys(m).forEach(function(key) {
+      _applyOneTickerStatic(m[key]);
+    });
+  });
+
+  // ── st_news_sources: id 기준 DOM diff ───────────────────────
   Shiny.addCustomMessageHandler('st_news_sources', function(m) {
-    var el = document.getElementById('st-news-sources-list');
-    if (el) el.innerHTML = m.html || '';
+    var listEl = document.getElementById('st-news-sources-list');
+    if (!listEl) return;
+
+    // toggled: enabled 상태만 변경
+    if (m.toggled) {
+      var cb = listEl.querySelector('.news-source-row[data-src-id="' + m.toggled.id + '"] .news-toggle-checkbox');
+      if (cb) {
+        cb.removeAttribute('onchange');
+        cb.checked = m.toggled.enabled;
+        var ns = listEl.querySelector('.news-source-row[data-src-id]').dataset.srcNs || 'settings-';
+        cb.setAttribute('onchange',
+          "Shiny.setInputValue('" + ns + "toggle_news_source'," +
+          "{id:" + m.toggled.id + ",enabled:this.checked},{priority:'event'});");
+      }
+      return;
+    }
+
+    var sources = m.sources || [];
+    var ns      = m.ns || 'settings-';
+
+    if (sources.length === 0) {
+      listEl.innerHTML = '<p style="color:#888; padding:8px 0;">등록된 소스가 없습니다.</p>';
+      return;
+    }
+
+    var serverIds = new Set(sources.map(function(s) { return String(s.id); }));
+
+    // 기존 DOM map: id → element
+    var domMap = {};
+    listEl.querySelectorAll('.news-source-row[data-src-id]').forEach(function(el) {
+      domMap[el.dataset.srcId] = el;
+    });
+
+    // 없어진 소스 제거
+    Object.keys(domMap).forEach(function(id) {
+      if (!serverIds.has(id)) { domMap[id].remove(); delete domMap[id]; }
+    });
+
+    // 순서 유지하며 추가/갱신
+    // 추가 버튼은 항상 맨 마지막 — 별도 관리
+    var addBtn = listEl.querySelector('.news-source-add-wrap');
+
+    var prevEl = null;
+    sources.forEach(function(s) {
+      var id  = String(s.id);
+      var existing = domMap[id];
+
+      if (existing) {
+        // enabled 변경 시 체크박스만 업데이트 (change 이벤트 발화 방지)
+        var cb = existing.querySelector('.news-toggle-checkbox');
+        if (cb && cb.checked !== s.enabled) {
+          cb.removeAttribute('onchange');
+          cb.checked = s.enabled;
+          cb.setAttribute('onchange',
+            "Shiny.setInputValue('" + ns + "toggle_news_source'," +
+            "{id:" + s.id + ",enabled:this.checked},{priority:'event'});");
+        }
+        // name/url/lang 변경 시 row 교체
+        if (existing.dataset.srcName !== s.name ||
+            existing.dataset.srcUrl  !== s.url  ||
+            existing.dataset.srcLang !== s.lang) {
+          var newEl = _buildSourceEl(s, ns);
+          existing.replaceWith(newEl);
+          existing = newEl;
+          domMap[id] = newEl;
+        }
+        // 순서 맞추기
+        if (prevEl) { if (existing.previousElementSibling !== prevEl) prevEl.after(existing); }
+        else         { if (listEl.firstElementChild !== existing && listEl.firstElementChild !== addBtn) listEl.prepend(existing); }
+      } else {
+        var el = _buildSourceEl(s, ns);
+        if (prevEl) prevEl.after(el);
+        else if (addBtn) listEl.insertBefore(el, addBtn);
+        else listEl.prepend(el);
+        domMap[id] = el;
+        existing = el;
+      }
+      prevEl = existing;
+    });
+
+    // 추가 버튼 없으면 생성
+    if (!addBtn) {
+      var wrap = document.createElement('div');
+      wrap.className = 'news-source-add-wrap';
+      wrap.style.paddingTop = '10px';
+      var btn = document.createElement('button');
+      btn.className = 'btn-danger-sm';
+      btn.style.color = '#00c073';
+      btn.dataset.srcNs = ns;
+      btn.setAttribute('onclick', 'stShowNewsSourceModalFromEl(this, true);');
+      btn.textContent = '+ 소스 추가';
+      wrap.appendChild(btn);
+      listEl.appendChild(wrap);
+    }
   });
 
-  // ── st_news_keywords: 키워드 칩 목록 통째 교체 ─────────────
+  function _buildSourceEl(s, ns) {
+    var div = document.createElement('div');
+    div.className = 'news-source-row';
+    div.style.cursor = 'pointer';
+    div.dataset.srcId      = String(s.id);
+    div.dataset.srcName    = s.name;
+    div.dataset.srcUrl     = s.url;
+    div.dataset.srcLang    = s.lang;
+    div.dataset.srcEnabled = s.enabled ? '1' : '0';
+    div.dataset.srcNs      = ns;
+    div.setAttribute('onclick', 'stShowNewsSourceModalFromEl(this);');
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'display:flex; align-items:center; gap:8px; flex:1; min-width:0;';
+
+    var badge = document.createElement('span');
+    badge.className = 'news-lang-badge news-lang-' + s.lang;
+    badge.textContent = s.lang.toUpperCase();
+
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'news-source-name';
+    nameSpan.textContent = s.name;
+
+    inner.appendChild(badge);
+    inner.appendChild(nameSpan);
+
+    var label = document.createElement('label');
+    label.style.cssText = 'display:inline-flex; align-items:center; cursor:pointer;';
+    label.setAttribute('onclick', 'event.stopPropagation();');
+
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'news-toggle-checkbox';
+    cb.checked = !!s.enabled;
+    cb.style.display = 'none';
+    cb.setAttribute('onchange',
+      "Shiny.setInputValue('" + ns + "toggle_news_source'," +
+      "{id:" + s.id + ",enabled:this.checked},{priority:'event'});");
+
+    var track = document.createElement('span');
+    track.className = 'toggle-track';
+
+    label.appendChild(cb);
+    label.appendChild(track);
+    div.appendChild(inner);
+    div.appendChild(label);
+    return div;
+  }
+
+  // ── st_news_keywords: id 기준 DOM diff ──────────────────────
   Shiny.addCustomMessageHandler('st_news_keywords', function(m) {
-    var el = document.getElementById('st-news-keywords-list');
-    if (el) el.innerHTML = m.html || '';
+    var listEl = document.getElementById('st-news-keywords-list');
+    if (!listEl) return;
+
+    // removed: 키워드 칩 제거
+    if (m.removed != null) {
+      var el = listEl.querySelector('.news-keyword-chip[data-kw-id="' + m.removed + '"]');
+      if (el) el.remove();
+      if (listEl.querySelectorAll('.news-keyword-chip').length === 0) {
+        listEl.innerHTML = '<p style="color:#888; padding:8px 0; font-size:12px;">등록된 키워드가 없습니다.</p>';
+      }
+      return;
+    }
+
+    // added: 새 키워드 칩 추가
+    if (m.added) {
+      var ns = m.ns || 'settings-';
+      var el = _buildKeywordEl(m.added, ns);
+      // 빈 메시지 제거
+      var empty = listEl.querySelector('p');
+      if (empty) empty.remove();
+      listEl.appendChild(el);
+      return;
+    }
+
+    var keywords = m.keywords || [];
+    var ns       = m.ns || 'settings-';
+
+    if (keywords.length === 0) {
+      listEl.innerHTML = '<p style="color:#888; padding:8px 0; font-size:12px;">등록된 키워드가 없습니다.</p>';
+      return;
+    }
+
+    var serverIds = new Set(keywords.map(function(k) { return String(k.id); }));
+
+    var domMap = {};
+    listEl.querySelectorAll('.news-keyword-chip[data-kw-id]').forEach(function(el) {
+      domMap[el.dataset.kwId] = el;
+    });
+
+    // 없어진 키워드 제거
+    Object.keys(domMap).forEach(function(id) {
+      if (!serverIds.has(id)) { domMap[id].remove(); delete domMap[id]; }
+    });
+
+    var prevEl = null;
+    keywords.forEach(function(k) {
+      var id = String(k.id);
+      var existing = domMap[id];
+      if (existing) {
+        if (prevEl) { if (existing.previousElementSibling !== prevEl) prevEl.after(existing); }
+        else         { if (listEl.firstElementChild !== existing) listEl.prepend(existing); }
+      } else {
+        var el = _buildKeywordEl(k, ns);
+        if (prevEl) prevEl.after(el);
+        else listEl.prepend(el);
+        domMap[id] = el;
+        existing = el;
+      }
+      prevEl = existing;
+    });
   });
 
-  // ── st_news_feed: 뉴스 피드 목록 통째 교체 + 읽음 복원 ──────
+  function _buildKeywordEl(k, ns) {
+    var span = document.createElement('span');
+    span.className = 'news-keyword-chip';
+    span.style.cursor = 'pointer';
+    span.dataset.kwId      = String(k.id);
+    span.dataset.kwKeyword = k.keyword;
+    span.dataset.kwLang    = k.lang;
+    span.dataset.kwNs      = ns;
+    span.setAttribute('onclick', 'stShowNewsKeywordModalFromEl(this);');
+
+    var badge = document.createElement('span');
+    badge.className = 'news-lang-badge news-lang-' + k.lang;
+    badge.textContent = k.lang.toUpperCase();
+
+    span.appendChild(badge);
+    span.appendChild(document.createTextNode(' ' + k.keyword));
+    return span;
+  }
+
+
+  // ── st_news_feed: 아이템 단위 diff (추가/제거/유지) ──────────
   Shiny.addCustomMessageHandler('st_news_feed', function(m) {
-    var el = document.getElementById('st-news-feed-list');
-    if (!el) return;
-    el.innerHTML = m.html || '<p style="color:#888; padding:8px 0;">표시할 기사가 없습니다.</p>';
-    _applyReadState();
+    var listEl = document.getElementById('st-news-feed-list');
+    if (!listEl) return;
+
+    var readSet = _getReadSet();
+
+    // ── full: 최초 전체 렌더 ──────────────────────────────────
+    if (m.full) {
+      var items = m.full;
+      if (items.length === 0) {
+        listEl.innerHTML = '<p style="color:#888; padding:8px 0;">표시할 기사가 없습니다.</p>';
+        return;
+      }
+      listEl.innerHTML = '';
+      items.forEach(function(it) { listEl.appendChild(_buildFeedItemEl(it, readSet)); });
+      return;
+    }
+
+    // ── diff: 추가/삭제/변경만 처리 ──────────────────────────
+    var domMap = {};
+    listEl.querySelectorAll('.news-feed-item[data-link]').forEach(function(el) {
+      domMap[el.dataset.link] = el;
+    });
+
+    // 삭제
+    (m.removed || []).forEach(function(link) {
+      if (domMap[link]) { domMap[link].remove(); delete domMap[link]; }
+    });
+
+    // source 변경
+    (m.changed || []).forEach(function(it) {
+      var el = domMap[it.link];
+      if (!el) return;
+      var metaSpan = el.querySelector('.news-feed-meta > span');
+      if (metaSpan) {
+        var parts = metaSpan.textContent.split(' · ');
+        metaSpan.textContent = it.source + ' · ' + (parts[1] || '');
+      }
+      el.dataset.source = it.source;
+    });
+
+    // 추가 (최신순이므로 prepend)
+    var added = (m.added || []).slice().reverse();
+    added.forEach(function(it) {
+      var el = _buildFeedItemEl(it, readSet);
+      listEl.prepend(el);
+    });
+
+    // 빈 결과
+    if (listEl.querySelectorAll('.news-feed-item').length === 0) {
+      listEl.innerHTML = '<p style="color:#888; padding:8px 0;">표시할 기사가 없습니다.</p>';
+      return;
+    }
+
   });
+
+  function _buildFeedItemEl(it, readSet) {
+    var title     = it.translated_title || '';
+    var link      = it.link || '#';
+    var source    = it.source || '';
+    var sourceLang = it.source_lang || 'en';
+    var keywords  = it.matched_keywords || [];
+
+    // UTC ISO → KST 표시
+    var displayTime = '';
+    try {
+      var dt = new Date(it.published_at);
+      displayTime = dt.toLocaleString('ko-KR', {
+        timeZone: 'Asia/Seoul',
+        month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+        hour12: false,
+      }).replace(/[.] /g, '-').replace('.', '').replace(',', '');
+    } catch(e) {}
+
+    var div = document.createElement('div');
+    div.className = 'news-feed-item';
+    div.dataset.link = link;
+    div.dataset.sourceLang = sourceLang;
+    div.dataset.source = source;
+
+    if (readSet && readSet.has(link)) {
+      div.classList.add('news-read');
+    }
+
+    var a = document.createElement('a');
+    a.className = 'news-feed-title';
+    a.href = '#';
+    a.dataset.url = link;
+    a.dataset.sourceLang = sourceLang;
+    a.setAttribute('onclick', 'stOpenNewsLink(this); return false;');
+    a.textContent = title;  // textContent → XSS 안전
+
+    var metaDiv = document.createElement('div');
+    metaDiv.className = 'news-feed-meta';
+
+    var sourceSpan = document.createElement('span');
+    sourceSpan.textContent = source + ' · ' + displayTime;
+
+    var kwWrap = document.createElement('span');
+    kwWrap.className = 'news-kw-wrap';
+    keywords.forEach(function(kw) {
+      var kwSpan = document.createElement('span');
+      kwSpan.className = 'news-matched-kw';
+      kwSpan.textContent = kw;
+      kwWrap.appendChild(kwSpan);
+    });
+
+    metaDiv.appendChild(sourceSpan);
+    metaDiv.appendChild(kwWrap);
+    div.appendChild(a);
+    div.appendChild(metaDiv);
+    return div;
+  }
+
+  // ── 읽음 처리 (localStorage) ──────────────────────────────
 
   // ── st_news_translated: 키워드 입력창 내용을 번역 결과로 교체 ─
   Shiny.addCustomMessageHandler('st_news_translated', function(m) {
@@ -460,18 +701,9 @@ def settings_ui():
     var arr = Array.from(s);
     if (arr.length > 500) arr = arr.slice(arr.length - 500);
     try { localStorage.setItem(READ_KEY, JSON.stringify(arr)); } catch(e) {}
+    return s;  // 호출자가 재사용 가능하도록 반환
   }
 
-  function _applyReadState() {
-    var readSet = _getReadSet();
-    var items = document.querySelectorAll('#st-news-feed-list .news-feed-item');
-    items.forEach(function(item) {
-      var link = item.dataset.link;
-      if (link && readSet.has(link)) {
-        item.classList.add('news-read');
-      }
-    });
-  }
 
   // ── 뉴스 링크 클릭 ────────────────────────────────────────
   window.stOpenNewsLink = function(el) {
@@ -497,24 +729,30 @@ def settings_ui():
   };
 
   // ── 뉴스 슬라이드업 패널 (ko 소스 전용) ──────────────────
-  function _openNewsPanel(url) {
-    var panel   = document.getElementById('st-news-panel');
-    var iframe  = document.getElementById('st-news-panel-iframe');
+  var _newsPanel = null;
+  var _newsPanelIframe = null;
 
-    iframe.src = '';
-    panel.style.display = 'flex';
+  function _getNewsPanel() {
+    if (!_newsPanel)       _newsPanel       = document.getElementById('st-news-panel');
+    if (!_newsPanelIframe) _newsPanelIframe = document.getElementById('st-news-panel-iframe');
+  }
+
+  function _openNewsPanel(url) {
+    _getNewsPanel();
+    _newsPanelIframe.src = '';
+    _newsPanel.style.display = 'flex';
     requestAnimationFrame(function() {
-      panel.classList.add('st-news-panel-open');
+      _newsPanel.classList.add('st-news-panel-open');
+      _newsPanelIframe.src = url;
     });
-    iframe.src = url;
   }
 
   window.stCloseNewsPanel = function() {
-    var panel = document.getElementById('st-news-panel');
-    panel.classList.remove('st-news-panel-open');
+    _getNewsPanel();
+    _newsPanel.classList.remove('st-news-panel-open');
     setTimeout(function() {
-      panel.style.display = 'none';
-      document.getElementById('st-news-panel-iframe').src = '';
+      _newsPanel.style.display = 'none';
+      _newsPanelIframe.src = '';
     }, 300);
   };
 
@@ -530,11 +768,18 @@ def settings_ui():
   window.stToggleAutoTickers = function() {
     var btn = document.getElementById('st-auto-ticker-toggle');
     var hidden = btn.dataset.hidden === '1';
-    btn.dataset.hidden = hidden ? '0' : '1';
-    btn.style.color = hidden ? '#888' : '#00c073';
-    btn.textContent = hidden ? '자동 숨김' : '자동 표시';
+    var nextHidden = !hidden;
+    btn.dataset.hidden = nextHidden ? '1' : '0';
+    btn.style.color = nextHidden ? '#888' : '#00c073';
+    btn.textContent = nextHidden ? '자동 숨김' : '자동 표시';
     _applyAutoTickerVisibility();
+    Shiny.setInputValue('settings-auto_hidden', nextHidden ? '1' : '0');
   };
+
+  // 초기 상태(자동 숨김=1) 서버에 동기화
+  document.addEventListener('shiny:connected', function() {
+    Shiny.setInputValue('settings-auto_hidden', '1');
+  });
 
   // ── 티커 추가 모달 ────────────────────────────────────────
   window.stShowModal = function() {
@@ -552,47 +797,97 @@ def settings_ui():
     if (mkt) mkt.selectedIndex = 0;
   };
 
+  // st_init용: static+dynamic 전체 적용
   function _applyTickers(tickers) {
-    Object.values(tickers).forEach(function(t) { _applyOneTicker(t); });
+    Object.values(tickers).forEach(function(t) { _applyOneTickerFull(t); });
   }
 
-  function _applyOneTicker(t) {
+  function _applyOneTickerFull(t) {
+    var row = document.getElementById('st-row-' + t.id);
+    if (!row) return;
+    _applyOneTickerStatic(t);
+    _applyOneTickerDynamic(t);
+  }
+
+  // st_static_tick용: static 필드만 (수신된 필드만 존재)
+  function _applyOneTickerStatic(t) {
     var row = document.getElementById('st-row-' + t.id);
     if (row && row.dataset.auto && row.style.display === 'none') return;
 
-    var nameEl = document.getElementById('st-name-' + t.id);
-    if (nameEl && t.name != null) nameEl.textContent = t.name;
-
-    var levEl = document.getElementById('st-lev-' + t.id);
-    if (levEl && t.leverage != null) {
-      levEl.textContent = 'x' + t.leverage;
-      levEl.className   = 'lev-badge lev-x' + t.leverage;
-      levEl.style.display = t.leverage > 1 ? '' : 'none';
+    if (t.name != null) {
+      var nameEl = document.getElementById('st-name-' + t.id);
+      if (nameEl) nameEl.textContent = t.name;
     }
 
-    var marketEl = document.getElementById('st-market-' + t.id);
-    if (marketEl && t.market != null) marketEl.textContent = t.market;
-
-    var stEl = document.getElementById('st-status-' + t.id);
-    if (stEl) {
-      stEl.textContent = t.status_dot ? t.status_dot + ' ' + t.status_txt : '';
-      stEl.className   = 'ticker-status ' + t.status_cls;
+    if (t.leverage != null) {
+      var levEl = document.getElementById('st-lev-' + t.id);
+      if (levEl) {
+        levEl.textContent = 'x' + t.leverage;
+        levEl.className   = 'lev-badge lev-x' + t.leverage;
+        levEl.style.display = t.leverage > 1 ? '' : 'none';
+      }
     }
 
-    var chgEl = document.getElementById('st-change-' + t.id);
-    if (chgEl) {
-      if (t.chg) {
-        chgEl.innerHTML =
-          (t.price ? '<span class="' + t.chg_css + '" style="margin-right:4px;">' + t.price + '</span>' : '') +
-          '<span class="' + t.chg_css + '">' + t.chg + '</span>';
-      } else {
-        chgEl.innerHTML = '';
+    if (t.market != null) {
+      var marketEl = document.getElementById('st-market-' + t.id);
+      if (marketEl) marketEl.textContent = t.market;
+    }
+
+    if (t.status_dot != null || t.status_txt != null || t.status_cls != null) {
+      var stEl = document.getElementById('st-status-' + t.id);
+      if (stEl) {
+        stEl.textContent = t.status_dot ? t.status_dot + ' ' + t.status_txt : '';
+        stEl.className   = 'ticker-status ' + (t.status_cls || '');
+      }
+    }
+  }
+
+  // st_tick용: dynamic 필드만 (수신된 필드만 존재)
+  function _applyOneTickerDynamic(t) {
+    var row = document.getElementById('st-row-' + t.id);
+    if (row && row.dataset.auto && row.style.display === 'none') return;
+
+    if (t.price != null || t.chg != null || t.chg_css != null) {
+      var chgEl = document.getElementById('st-change-' + t.id);
+      if (chgEl) {
+        if (t.chg) {
+          chgEl.innerHTML =
+            (t.price ? '<span class="' + t.chg_css + '" style="margin-right:4px;">' + t.price + '</span>' : '') +
+            '<span class="' + t.chg_css + '">' + t.chg + '</span>';
+        } else {
+          chgEl.innerHTML = '';
+        }
       }
     }
   }
 
   // ── 뉴스 소스 편집 모달 ───────────────────────────────────
   var _srcNsStr = '';
+
+  // data-attribute 경유 래퍼 (JS 문자열 이스케이프 우회)
+  window.stShowNewsSourceModalFromEl = function(el, isNew) {
+    if (isNew) {
+      stShowNewsSourceModal(null, '', '', 'en', true, el.dataset.srcNs);
+    } else {
+      stShowNewsSourceModal(
+        parseInt(el.dataset.srcId),
+        el.dataset.srcName,
+        el.dataset.srcUrl,
+        el.dataset.srcLang,
+        el.dataset.srcEnabled === '1',
+        el.dataset.srcNs
+      );
+    }
+  };
+
+  window.stShowNewsKeywordModalFromEl = function(el) {
+    stShowNewsKeywordModal(
+      parseInt(el.dataset.kwId),
+      el.dataset.kwKeyword,
+      el.dataset.kwLang,
+      el.dataset.kwNs
+    );
+  };
 
   window.stShowNewsSourceModal = function(id, name, url, lang, enabled, nsStr) {
     _srcNsStr = nsStr;
@@ -976,8 +1271,6 @@ def settings_ui():
 
 # ── Server ────────────────────────────────────────────────────────────────────
 
-import re
-
 @module.server
 def settings_server(input, output, session, active_tab: reactive.value = None):
     _initialized = False
@@ -1024,20 +1317,26 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
 
         reactive.invalidate_later(60)
 
-        from common.redis_store import get_all_prices
         prices = get_all_prices()
 
         rows = sorted(_ticker_rows(), key=_sort_key)
 
-        ticker_values = {}
-        for ticker, name, market, leverage, is_manual in rows:
-            p_data     = prices.get(ticker)
-            price      = float(p_data["price"])      if p_data else 0.0
-            change_pct = float(p_data["change_pct"]) if p_data else 0.0
-            ticker_values[ticker] = _build_tick_values(ticker, name, market, leverage, price, change_pct)
+        auto_hidden = (input.auto_hidden() or '1') == '1'
 
         current_tickers = [r[0] for r in rows]
         structure_changed = (current_tickers != _last_tickers)
+
+        # structure_changed: 전체 필요 / tick: 자동 숨김 시 is_manual만
+        def _build_ticker_values(include_auto: bool):
+            result = {}
+            for ticker, name, market, leverage, is_manual in rows:
+                if not include_auto and not is_manual:
+                    continue
+                p_data     = prices.get(ticker)
+                price      = float(p_data["price"])      if p_data else 0.0
+                change_pct = float(p_data["change_pct"]) if p_data else 0.0
+                result[ticker] = _build_tick_values(ticker, name, market, leverage, price, change_pct)
+            return result
 
         if structure_changed:
             _last_tickers = current_tickers
@@ -1048,15 +1347,23 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str)
                 for ticker, name, market, leverage, is_manual in rows
             )
+            ticker_values = _build_ticker_values(include_auto=True)
             await session.send_custom_message("st_init", {
                 "interval":         cfg.get("interval", 1),
                 "ticker_list_html": ticker_list_html,
-                "tickers":          ticker_values,
+                # st_init: static+dynamic 병합해서 전송 (_applyOneTickerFull과 동일)
+                "tickers": {
+                    t: {**v["static"], **v["dynamic"]}
+                    for t, v in ticker_values.items()
+                },
             })
         else:
-            diff = diff_display(ticker_values, _last_display)
-            if diff:
-                await session.send_custom_message("st_tick", diff)
+            ticker_values = _build_ticker_values(include_auto=not auto_hidden)
+            dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
+            if dyn_diff:
+                await session.send_custom_message("st_tick", dyn_diff)
+            if sta_diff:
+                await session.send_custom_message("st_static_tick", sta_diff)
         _initialized = True
 
     # ── 뉴스: 소스/키워드 DB 캐시 ─────────────────────────────────────────────
@@ -1083,23 +1390,31 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         return rows
 
     @reactive.effect
+    @reactive.event(_news_refresh)
     async def _send_news_sources():
         rows = _news_source_rows()
         ns_str = session.ns("_")[:-1]
-        html = _build_news_sources_html(rows, ns_str)
-        await session.send_custom_message("st_news_sources", {"html": html})
+        sources = [
+            {"id": r[0], "name": r[1], "url": r[2], "enabled": r[3], "lang": r[4]}
+            for r in rows
+        ]
+        await session.send_custom_message("st_news_sources", {"sources": sources, "ns": ns_str})
 
     @reactive.effect
+    @reactive.event(_news_refresh)
     async def _send_news_keywords():
         rows = _news_keyword_rows()
         ns_str = session.ns("_")[:-1]
-        html = _build_news_keywords_html(rows, ns_str)
-        await session.send_custom_message("st_news_keywords", {"html": html})
+        keywords = [
+            {"id": r[0], "keyword": r[1], "lang": r[2]}
+            for r in rows
+        ]
+        await session.send_custom_message("st_news_keywords", {"keywords": keywords, "ns": ns_str})
 
     # ── 뉴스: RSS 소스 on/off ────────────────────────────────────────────────
     @reactive.effect
     @reactive.event(input.toggle_news_source)
-    def _():
+    async def _():
         payload = input.toggle_news_source()
         if not payload:
             return
@@ -1110,8 +1425,10 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             cur.execute("UPDATE news_sources SET enabled = %s WHERE id = %s", (enabled, src_id))
             conn.commit()
             cur.close()
-        _news_refresh.set(_news_refresh() + 1)
-        from common.redis_store import publish_news_source_changed
+        # toggled만 전송 — 전체 소스 목록 재전송 불필요
+        await session.send_custom_message("st_news_sources", {
+            "toggled": {"id": src_id, "enabled": enabled}
+        })
         publish_news_source_changed()
 
     # ── 뉴스: 소스 저장 (추가 or 수정) ─────────────────────────────────────
@@ -1143,7 +1460,6 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         _news_refresh.set(_news_refresh() + 1)
-        from common.redis_store import publish_news_source_changed
         publish_news_source_changed()
 
     # ── 뉴스: 소스 삭제 ─────────────────────────────────────────────────────
@@ -1159,7 +1475,6 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             conn.commit()
             cur.close()
         _news_refresh.set(_news_refresh() + 1)
-        from common.redis_store import publish_news_source_changed
         publish_news_source_changed()
 
     # ── 뉴스: 키워드 번역 ────────────────────────────────────────────────────
@@ -1185,7 +1500,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
     # ── 뉴스: 키워드 저장 (추가 or 수정) ────────────────────────────────────
     @reactive.effect
     @reactive.event(input.save_news_keyword)
-    def _():
+    async def _():
         payload = input.save_news_keyword()
         if not payload:
             return
@@ -1201,21 +1516,30 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                     "UPDATE news_keywords SET keyword=%s, lang=%s WHERE id=%s",
                     (keyword, lang, kw_id),
                 )
+                conn.commit()
+                cur.close()
+                # 수정: 전체 목록 재전송 (keyword/lang 변경)
+                _news_refresh.set(_news_refresh() + 1)
             else:
                 cur.execute(
-                    "INSERT INTO news_keywords (keyword, lang) VALUES (%s, %s)",
+                    "INSERT INTO news_keywords (keyword, lang) VALUES (%s, %s) RETURNING id",
                     (keyword, lang),
                 )
-            conn.commit()
-            cur.close()
-        _news_refresh.set(_news_refresh() + 1)
-        from common.redis_store import publish_news_keyword_changed
+                new_id = cur.fetchone()[0]
+                conn.commit()
+                cur.close()
+                # 추가: 새 키워드만 전송
+                ns_str = session.ns("_")[:-1]
+                await session.send_custom_message("st_news_keywords", {
+                    "added": {"id": new_id, "keyword": keyword, "lang": lang},
+                    "ns": ns_str,
+                })
         publish_news_keyword_changed()
 
     # ── 뉴스: 키워드 삭제 ────────────────────────────────────────────────────
     @reactive.effect
     @reactive.event(input.delete_news_keyword)
-    def _():
+    async def _():
         kw_id = input.delete_news_keyword()
         if kw_id is None:
             return
@@ -1224,39 +1548,87 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             cur.execute("DELETE FROM news_keywords WHERE id = %s", (kw_id,))
             conn.commit()
             cur.close()
-        _news_refresh.set(_news_refresh() + 1)
-        from common.redis_store import publish_news_keyword_changed
+        # removed만 전송 — 전체 키워드 목록 재전송 불필요
+        await session.send_custom_message("st_news_keywords", {"removed": kw_id})
         publish_news_keyword_changed()
 
     # ── 뉴스: 피드 표시 ──────────────────────────────────────────────────────
     _news_feed_initialized = False
+    _news_feed_pending     = False  # 탭 밖에서 갱신 발생 시 마킹
+    _last_feed_map: dict   = {}     # link → item (이전 전송 기준)
+
+    def _build_items() -> list:
+        raw_items = get_news_feed_cache() or []
+        return [
+            {
+                "translated_title": it.get("translated_title") or it.get("title", ""),
+                "link":             it.get("link", ""),
+                "source":           it.get("source", ""),
+                "source_lang":      it.get("source_lang", "en"),
+                "published_at":     it.get("published_at", ""),
+                "matched_keywords": it.get("matched_keywords") or [],
+            }
+            for it in raw_items
+        ]
+
+    def _build_feed_diff(items: list) -> dict:
+        """이전 전송 기준으로 추가/삭제/변경된 것만 반환.
+        최초 호출 시(_last_feed_map 비어있음) full=True로 전체 전송."""
+        nonlocal _last_feed_map
+
+        if not _last_feed_map:
+            _last_feed_map = {it["link"]: it for it in items}
+            return {"full": items}
+
+        cur_map = {it["link"]: it for it in items}
+
+        added   = [it for link, it in cur_map.items() if link not in _last_feed_map]
+        removed = [link for link in _last_feed_map if link not in cur_map]
+        # source 변경 감지 — link + source만 전송
+        changed = [
+            {"link": link, "source": it["source"]}
+            for link, it in cur_map.items()
+            if link in _last_feed_map and _last_feed_map[link]["source"] != it["source"]
+        ]
+
+        _last_feed_map = cur_map
+        return {"added": added, "removed": removed, "changed": changed}
+
+    async def _send_feed(full=False):
+        items = _build_items()
+        if full:
+            _last_feed_map.clear()
+        payload = _build_feed_diff(items)
+        # 변경 없으면 전송 스킵
+        if not payload.get("full") and not payload.get("added") and not payload.get("removed") and not payload.get("changed"):
+            return
+        await session.send_custom_message("st_news_feed", payload)
 
     @reactive.effect
     async def _send_news_feed():
-        nonlocal _news_feed_initialized
+        nonlocal _news_feed_initialized, _news_feed_pending
         from app.price_signal import news_feed_signal
         news_feed_signal.get()
 
         if _news_feed_initialized and active_tab and active_tab.get() != "settings":
+            _news_feed_pending = True
             return
 
-        from common.redis_store import get_news_feed_cache
-        items = get_news_feed_cache() or []
-        html = _build_news_feed_html(items)
-        await session.send_custom_message("st_news_feed", {"html": html})
+        await _send_feed(full=not _news_feed_initialized)
         _news_feed_initialized = True
+        _news_feed_pending = False
 
     @reactive.effect
-    async def _send_news_feed_init():
-        """앱 시작 시 즉시 1회 피드 표시."""
-        nonlocal _news_feed_initialized
-        if _news_feed_initialized:
+    @reactive.event(active_tab)
+    async def _send_news_feed_on_tab_enter():
+        """탭 진입 시 pending 갱신이 있으면 즉시 전송."""
+        nonlocal _news_feed_pending
+        if not active_tab or active_tab.get() != "settings":
             return
-        from common.redis_store import get_news_feed_cache
-        items = get_news_feed_cache() or []
-        html = _build_news_feed_html(items)
-        await session.send_custom_message("st_news_feed", {"html": html})
-        _news_feed_initialized = True
+        if not _news_feed_pending:
+            return
+        await _send_feed()
+        _news_feed_pending = False
 
     # ── 티커 삭제 ─────────────────────────────────────────────────────────────
     @reactive.effect
