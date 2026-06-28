@@ -244,11 +244,13 @@ def accounts_ui():
       }
     }
 
-    if (p.pnl != null || p.pnl_css != null) {
+    if (p.pnl_amount != null || p.pnl_pct != null || p.pnl_css != null) {
       var pnlEl = document.getElementById('ac-pnl-' + p.id);
       if (pnlEl) {
-        if (p.pnl     != null) pnlEl.textContent = p.pnl;
-        if (p.pnl_css != null) pnlEl.className   = p.pnl_css;
+        if (p.pnl_amount != null) pnlEl.dataset.pnlAmount = p.pnl_amount;
+        if (p.pnl_pct    != null) pnlEl.dataset.pnlPct    = p.pnl_pct;
+        if (p.pnl_css    != null) pnlEl.className          = p.pnl_css;
+        pnlEl.textContent = (pnlEl.dataset.pnlAmount || '') + (pnlEl.dataset.pnlPct ? ' ' + pnlEl.dataset.pnlPct : '');
       }
     }
   }
