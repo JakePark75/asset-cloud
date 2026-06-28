@@ -384,3 +384,198 @@ def modal_edit_position_js() -> str:
     }
   };
 """
+
+# ── 계좌 추가 모달 ────────────────────────────────────────────────────────────
+
+def modal_add_account_html() -> ui.Tag:
+    return ui.div(
+        ui.div(
+            ui.div(
+                ui.h4("계좌 추가", class_="modal-title"),
+                ui.span("✕", class_="modal-close-icon",
+                        onclick="acHideModal('ac-modal-add-account');"),
+                class_="modal-header-row",
+            ),
+            ui.div(ui.tags.label("계좌명"),
+                   ui.tags.input(id="ac-new-account-name", type="text",
+                                 placeholder="예) 키움증권", class_="form-control")),
+            ui.div(ui.tags.label("별명 (선택)"),
+                   ui.tags.input(id="ac-new-account-alias", type="text",
+                                 placeholder="예) 키움", class_="form-control")),
+            ui.div(
+                ui.tags.input(id="ac-new-account-is-watch", type="checkbox", value="false"),
+                ui.tags.label("감시 계좌 (내 자산 아님)",
+                              **{"for": "ac-new-account-is-watch"}),
+                style="display:flex; align-items:center; gap:8px;",
+            ),
+            ui.tags.button(
+                "추가", class_="btn-add",
+                onclick=(
+                    "Shiny.setInputValue(window._acNs + '-btn_confirm_add', {"
+                    "  name: document.getElementById('ac-new-account-name').value,"
+                    "  alias: document.getElementById('ac-new-account-alias').value,"
+                    "  is_watch: document.getElementById('ac-new-account-is-watch').checked"
+                    "}, {priority: 'event'});"
+                    "acHideModal('ac-modal-add-account');"
+                ),
+            ),
+            class_="modal-box",
+            onclick="event.stopPropagation();",
+        ),
+        id="ac-modal-add-account",
+        class_="modal-overlay",
+        style="display:none;",
+        onclick="acHideModal('ac-modal-add-account');",
+    )
+
+
+# ── 종목 추가 모달 ────────────────────────────────────────────────────────────
+
+def modal_add_position_html(market_options: str) -> ui.Tag:
+    return ui.div(
+        ui.div(
+            ui.div(
+                ui.h4("종목 추가", class_="modal-title"),
+                ui.span("✕", class_="modal-close-icon",
+                        onclick="acHideModal('ac-modal-add-position');"),
+                class_="modal-header-row",
+            ),
+            ui.div(
+                ui.tags.label("티커"),
+                ui.div(
+                    ui.tags.input(id="ac-new-pos-ticker", type="text",
+                                  placeholder="예) AAPL", class_="form-control",
+                                  style="flex:1;",
+                                  oninput="this.value=this.value.toUpperCase();"),
+                    ui.tags.button("🔍", id="ac-new-pos-lookup-btn",
+                                   style="margin-left:6px; padding:0; font-size:18px; background:none; border:none; outline:none; cursor:pointer; line-height:1; -webkit-appearance:none;",
+                                   onclick="acLookupTicker();"),
+                    style="display:flex; align-items:center;",
+                ),
+            ),
+            ui.div(ui.tags.label("종목명"),
+                   ui.tags.input(id="ac-new-pos-name", type="text",
+                                 placeholder="예) 애플", class_="form-control")),
+            ui.div(ui.tags.label("시장"),
+                   ui.tags.select(ui.HTML(market_options),
+                                  id="ac-new-pos-market", class_="form-control",
+                                  onchange="acUpdateAddPreview();")),
+            ui.div(ui.tags.label("레버리지"),
+                   ui.tags.select(
+                       ui.tags.option("x1", value="1"),
+                       ui.tags.option("x2", value="2"),
+                       ui.tags.option("x3", value="3"),
+                       id="ac-new-pos-leverage", class_="form-control",
+                   )),
+            ui.div(ui.tags.label("수량"),
+                   ui.tags.input(id="ac-new-pos-qty", type="number",
+                                 value="0", min="0", step="any", class_="form-control",
+                                 oninput="acUpdateAddPreview();")),
+            ui.div(ui.tags.label("매수 평단가"),
+                   ui.tags.input(id="ac-new-pos-avg-price", type="number",
+                                 min="0", step="any", placeholder="미입력 시 미설정",
+                                 class_="form-control",
+                                 oninput="acUpdateAddPreview();")),
+            # ── 미리보기 ──────────────────────────────────────────────────────
+            ui.div(
+                ui.div(
+                    ui.span("", id="ac-add-preview-cash-label", class_="ac-preview-label"),
+                    ui.span("", id="ac-add-preview-cash", class_="ac-preview-value"),
+                ),
+                ui.div(
+                    ui.span("", id="ac-add-preview-cost-label", class_="ac-preview-label"),
+                    ui.span("", id="ac-add-preview-cost", class_="ac-preview-value negative"),
+                ),
+                ui.div(
+                    ui.span("매수 후 잔여현금", class_="ac-preview-label"),
+                    ui.span("", id="ac-add-preview-remain", class_="ac-preview-value"),
+                ),
+                id="ac-add-preview-box",
+                class_="ac-preview-box",
+            ),
+            ui.tags.button(
+                "추가", class_="btn-add",
+                onclick="acTriggerAddPosition();",
+            ),
+            class_="modal-box",
+            onclick="event.stopPropagation();",
+        ),
+        id="ac-modal-add-position",
+        class_="modal-overlay",
+        style="display:none;",
+        onclick="acHideModal('ac-modal-add-position');",
+    )
+
+
+# ── 현금 추가 모달 ────────────────────────────────────────────────────────────
+
+def modal_add_cash_html() -> ui.Tag:
+    return ui.div(
+        ui.div(
+            ui.div(
+                ui.h4("현금 추가", class_="modal-title"),
+                ui.span("✕", class_="modal-close-icon",
+                        onclick="acHideModal('ac-modal-add-cash');"),
+                class_="modal-header-row",
+            ),
+            ui.div(ui.tags.label("통화"),
+                   ui.tags.select(
+                       ui.tags.option("KRW (원화)", value="KRW"),
+                       ui.tags.option("USD (달러)", value="USD"),
+                       id="ac-new-cash-type", class_="form-control",
+                   )),
+            ui.div(ui.tags.label("금액"),
+                   ui.tags.input(id="ac-new-cash-amount", type="number",
+                                 value="0", min="0", step="any", class_="form-control")),
+            ui.tags.button(
+                "추가", class_="btn-add",
+                onclick=(
+                    "Shiny.setInputValue(window._acNs + '-btn_confirm_add_cash', {"
+                    "  cash_type: document.getElementById('ac-new-cash-type').value,"
+                    "  amount: parseFloat(document.getElementById('ac-new-cash-amount').value) || 0"
+                    "}, {priority: 'event'});"
+                    "acHideModal('ac-modal-add-cash');"
+                ),
+            ),
+            class_="modal-box",
+            onclick="event.stopPropagation();",
+        ),
+        id="ac-modal-add-cash",
+        class_="modal-overlay",
+        style="display:none;",
+        onclick="acHideModal('ac-modal-add-cash');",
+    )
+
+
+# ── 현금 수정 모달 ────────────────────────────────────────────────────────────
+
+def modal_edit_cash_html() -> ui.Tag:
+    return ui.div(
+        ui.div(
+            ui.div(
+                ui.h4("현금 수정", class_="modal-title"),
+                ui.span("✕", class_="modal-close-icon",
+                        onclick="acHideModal('ac-modal-edit-cash');"),
+                class_="modal-header-row",
+            ),
+            ui.div(ui.tags.label("통화"),
+                   ui.tags.select(
+                       ui.tags.option("KRW (원화)", value="KRW"),
+                       ui.tags.option("USD (달러)", value="USD"),
+                       id="ac-edit-cash-type", class_="form-control",
+                   )),
+            ui.div(ui.tags.label("금액"),
+                   ui.tags.input(id="ac-edit-cash-amount", type="number",
+                                 min="0", step="any", class_="form-control")),
+            ui.tags.button("저장", class_="btn-add",
+                           onclick="acTriggerEditCashSave();"),
+            ui.tags.button("현금 삭제", class_="btn-modal-delete-bottom",
+                           onclick="event.stopPropagation(); acTriggerCashDelete();"),
+            class_="modal-box",
+            onclick="event.stopPropagation();",
+        ),
+        id="ac-modal-edit-cash",
+        class_="modal-overlay",
+        style="display:none;",
+        onclick="acHideModal('ac-modal-edit-cash');",
+    )

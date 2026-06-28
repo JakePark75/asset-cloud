@@ -246,3 +246,124 @@ def execute_sell(pos_id: int, qty_delta: float, trade_price: float, usd_markets:
 
         conn.commit()
         cur.close()
+
+# ── 계좌 CRUD ─────────────────────────────────────────────────────────────────
+
+def add_account(name: str, alias: str | None, is_watch: bool):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO accounts (name, alias, is_watch) VALUES (%s, %s, %s)",
+            (name, alias, is_watch)
+        )
+        conn.commit()
+        cur.close()
+
+
+def delete_account(account_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM accounts WHERE id = %s", (account_id,))
+        conn.commit()
+        cur.close()
+
+
+# ── 종목 CRUD ─────────────────────────────────────────────────────────────────
+
+def add_position(account_id: int, ticker: str, name: str, market: str,
+                 leverage: int, qty: float, avg_price: float | None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT ticker FROM tickers WHERE ticker = %s", (ticker,))
+        if not cur.fetchone():
+            cur.execute(
+                "INSERT INTO tickers (ticker, name, market, leverage, is_manual) "
+                "VALUES (%s, %s, %s, %s, false)",
+                (ticker, name or ticker, market, leverage)
+            )
+        if avg_price is not None:
+            cur.execute(
+                "INSERT INTO positions (account_id, ticker, quantity, avg_price) VALUES (%s, %s, %s, %s)",
+                (account_id, ticker, qty, avg_price)
+            )
+        else:
+            cur.execute(
+                "INSERT INTO positions (account_id, ticker, quantity) VALUES (%s, %s, %s)",
+                (account_id, ticker, qty)
+            )
+        conn.commit()
+        cur.close()
+
+
+def edit_position(pos_id: int, name: str, market: str, leverage: int,
+                  qty: float, avg_price: float | None):
+    with get_db() as conn:
+        cur = conn.cursor()
+        if avg_price is not None:
+            cur.execute(
+                "UPDATE positions SET quantity = %s, avg_price = %s WHERE id = %s",
+                (qty, avg_price, pos_id)
+            )
+        else:
+            cur.execute(
+                "UPDATE positions SET quantity = %s WHERE id = %s",
+                (qty, pos_id)
+            )
+        cur.execute("""
+            UPDATE tickers SET name = %s, market = %s, leverage = %s
+            WHERE ticker = (SELECT ticker FROM positions WHERE id = %s)
+        """, (name, market, leverage, pos_id))
+        conn.commit()
+        cur.close()
+
+
+def delete_position(pos_id: int):
+    """종목 삭제. is_manual=false 티커는 포지션이 없어지면 tickers에서도 제거."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT ticker FROM positions WHERE id = %s", (pos_id,))
+        row    = cur.fetchone()
+        ticker = row[0] if row else None
+        cur.execute("DELETE FROM positions WHERE id = %s", (pos_id,))
+        if ticker:
+            cur.execute(
+                "SELECT 1 FROM tickers WHERE ticker = %s AND is_manual = false", (ticker,)
+            )
+            if cur.fetchone():
+                cur.execute("SELECT COUNT(*) FROM positions WHERE ticker = %s", (ticker,))
+                if cur.fetchone()[0] == 0:
+                    cur.execute("DELETE FROM tickers WHERE ticker = %s", (ticker,))
+        conn.commit()
+        cur.close()
+
+
+# ── 현금 CRUD ─────────────────────────────────────────────────────────────────
+
+def add_cash(account_id: int, cash_type: str, amount: float):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO positions (account_id, ticker, quantity) VALUES (%s, %s, %s)",
+            (account_id, cash_type, amount)
+        )
+        conn.commit()
+        cur.close()
+
+
+def edit_cash(pos_id: int, cash_type: str, amount: float):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE positions SET ticker = %s, quantity = %s WHERE id = %s",
+            (cash_type, amount, pos_id)
+        )
+        conn.commit()
+        cur.close()
+
+
+def delete_cash(pos_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM positions WHERE id = %s", (pos_id,))
+        conn.commit()
+        cur.close()
