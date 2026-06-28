@@ -1321,8 +1321,6 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
 
         rows = sorted(_ticker_rows(), key=_sort_key)
 
-        auto_hidden = (input.auto_hidden() or '1') == '1'
-
         current_tickers = [r[0] for r in rows]
         structure_changed = (current_tickers != _last_tickers)
 
@@ -1358,6 +1356,9 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 },
             })
         else:
+            # auto_hidden은 st_tick 경로에서만 필요 — 여기서 읽어야 _send_update가
+            # auto_hidden 변화에 반응하는 암묵적 트리거가 생기지 않는다.
+            auto_hidden = (input.auto_hidden() or '1') == '1'
             ticker_values = _build_ticker_values(include_auto=not auto_hidden)
             dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
             if dyn_diff:
