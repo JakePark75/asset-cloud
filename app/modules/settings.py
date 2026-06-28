@@ -331,7 +331,7 @@ def settings_ui():
     var listEl = document.getElementById('st-news-sources-list');
     if (!listEl) return;
 
-    // toggled: enabled 상태만 변경
+    // toggled: enabled 상태 변경 + 피드 hide/unhide
     if (m.toggled) {
       var cb = listEl.querySelector('.news-source-row[data-src-id="' + m.toggled.id + '"] .news-toggle-checkbox');
       if (cb) {
@@ -341,6 +341,26 @@ def settings_ui():
         cb.setAttribute('onchange',
           "Shiny.setInputValue('" + ns + "toggle_news_source'," +
           "{id:" + m.toggled.id + ",enabled:this.checked},{priority:'event'});");
+      }
+      var feedList = document.getElementById('st-news-feed-list');
+      if (feedList && m.toggled.source_name) {
+        if (!m.toggled.enabled) {
+          // 비활성화: 해당 소스 기사 hide
+          var hideCount = 0;
+          feedList.querySelectorAll('.news-feed-item[data-source]').forEach(function(el) {
+            if (el.dataset.source === m.toggled.source_name) {
+              el.style.display = 'none';
+              hideCount++;
+            }
+          });
+          console.log('[news_feed] hide:', m.toggled.source_name, hideCount + '건');
+          Shiny.setInputValue('settings-js_log', '[news_feed] hide: ' + m.toggled.source_name + ' ' + hideCount + '건', {priority: 'event'});
+        } else {
+          // 활성화: 재폴링 완료(st_news_feed) 후 unhide — 대기 상태 기록
+          _pendingUnhideSource = m.toggled.source_name;
+          console.log('[news_feed] unhide 대기:', _pendingUnhideSource);
+          Shiny.setInputValue('settings-js_log', '[news_feed] unhide 대기: ' + _pendingUnhideSource, {priority: 'event'});
+        }
       }
       return;
     }
@@ -564,32 +584,37 @@ def settings_ui():
 
     var readSet = _getReadSet();
 
-    // ── full: 최초 전체 렌더 ──────────────────────────────────
+    // ── full: 최초 전체 렌더 + 캐시 초기화 ──────────────────
     if (m.full) {
+      _feedCache = {};
       var items = m.full;
+      console.log('[news_feed] full:', items.length + '건');
       if (items.length === 0) {
         listEl.innerHTML = '<p style="color:#888; padding:8px 0;">표시할 기사가 없습니다.</p>';
         return;
       }
       listEl.innerHTML = '';
-      items.forEach(function(it) { listEl.appendChild(_buildFeedItemEl(it, readSet)); });
+      items.forEach(function(it) {
+        var el = _buildFeedItemEl(it, readSet);
+        _feedCache[it.link] = el;
+        listEl.appendChild(el);
+      });
       return;
     }
 
     // ── diff: 추가/삭제/변경만 처리 ──────────────────────────
-    var domMap = {};
-    listEl.querySelectorAll('.news-feed-item[data-link]').forEach(function(el) {
-      domMap[el.dataset.link] = el;
-    });
 
-    // 삭제
+    // 삭제 (RSS에서 실제로 사라진 기사 — 캐시에서도 제거)
     (m.removed || []).forEach(function(link) {
-      if (domMap[link]) { domMap[link].remove(); delete domMap[link]; }
+      if (_feedCache[link]) {
+        _feedCache[link].remove();
+        delete _feedCache[link];
+      }
     });
 
-    // source 변경
+    // source 변경 (캐시 element 업데이트)
     (m.changed || []).forEach(function(it) {
-      var el = domMap[it.link];
+      var el = _feedCache[it.link];
       if (!el) return;
       var metaSpan = el.querySelector('.news-feed-meta > span');
       if (metaSpan) {
@@ -599,17 +624,41 @@ def settings_ui():
       el.dataset.source = it.source;
     });
 
-    // 추가 (최신순이므로 prepend)
+    // 추가 (진짜 새 기사 — 캐시에 저장 + prepend)
     var added = (m.added || []).slice().reverse();
-    added.forEach(function(it) {
-      var el = _buildFeedItemEl(it, readSet);
-      listEl.prepend(el);
-    });
+    if (added.length > 0) {
+      var addedSources = {};
+      added.forEach(function(it) {
+        var el = _buildFeedItemEl(it, readSet);
+        _feedCache[it.link] = el;
+        listEl.prepend(el);
+        addedSources[it.source] = (addedSources[it.source] || 0) + 1;
+      });
+      console.log('[news_feed] added:', added.length + '건', addedSources);
+    }
+    if ((m.removed || []).length > 0) console.log('[news_feed] removed:', m.removed.length + '건');
+    if ((m.changed || []).length > 0) console.log('[news_feed] changed(source):', m.changed.length + '건');
+
+    // 소스 활성화 대기 중이면 unhide
+    if (_pendingUnhideSource) {
+      var sourceName = _pendingUnhideSource;
+      _pendingUnhideSource = null;
+      var unhideCount = 0;
+      Object.keys(_feedCache).forEach(function(link) {
+        var el = _feedCache[link];
+        if (el.dataset.source === sourceName) {
+          el.style.display = '';
+          unhideCount++;
+        }
+      });
+      console.log('[news_feed] unhide:', sourceName, unhideCount + '건');
+      Shiny.setInputValue('settings-js_log', '[news_feed] unhide: ' + sourceName + ' ' + unhideCount + '건', {priority: 'event'});
+    }
 
     // 빈 결과
-    if (listEl.querySelectorAll('.news-feed-item').length === 0) {
+    var visible = listEl.querySelectorAll('.news-feed-item:not([style*="display: none"]):not([style*="display:none"])');
+    if (visible.length === 0 && Object.keys(_feedCache).length === 0) {
       listEl.innerHTML = '<p style="color:#888; padding:8px 0;">표시할 기사가 없습니다.</p>';
-      return;
     }
 
   });
@@ -731,6 +780,11 @@ def settings_ui():
   // ── 뉴스 슬라이드업 패널 (ko 소스 전용) ──────────────────
   var _newsPanel = null;
   var _newsPanelIframe = null;
+
+  // 뉴스 피드 로컬 캐시: link → element
+  var _feedCache = {};
+  // 활성화 대기 중인 소스명
+  var _pendingUnhideSource = null;
 
   function _getNewsPanel() {
     if (!_newsPanel)       _newsPanel       = document.getElementById('st-news-panel');
@@ -1356,8 +1410,6 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 },
             })
         else:
-            # auto_hidden은 st_tick 경로에서만 필요 — 여기서 읽어야 _send_update가
-            # auto_hidden 변화에 반응하는 암묵적 트리거가 생기지 않는다.
             auto_hidden = (input.auto_hidden() or '1') == '1'
             ticker_values = _build_ticker_values(include_auto=not auto_hidden)
             dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
@@ -1423,14 +1475,26 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         enabled = bool(payload.get("enabled"))
         with get_db() as conn:
             cur = conn.cursor()
-            cur.execute("UPDATE news_sources SET enabled = %s WHERE id = %s", (enabled, src_id))
+            cur.execute(
+                "UPDATE news_sources SET enabled = %s WHERE id = %s RETURNING name",
+                (enabled, src_id)
+            )
+            row = cur.fetchone()
             conn.commit()
             cur.close()
-        # toggled만 전송 — 전체 소스 목록 재전송 불필요
+        source_name = row[0] if row else ""
         await session.send_custom_message("st_news_sources", {
-            "toggled": {"id": src_id, "enabled": enabled}
+            "toggled": {"id": src_id, "enabled": enabled, "source_name": source_name}
         })
-        publish_news_source_changed()
+        if enabled:
+            # 활성화: 재폴링 — 비활성화 시 제거했던 기사들이 added로 잡히도록
+            publish_news_source_changed()
+        else:
+            # 비활성화: _last_feed_map에서 해당 소스 기사 제거
+            # → 활성화 시 재폴링 결과와 비교 시 added로 인식
+            to_remove = [link for link, it in _last_feed_map.items() if it.get("source") == source_name]
+            for link in to_remove:
+                del _last_feed_map[link]
 
     # ── 뉴스: 소스 저장 (추가 or 수정) ─────────────────────────────────────
     @reactive.effect
@@ -1602,8 +1666,34 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         payload = _build_feed_diff(items)
         # 변경 없으면 전송 스킵
         if not payload.get("full") and not payload.get("added") and not payload.get("removed") and not payload.get("changed"):
+            print("[news_feed] 변경 없음 — 전송 스킵", flush=True)
             return
+        if payload.get("full"):
+            print(f"[news_feed] full 전송: {len(payload['full'])}건", flush=True)
+        else:
+            added   = payload.get("added", [])
+            removed = payload.get("removed", [])
+            changed = payload.get("changed", [])
+            added_sources = {}
+            for it in added:
+                s = it.get("source", "?")
+                added_sources[s] = added_sources.get(s, 0) + 1
+            print(
+                f"[news_feed] diff — "
+                f"added:{len(added)}{added_sources if added_sources else ''} "
+                f"removed:{len(removed)} "
+                f"changed:{len(changed)}",
+                flush=True
+            )
         await session.send_custom_message("st_news_feed", payload)
+
+    # ── JS 로그 수신 ─────────────────────────────────────────────────────────
+    @reactive.effect
+    @reactive.event(input.js_log)
+    def _():
+        msg = input.js_log()
+        if msg:
+            print(msg, flush=True)
 
     @reactive.effect
     async def _send_news_feed():
