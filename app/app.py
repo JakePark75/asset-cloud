@@ -17,6 +17,8 @@ app_ui = ui.page_fluid(
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "portfolio.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "accounts.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "history.css")),
+    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "settings.css")),
+    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "news.css")),
     ui.tags.script(src="https://cdn.plot.ly/plotly-latest.min.js"),
     # 로그인 화면
     ui.div(
