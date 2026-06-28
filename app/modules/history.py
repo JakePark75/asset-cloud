@@ -209,12 +209,12 @@ def history_ui():
             // 오름차순 정렬 (data는 내림차순으로 수신됨)
             var asc = data.slice().reverse();
 
-            var dates  = asc.map(function(r) { return r.date; });
-            var assets = asc.map(function(r) { return parseFloat(r.total_asset) || 0; });
-            var cflows = asc.map(function(r) { return parseFloat(r.cash_flow) || 0; });
-            var notes  = asc.map(function(r) { return r.cash_flow_note || ''; });
-            var twrRaw = asc.map(function(r) { return parseFloat(r.twr_asset) || 0; });
-            var ndxRaw = asc.map(function(r) { return parseFloat(r.ndx100) || 0; });
+            var dates  = asc.map(function(r) { return r.dt; });
+            var assets = asc.map(function(r) { return parseFloat(r.ta) || 0; });
+            var cflows = asc.map(function(r) { return parseFloat(r.cf) || 0; });
+            var notes  = asc.map(function(r) { return r.cn || ''; });
+            var twrRaw = asc.map(function(r) { return parseFloat(r.tw) || 0; });
+            var ndxRaw = asc.map(function(r) { return parseFloat(r.nx) || 0; });
 
             // TWR / NDX 기준점 대비 % 계산
             var baseTwr = twrRaw[0] || 1;
@@ -335,20 +335,20 @@ def history_ui():
           }
 
           // ── 테이블 행 생성 ───────────────────────────────────────────────
-          function buildTr(r) {
-            var date    = r.date;
-            var total   = parseFloat(r.total_asset) || 0;
-            var twr     = parseFloat(r.twr_asset) || 0;
-            var ndx     = parseFloat(r.ndx100) || 0;
-            var cf      = parseFloat(r.cash_flow) || 0;
-            var cf_note = r.cash_flow_note || '';
-            var exp     = r.exposure  !== '' ? parseFloat(r.exposure)  : null;
-            var cash    = r.cash_ratio !== '' ? parseFloat(r.cash_ratio) : null;
-            var x1      = r.x1_ratio  !== '' ? parseFloat(r.x1_ratio)  : null;
-            var x2      = r.x2_ratio  !== '' ? parseFloat(r.x2_ratio)  : null;
-            var x3      = r.x3_ratio  !== '' ? parseFloat(r.x3_ratio)  : null;
-            var usd_krw = parseFloat(r.usd_krw) || 0;
-            var prev    = r.prev_total;
+          function buildTr(r, prevRow) {
+            var date    = r.dt;
+            var total   = parseFloat(r.ta) || 0;
+            var twr     = parseFloat(r.tw) || 0;
+            var ndx     = parseFloat(r.nx) || 0;
+            var cf      = parseFloat(r.cf) || 0;
+            var cf_note = r.cn || '';
+            var exp     = r.ex  !== '' ? parseFloat(r.ex)  : null;
+            var cash    = r.cr  !== '' ? parseFloat(r.cr)  : null;
+            var x1      = r.x1  !== '' ? parseFloat(r.x1)  : null;
+            var x2      = r.x2  !== '' ? parseFloat(r.x2)  : null;
+            var x3      = r.x3  !== '' ? parseFloat(r.x3)  : null;
+            var usd_krw = parseFloat(r.ur) || 0;
+            var prev    = prevRow ? parseFloat(prevRow.ta) : null;
 
             // 전일대비
             var diffCell = '<span style="color:#555">-</span>';
@@ -385,16 +385,16 @@ def history_ui():
               '<td style="text-align:right">' + (cash !== null ? (cash * 100).toFixed(1) + '%' : '-') + '</td>' +
               '<td style="text-align:right">' + (function() {
                 if (!twr) return '-';
-                var twrChg = parseFloat(r.twr_change_pct);
-                if (isNaN(twrChg) || r.twr_change_pct === '') return fmtKrw(twr);
+                var twrChg = parseFloat(r.tp);
+                if (isNaN(twrChg) || r.tp === '') return fmtKrw(twr);
                 var sign = twrChg >= 0 ? '+' : '';
                 var cls  = twrChg >= 0 ? 'positive' : 'negative';
                 return fmtKrw(twr) + '<br><span class="' + cls + '" style="font-size:11px">' + sign + twrChg.toFixed(2) + '%</span>';
               })() + '</td>' +
               '<td style="text-align:right">' + (function() {
                 if (!ndx) return '-';
-                var ndxChg = parseFloat(r.ndx_change_pct);
-                if (isNaN(ndxChg) || r.ndx_change_pct === '') return ndx.toFixed(2);
+                var ndxChg = parseFloat(r.np);
+                if (isNaN(ndxChg) || r.np === '') return ndx.toFixed(2);
                 var sign = ndxChg >= 0 ? '+' : '';
                 var cls  = ndxChg >= 0 ? 'positive' : 'negative';
                 return ndx.toFixed(2) + '<br><span class="' + cls + '" style="font-size:11px">' + sign + ndxChg.toFixed(2) + '%</span>';
@@ -414,7 +414,7 @@ def history_ui():
             var tbody = document.getElementById('history-tbody');
             if (!tbody) return;
             tbody.innerHTML = '';
-            rows.forEach(function(r) { tbody.appendChild(buildTr(r)); });
+            rows.forEach(function(r, i) { tbody.appendChild(buildTr(r, rows[i + 1] || null)); });
           }
 
           // ── history_data: 데이터 수신 ────────────────────────────────────
@@ -457,20 +457,20 @@ def history_ui():
             //    history_data가 이미 today row를 포함해서 보낸 경우와
             //    이후 today_row_update가 추가로 들어오는 경우가 겹칠 수 있으므로,
             //    배열의 첫 row가 같은 날짜면 머지, 아니면 unshift.
-            var today = r.date || (_allRows.length > 0 ? _allRows[0].date : null);
-            if (_allRows.length > 0 && _allRows[0].date === today) {
+            var today = r.dt || (_allRows.length > 0 ? _allRows[0].dt : null);
+            if (_allRows.length > 0 && _allRows[0].dt === today) {
               Object.assign(_allRows[0], r);
-            } else if (r.date) {
+            } else if (r.dt) {
               _allRows.unshift(r);
             }
 
             // 2. DOM 최상단 행 교체 — total_asset 포함된 경우에만 (행 전체 재생성 필요).
             //    _pendingDraw 상태면 스킵 (탭 진입 시 drawTable이 _allRows로 다시 그림).
-            if (!_pendingDraw && r.total_asset !== undefined) {
+            if (!_pendingDraw && r.ta !== undefined) {
               var rowData = _allRows[0];
               var tbody   = document.getElementById('history-tbody');
               if (tbody && rowData) {
-                var newTr    = buildTr(rowData);
+                var newTr    = buildTr(rowData, _allRows[1] || null);
                 var existing = tbody.querySelector('tr[data-date="' + today + '"]');
                 if (existing) {
                   tbody.replaceChild(newTr, existing);
@@ -481,13 +481,13 @@ def history_ui():
             }
 
             // 3. chart-asset 끝단 업데이트 — total_asset 있을 때만.
-            if (r.total_asset !== undefined) {
+            if (r.ta !== undefined) {
               var gdAsset = document.getElementById('chart-asset');
               if (gdAsset && gdAsset.data) {
                 var date    = today;
-                var total   = parseFloat(r.total_asset) || 0;
-                var cf      = parseFloat(r.cash_flow) || 0;
-                var cf_note = r.cash_flow_note || '';
+                var total   = parseFloat(r.ta) || 0;
+                var cf      = parseFloat(r.cf) || 0;
+                var cf_note = r.cn || '';
 
                 var xs0 = gdAsset.data[0].x.slice();
                 var ys0 = gdAsset.data[0].y.slice();
@@ -846,7 +846,7 @@ def history_server(input, output, session, active_tab: reactive.value = None):
 
         # [DEBUG-HISTORY] 화면 갱신 시점 total_asset 로그
         print(f"[DEBUG-HISTORY] {datetime.datetime.now(KST)} "
-              f"total_asset={row['total_asset']} date={row['date']}", flush=True)
+              f"total_asset={row['ta']} date={row['dt']}", flush=True)
 
         await session.send_custom_message("today_row_update", diff)
         _initialized_today_row = True

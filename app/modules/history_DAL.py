@@ -1,3 +1,9 @@
+# 필드명 축약 매핑
+# dt=date, ta=total_asset, tw=twr_asset, nx=ndx100,
+# cf=cash_flow, cn=cash_flow_note, ex=exposure, cr=cash_ratio,
+# x1=x1_ratio, x2=x2_ratio, x3=x3_ratio, ur=usd_krw,
+# np=ndx_change_pct, tp=twr_change_pct
+
 import json
 import datetime
 from app.db import get_db
@@ -84,23 +90,22 @@ def build_today_row(t: dict, rows: list) -> dict:
         return round(float(v or 0), 3)
 
     return {
-        "date":           str(t.get("date", str(today))),
-        "total_asset":    _r10k(t.get("total_asset")),
-        "twr_asset":      _r10k(t.get("twr_asset")),
-        "ndx100":         _r2(t.get("ndx100")),
-        "cash_flow":      str(t.get("cash_flow", 0)),
-        "cash_flow_note": t.get("cash_flow_note") or '',
-        "exposure":       _r3(t.get("exposure")),
-        "cash_ratio":     _r3(t.get("cash_ratio")),
-        "x1_ratio":       _r3(t.get("x1_ratio")),
-        "x2_ratio":       _r3(t.get("x2_ratio")),
-        "x3_ratio":       _r3(t.get("x3_ratio")),
-        "usd_krw":        _r2(t.get("usd_krw")),
-        "prev_total":     prev if prev is not None else '',
-        "twr_pct":        round(twr_pct, 2),
-        "ndx_pct":        round(ndx_pct, 2),
-        "ndx_change_pct": round(ndx_change_pct, 2) if ndx_change_pct is not None else '',
-        "twr_change_pct": round(twr_change_pct, 2) if twr_change_pct is not None else '',
+        "dt":      str(t.get("date", str(today))),
+        "ta":      _r10k(t.get("total_asset")),
+        "tw":      _r10k(t.get("twr_asset")),
+        "nx":      _r2(t.get("ndx100")),
+        "cf":      str(t.get("cash_flow", 0)),
+        "cn":      t.get("cash_flow_note") or '',
+        "ex":      _r2(t.get("exposure")),
+        "cr":      _r2(t.get("cash_ratio")),
+        "x1":      _r2(t.get("x1_ratio")),
+        "x2":      _r2(t.get("x2_ratio")),
+        "x3":      _r2(t.get("x3_ratio")),
+        "ur":      _r2(t.get("usd_krw")),
+        "tp":      round(twr_change_pct, 2) if twr_change_pct is not None else '',
+        "np":      round(ndx_change_pct, 2) if ndx_change_pct is not None else '',
+        "twr_pct": round(twr_pct, 2),
+        "ndx_pct": round(ndx_pct, 2),
     }
 
 
@@ -164,21 +169,20 @@ def build_history_rows(rows: list, today_row_tuple=None) -> list:
         twr_change_pct = round((cur_twr - prev_twr) / prev_twr * 100, 2) if prev_twr and cur_twr else ''
 
         data.append({
-            "date":           str(r[0]),
-            "total_asset":    _r10k(r[1]),
-            "twr_asset":      _r10k(r[2]),
-            "ndx100":         _r2(r[3]),
-            "cash_flow":      str(int(float(r[4] or 0))),
-            "cash_flow_note": r[5] or '',
-            "exposure":       _r3(r[6]),
-            "cash_ratio":     _r3(r[7]),
-            "x1_ratio":       _r3(r[8]),
-            "x2_ratio":       _r3(r[9]),
-            "x3_ratio":       _r3(r[10]),
-            "usd_krw":        _r2(r[11]),
-            "prev_total":     _r10k(prev) if prev is not None else '',
-            "ndx_change_pct": ndx_change_pct,
-            "twr_change_pct": twr_change_pct,
+            "dt": str(r[0]),
+            "ta": _r10k(r[1]),
+            "tw": _r10k(r[2]),
+            "nx": _r2(r[3]),
+            "cf": str(int(float(r[4] or 0))),
+            "cn": r[5] or '',
+            "ex": _r2(r[6]),
+            "cr": _r2(r[7]),
+            "x1": _r2(r[8]),
+            "x2": _r2(r[9]),
+            "x3": _r2(r[10]),
+            "ur": _r2(r[11]),
+            "np": ndx_change_pct,
+            "tp": twr_change_pct,
         })
 
     return data
