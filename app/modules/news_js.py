@@ -465,6 +465,11 @@ def news_js() -> str:
   // 활성화 대기 중인 소스명
   var _pendingUnhideSource = null;
 
+  // open/close 사이 300ms 지연(hide) 타이머 — open/close 호출 시마다
+  // 이전 타이머를 반드시 취소해야 race condition(닫기 타이머가 나중에
+  // 발동해 방금 연 패널의 display를 덮어쓰는 문제)이 발생하지 않음.
+  var _newsPanelHideTimer = null;
+
   function _getNewsPanel() {
     if (!_newsPanel)       _newsPanel       = document.getElementById('st-news-panel');
     if (!_newsPanelIframe) _newsPanelIframe = document.getElementById('st-news-panel-iframe');
@@ -472,6 +477,7 @@ def news_js() -> str:
 
   function _openNewsPanel(url) {
     _getNewsPanel();
+    if (_newsPanelHideTimer) { clearTimeout(_newsPanelHideTimer); _newsPanelHideTimer = null; }
     _newsPanelIframe.src = '';
     _newsPanel.style.display = 'flex';
     requestAnimationFrame(function() {
@@ -482,10 +488,12 @@ def news_js() -> str:
 
   window.stCloseNewsPanel = function() {
     _getNewsPanel();
+    if (_newsPanelHideTimer) { clearTimeout(_newsPanelHideTimer); _newsPanelHideTimer = null; }
     _newsPanel.classList.remove('st-news-panel-open');
-    setTimeout(function() {
+    _newsPanelHideTimer = setTimeout(function() {
       _newsPanel.style.display = 'none';
       _newsPanelIframe.src = '';
+      _newsPanelHideTimer = null;
     }, 300);
   };
 

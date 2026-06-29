@@ -171,6 +171,7 @@ def news_modals_ui():
                 ),
                 ui.tags.iframe(id="st-news-panel-iframe", class_="st-news-panel-iframe"),
                 class_="st-news-panel-inner",
+                onclick="event.stopPropagation();",
             ),
             id="st-news-panel",
             class_="st-news-panel",
