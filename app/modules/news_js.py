@@ -480,10 +480,8 @@ def news_js() -> str:
     if (_newsPanelHideTimer) { clearTimeout(_newsPanelHideTimer); _newsPanelHideTimer = null; }
     _newsPanelIframe.src = '';
     _newsPanel.style.display = 'flex';
-    requestAnimationFrame(function() {
-      _newsPanel.classList.add('st-news-panel-open');
-      _newsPanelIframe.src = url;
-    });
+    _newsPanel.classList.add('st-news-panel-open');
+    _newsPanelIframe.src = url;
   }
 
   window.stCloseNewsPanel = function() {
