@@ -125,13 +125,13 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         return (
             f'<div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">'
             f'  <button class="btn-add" '
-            f'    onclick="acShowModal(\'ac-modal-add-position\'); acUpdateAddPreview();">'
+            f'    onclick="event.stopPropagation(); acShowModal(\'ac-modal-add-position\'); acUpdateAddPreview();">'
             f'    + 종목 추가</button>'
             f'  <button class="btn-add" '
-            f'    onclick="acShowModal(\'ac-modal-add-cash\');">'
+            f'    onclick="event.stopPropagation(); acShowModal(\'ac-modal-add-cash\');">'
             f'    + 현금 추가</button>'
             f'  <button class="btn-account-delete-bottom" '
-            f'    onclick="if(confirm(\'계좌를 삭제하시겠습니까?\')) '
+            f'    onclick="event.stopPropagation(); if(confirm(\'계좌를 삭제하시겠습니까?\')) '
             f'Shiny.setInputValue(window._acNs + \'-confirm_delete_account\', '
             f'Math.random(), {{priority: \'event\'}});">'
             f'    계좌 삭제</button>'
@@ -356,6 +356,7 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         )
         refresh.set(refresh() + 1)
         _notify_position_changed()
+        _notify_ticker_changed()
 
     # ── 현금 추가 ─────────────────────────────────────────────────────────────
 

@@ -291,6 +291,16 @@ def add_position(account_id: int, ticker: str, name: str, market: str,
                 "INSERT INTO positions (account_id, ticker, quantity) VALUES (%s, %s, %s)",
                 (account_id, ticker, qty)
             )
+
+        # 매수금액만큼 현금 차감 (avg_price가 주어진 경우 = 매수로 취급, execute_buy와 동일 패턴)
+        if avg_price is not None:
+            cash_ticker  = "USD" if get_market_currency(market) == "USD" else "KRW"
+            trade_amount = qty * avg_price
+            cur.execute("""
+                UPDATE positions SET quantity = quantity - %s
+                WHERE account_id = %s AND ticker = %s
+            """, (trade_amount, account_id, cash_ticker))
+
         conn.commit()
         cur.close()
 
