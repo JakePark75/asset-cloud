@@ -327,8 +327,13 @@ def edit_position(pos_id: int, name: str, market: str, leverage: int,
         cur.close()
 
 
-def delete_position(pos_id: int):
-    """종목 삭제. is_manual=false 티커는 포지션이 없어지면 tickers에서도 제거."""
+def delete_position(pos_id: int) -> bool:
+    """
+    종목 삭제. is_manual=false 티커는 포지션이 없어지면 tickers에서도 제거.
+    반환값: tickers 테이블에서 티커가 실제로 삭제되었으면 True, 아니면 False.
+            (호출부가 ticker_changed 신호 발행 여부를 판단하는 근거로 사용)
+    """
+    ticker_removed = False
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT ticker FROM positions WHERE id = %s", (pos_id,))
@@ -343,8 +348,10 @@ def delete_position(pos_id: int):
                 cur.execute("SELECT COUNT(*) FROM positions WHERE ticker = %s", (ticker,))
                 if cur.fetchone()[0] == 0:
                     cur.execute("DELETE FROM tickers WHERE ticker = %s", (ticker,))
+                    ticker_removed = True
         conn.commit()
         cur.close()
+    return ticker_removed
 
 
 # ── 현금 CRUD ─────────────────────────────────────────────────────────────────

@@ -46,13 +46,18 @@ daily_inserter.py        ──────► daily_inserted     ──► pric
 
 | 발행자 | 발행 시점 | 비고 |
 |--------|-----------|------|
-| `app/modules/accounts.py` | 종목/현금 추가·수정·삭제 완료 후 | recalc_today_row() 포함 |
+| `app/modules/accounts.py` | 계좌 추가·삭제, 종목 추가·수정·삭제, 현금 추가·수정·삭제, 매수·매도 완료 후 (8개 액션 전부) | recalc_today_row() 포함 |
 
 ### 2-4. `ticker_changed` 채널 — 발행 상세
+
+> **2026-07-04 정정**: 기존 문서는 `settings.py`만 발행자로 기재했으나, `accounts.py`의 grep 전수조사 결과 아래 3개 지점도 실제 발행자로 확인됨.
 
 | 발행자 | 발행 시점 | 비고 |
 |--------|-----------|------|
 | `app/modules/settings.py` | 티커 추가·삭제 완료 후 | tickers 테이블 변경 즉시 반영 |
+| `app/modules/accounts.py` `_add_position` | 종목 추가 완료 후 | 신규 티커면 `tickers` INSERT 발생 |
+| `app/modules/accounts.py` `_edit_position` | 종목 수정 완료 후 | `tickers.name/market/leverage` UPDATE 발생 |
+| `app/modules/accounts.py` `_delete_position` | 종목 삭제 후, **`accounts_DAL.delete_position()`이 tickers 레코드를 실제로 삭제한 경우에만** | `is_manual=false` 티커의 마지막 포지션이 삭제되는 경우. 2026-07-04 이전엔 이 경로에서 `ticker_changed` 미발행 버그 있었음 (수정완료, 7절 참고) |
 
 ### 2-5. `daily_inserted` 채널 — 발행 상세
 
@@ -139,6 +144,8 @@ price_updater_common.py (closing 상태 감지)
       → position_signal.set()
       → dashboard / portfolio / history(today_row) 재실행
         (positions DB 캐시 무효화 → DB 재조회)
+  → [종목 추가/수정 시, 또는 종목 삭제로 tickers 레코드가 실제 제거된 경우]
+     publish_ticker_changed() ← tickers 메타 변경을 dashboard/portfolio에 전파
 ```
 
 #### 시나리오 4. 설정에서 티커 추가·삭제
@@ -298,3 +305,4 @@ if initialized.get() and active_tab and active_tab.get() != "xxx":
 | 이슈 | 설명 | 상태 |
 |------|------|------|
 | 모든 탭 reactive 항상 실행 | CSS show/hide 탭 전환이 Shiny의 output suspend 메커니즘을 우회 → 숨겨진 탭의 reactive도 매초 실행됨 | 수정완료 (각 화면 가드 적용) |
+| 종목 삭제 시 ticker_changed 미발행 | `accounts_DAL.delete_position()`이 조건부로 `tickers` 레코드를 삭제하는데도, 호출부(`accounts.py _delete_position`)는 `publish_ticker_changed()`를 호출하지 않아 dashboard/portfolio가 삭제된 티커 메타를 못 받는 문제 | 수정완료 (2026-07-04, `delete_position()`이 삭제 여부를 bool로 반환 → 호출부가 조건부 발행) |

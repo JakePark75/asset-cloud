@@ -450,9 +450,11 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         pos_id  = payload.get("pos_id") if isinstance(payload, dict) else None
         if not pos_id:
             return
-        delete_position(pos_id)
+        ticker_removed = delete_position(pos_id)
         refresh.set(refresh() + 1)
         _notify_position_changed()
+        if ticker_removed:
+            _notify_ticker_changed()
 
     # ── 현금 수정 ─────────────────────────────────────────────────────────────
 
