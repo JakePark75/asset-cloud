@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 import threading
-import time
 from datetime import datetime, date, timezone
 from logging.handlers import RotatingFileHandler
 
@@ -15,6 +14,8 @@ if _PROJECT_ROOT not in sys.path:
 import psycopg2
 import requests
 import pytz
+
+from common.kis_auth import get_kis_access_token
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -51,9 +52,6 @@ log = logging.getLogger(__name__)
 # 전역 상태
 # ---------------------------------------------------------------------------
 config        = {}
-access_token  = None
-token_expires = 0
-token_lock    = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -253,22 +251,12 @@ def is_market_open(market: str) -> bool:
 # KIS API 토큰
 # ---------------------------------------------------------------------------
 def get_access_token():
-    global access_token, token_expires
-    with token_lock:
-        if access_token and time.time() < token_expires:
-            return access_token
-        url  = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
-        body = {
-            "grant_type": "client_credentials",
-            "appkey":     config["kis_app_key"],
-            "appsecret":  config["kis_app_secret"],
-        }
-        res = requests.post(url, json=body, timeout=10, verify=False)
-        data = res.json()
-        access_token  = data["access_token"]
-        token_expires = time.time() + int(data.get("expires_in", 86400)) - 60
-        log.info("KIS 토큰 발급 완료")
-        return access_token
+    """
+    common/kis_auth.py 로 통합 (Redis 캐시 + 락으로 프로세스간 공유).
+    기존 호출부(price_updater_rest.py, price_updater_ws.py, get_kr_price 등)와의
+    호환을 위해 함수명/시그니처는 그대로 유지한다.
+    """
+    return get_kis_access_token()
 
 # ---------------------------------------------------------------------------
 # Yahoo Finance 시세 (FX / INDEX / CRYPTO 공통)

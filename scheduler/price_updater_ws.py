@@ -23,7 +23,6 @@ import time
 import threading
 from datetime import datetime, date
 
-import requests
 import websockets
 import pytz
 
@@ -40,6 +39,7 @@ from price_updater_common import (
     should_run_kr_final_close,
     run_kr_final_close_update,
 )
+from common.kis_auth import get_kis_approval_key
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -70,24 +70,6 @@ YAHOO_POLL_INTERVAL = 10
 
 # 웹소켓 재연결 대기 (초)
 WS_RECONNECT_DELAY = 10
-
-
-# ---------------------------------------------------------------------------
-# KIS 웹소켓 접속키 발급 (REST 토큰과 별개)
-# ---------------------------------------------------------------------------
-def get_approval_key() -> str:
-    url = "https://openapi.koreainvestment.com:9443/oauth2/Approval"
-    body = {
-        "grant_type": "client_credentials",
-        "appkey":     common.config["kis_app_key"],
-        "secretkey":  common.config["kis_app_secret"],
-    }
-    res  = requests.post(url, json=body, timeout=10, verify=False)
-    key  = res.json().get("approval_key", "")
-    if not key:
-        raise RuntimeError(f"approval_key 발급 실패: {res.text}")
-    log.info("KIS 웹소켓 approval_key 발급 완료")
-    return key
 
 
 # ---------------------------------------------------------------------------
@@ -266,10 +248,14 @@ async def yahoo_poll_task(yahoo_rows: list):
 # ---------------------------------------------------------------------------
 # KIS 웹소켓 메인 루프 (asyncio)
 # ---------------------------------------------------------------------------
-async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
+async def kis_ws_task(kr_tickers: list, us_rows: list):
     """
     KIS 웹소켓 연결 → KR/US 종목 구독 → 수신 루프.
     연결 끊기면 WS_RECONNECT_DELAY 후 재연결.
+
+    approval_key는 매 연결(최초 연결 포함) 시도 시마다 kis_auth.get_kis_approval_key()로
+    새로 조회한다. 캐시가 유효하면(만료까지 5분 이상) Redis/발급 비용 없이 즉시 반환되므로,
+    24시간 이상 프로세스가 살아있어도 만료된 키를 계속 재사용하는 문제가 해결된다.
     """
     us_ticker_set = {r["ticker"] for r in us_rows}
     # tr_key → ticker 역매핑 (US)
@@ -277,6 +263,7 @@ async def kis_ws_task(approval_key: str, kr_tickers: list, us_rows: list):
 
     while True:
         try:
+            approval_key = get_kis_approval_key()
             log.info(f"KIS 웹소켓 연결 시도: {WS_URL}")
             async with websockets.connect(WS_URL, ping_interval=None) as ws:
                 log.info("KIS 웹소켓 연결됨")
@@ -385,10 +372,11 @@ async def kr_final_close_task():
 # ---------------------------------------------------------------------------
 # 구독 갱신 감시 태스크
 # ---------------------------------------------------------------------------
-async def subscription_refresh_task(approval_key_holder: list):
+async def subscription_refresh_task():
     """
     매시간 장 상태를 재확인하고 구독 대상이 바뀌면 ws 태스크를 재시작한다.
-    approval_key_holder: [approval_key] — 갱신 시 새 키로 교체 가능하도록 리스트로 전달.
+    (approval_key는 더 이상 이 태스크가 들고 있지 않음 — kis_ws_task가 재연결마다
+    kis_auth에서 직접 조회하므로 여기서 전달/보관할 필요가 없어짐)
     """
     # 초기 상태 저장
     prev_kr, prev_us, prev_yahoo = get_subscribe_targets()
@@ -460,20 +448,13 @@ def main():
         import os, sys
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    # KIS 웹소켓 접속키 발급 (KR/US 종목이 있을 때만)
-    approval_key = None
-    if kr_tickers or us_rows:
-        approval_key = get_approval_key()
-
-    approval_key_holder = [approval_key]
-
     # asyncio 이벤트 루프
     async def run():
         tasks = []
 
-        if approval_key and (kr_tickers or us_rows):
+        if kr_tickers or us_rows:
             tasks.append(asyncio.create_task(
-                kis_ws_task(approval_key, kr_tickers, us_rows)
+                kis_ws_task(kr_tickers, us_rows)
             ))
 
         if yahoo_rows:
@@ -482,7 +463,7 @@ def main():
             ))
 
         tasks.append(asyncio.create_task(
-            subscription_refresh_task(approval_key_holder)
+            subscription_refresh_task()
         ))
 
         tasks.append(asyncio.create_task(

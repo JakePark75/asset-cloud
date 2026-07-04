@@ -16,8 +16,9 @@ import requests
 import urllib3
 from pathlib import Path
 
-from app.utils.snap import KISTokenError, KRPriceFetchError, YahooFetchError
+from app.utils.snap import KRPriceFetchError, YahooFetchError
 from common.notify import notify_telegram_alert as _notify_telegram_alert
+from common.kis_auth import get_kis_access_token
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -35,35 +36,12 @@ CONFIG = get_config()
 _KR_CACHE: dict = {}
 _US_CACHE: dict = {}
 _YAHOO_CACHE: dict = {}
-_TOKEN: str | None = None
 
-# ---------------------------------------------------------------------------
-# KIS 토큰
-# ---------------------------------------------------------------------------
-def _get_token() -> str:
-    global _TOKEN
-    if _TOKEN:
-        return _TOKEN
-    try:
-        res = requests.post(
-            "https://openapi.koreainvestment.com:9443/oauth2/tokenP",
-            json={
-                "grant_type": "client_credentials",
-                "appkey":     CONFIG["kis_app_key"],
-                "appsecret":  CONFIG["kis_app_secret"],
-            },
-            timeout=10,
-            verify=False,
-        )
-        token = res.json().get("access_token")
-    except Exception as e:
-        raise KISTokenError(f"토큰 요청 실패: {e}")
-
-    if not token:
-        raise KISTokenError(f"토큰 응답에 access_token 없음: {res.text[:200]}")
-
-    _TOKEN = token
-    return _TOKEN
+# KIS 토큰: common/kis_auth.py 로 통합 (Redis 캐시 + 락, 만료 관리 포함).
+# 기존에는 이 프로세스 전역 _TOKEN을 만료 체크 없이 계속 재사용했는데,
+# daily_inserter.py가 이 함수를 매일 같은 시각 1회 호출하며 프로세스를
+# 며칠간 유지하는 구조라 토큰 유효기간(24h)과 호출 주기(24h)가 맞물려
+# 둘째 날부터 만료된 토큰을 쓸 가능성이 높았던 부분이 이걸로 해결된다.
 
 # ---------------------------------------------------------------------------
 # KIS 국내주식 과거 종가 (100건 루프, fallback: 가장 최근 종가)
@@ -326,7 +304,7 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
     _YAHOO_CACHE = {}
 
     date_str = target_date.strftime("%Y%m%d")
-    token = _get_token()
+    token = get_kis_access_token()
 
     # 환율 / NDX100
     usd_krw = _get_yahoo_price("USDKRW=X", target_date)

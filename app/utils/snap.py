@@ -18,6 +18,7 @@ sys.path.append(PROJECT_ROOT)
 
 from app.db import get_db
 from app.utils.metrics import calculate_exposure_and_ratios, to_f
+from common.kis_auth import get_kis_access_token, KISAuthError as KISTokenError
 
 CONFIG_FILE = os.path.join(PROJECT_ROOT, "scheduler", "config.json")
 with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -31,9 +32,10 @@ MAX_QUERY_DAYS = 1000  # 조회 가능한 최대 날짜 범위 (일). 이 값을
 # ---------------------------------------------------------------------------
 # 커스텀 예외
 # ---------------------------------------------------------------------------
-class KISTokenError(Exception):
-    """KIS 토큰 발급 실패 — 일시적 네트워크 이슈로 간주, 재시도 대상"""
-    pass
+# KISTokenError는 common/kis_auth.py의 KISAuthError를 그대로 재노출한 것이다.
+# (daily_snapshot.py 등 다른 파일이 `from app.utils.snap import KISTokenError`로
+#  이 이름을 가져다 쓰고 있어, 토큰 발급 로직을 kis_auth로 옮기면서도 기존
+#  import 경로/except 절이 깨지지 않도록 이름만 유지한다. 실제 예외 객체는 동일하다.)
 
 class KRPriceFetchError(Exception):
     """
@@ -81,25 +83,10 @@ def set_batch_range(start_date_str: str, end_date_str: str) -> None:
     _YAHOO_CACHE = {}
 
 # ---------------------------------------------------------------------------
-# KIS API (호출 횟수를 줄이기 위한 내부 캐싱 로직만 추가됨)
+# KIS API
+# get_kis_access_token()은 common/kis_auth.py에서 import (Redis 캐시 + 락로 통합).
+# 이 파일 자체 캐싱(_KR_CACHE 등)은 시세 데이터용이라 토큰과는 별개로 그대로 둔다.
 # ---------------------------------------------------------------------------
-def get_kis_access_token():
-    url  = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
-    body = {
-        "grant_type": "client_credentials",
-        "appkey":     config_data["kis_app_key"],
-        "appsecret":  config_data["kis_app_secret"],
-    }
-    try:
-        res = requests.post(url, json=body, timeout=10, verify=False)
-        token = res.json().get("access_token")
-    except Exception as e:
-        raise KISTokenError(f"토큰 요청 실패: {e}")
-
-    if not token:
-        raise KISTokenError(f"토큰 응답에 access_token 없음: {res.text[:200]}")
-    return token
-
 def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> float:
     """KIS 국내주식 기간별시세"""
     global _KR_CACHE, _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR
