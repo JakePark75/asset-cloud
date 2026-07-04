@@ -404,7 +404,8 @@ def _schedule_next() -> None:
 # ---------------------------------------------------------------------------
 def _notify_daily_inserted() -> None:
     try:
-        from common.redis_store import publish_daily_inserted
+        from common.redis_store import publish_daily_inserted, refresh_daily_summary_cache
+        refresh_daily_summary_cache()
         publish_daily_inserted()
     except Exception as e:
         now_kst = datetime.datetime.now(KST)

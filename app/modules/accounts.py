@@ -31,7 +31,8 @@ import json
 
 def _notify_position_changed():
     try:
-        from common.redis_store import recalc_today_row, publish_position_changed
+        from common.redis_store import recalc_today_row, publish_position_changed, refresh_position_cache
+        refresh_position_cache()
         recalc_today_row()
         publish_position_changed()
     except Exception as e:
@@ -40,7 +41,8 @@ def _notify_position_changed():
 
 def _notify_ticker_changed():
     try:
-        from common.redis_store import publish_ticker_changed
+        from common.redis_store import publish_ticker_changed, refresh_position_cache
+        refresh_position_cache()
         publish_ticker_changed()
     except Exception as e:
         print(f"[accounts] ticker_changed 신호 발행 실패 (무시): {e}")

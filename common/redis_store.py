@@ -231,6 +231,117 @@ def get_all_prices() -> dict:
 _recalc_lock = threading.Lock()
 
 
+# ── positions×tickers×is_watch 캐시 (recalc_today_row 쿼리 A 대체) ────────────
+
+def refresh_position_cache() -> None:
+    """
+    positions × tickers × accounts.is_watch 조회 결과를 Redis에 캐시.
+    position_changed / ticker_changed 발생 지점(CRUD 완료 후)에서 명시적으로 호출한다.
+    (recalc_today_row()가 매번 DB를 읽지 않도록 하기 위한 write-through 캐시)
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        from app.db import get_db
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT p.ticker, p.quantity, t.leverage, t.market
+                FROM positions p
+                LEFT JOIN tickers t ON p.ticker = t.ticker
+                LEFT JOIN accounts a ON p.account_id = a.id
+                WHERE (a.is_watch = false OR a.is_watch IS NULL)
+            """)
+            rows = cur.fetchall()
+            cur.close()
+
+        serializable = [
+            [ticker, float(qty) if qty is not None else None, leverage, market]
+            for ticker, qty, leverage, market in rows
+        ]
+
+        r = get_redis()
+        if r:
+            r.set("position_cache", json.dumps(serializable))
+    except Exception as e:
+        print(f"[redis_store] refresh_position_cache 실패: {e}")
+
+
+def get_position_cache() -> list | None:
+    """
+    캐시된 positions×tickers×is_watch 결과 조회.
+    반환: [[ticker, qty, leverage, market], ...] 또는 None (캐시 없음/Redis 장애/파싱 실패).
+    None은 "아직 한 번도 refresh 되지 않음"을 의미하며, 호출부가 DB 조회로 대체해야 함을 뜻한다.
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return None
+        raw = r.get("position_cache")
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception as e:
+        print(f"[redis_store] get_position_cache 실패: {e}")
+        return None
+
+
+# ── daily_summary 마지막 행 캐시 (recalc_today_row 쿼리 B 대체) ───────────────
+
+def refresh_daily_summary_cache() -> None:
+    """
+    daily_summary 마지막 행(total_asset, twr_asset)을 Redis에 캐시.
+    daily_inserted 발생 지점(INSERT 완료 후)에서 명시적으로 호출한다.
+    실패해도 예외를 밖으로 내보내지 않는다.
+    """
+    try:
+        from app.db import get_db
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT total_asset, twr_asset FROM daily_summary
+                ORDER BY date DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+            cur.close()
+
+        r = get_redis()
+        if not r:
+            return
+        if row is None:
+            r.delete("daily_summary_cache")
+        else:
+            total_asset, twr_asset = row
+            r.set("daily_summary_cache", json.dumps([
+                float(total_asset) if total_asset is not None else None,
+                float(twr_asset) if twr_asset is not None else None,
+            ]))
+    except Exception as e:
+        print(f"[redis_store] refresh_daily_summary_cache 실패: {e}")
+
+
+def get_daily_summary_cache() -> tuple | None:
+    """
+    캐시된 daily_summary 마지막 행 조회.
+    반환: (total_asset, twr_asset) 또는 None
+      (캐시 미확인 상태 / daily_summary 테이블에 행 자체가 없음 / Redis 장애 를 구분하지 않음 —
+       recalc_today_row() 쪽에서 refresh 시도 후에도 None이면 "이력 없음"으로 취급).
+    """
+    try:
+        r = get_redis()
+        if not r:
+            return None
+        raw = r.get("daily_summary_cache")
+        if raw is None:
+            return None
+        total_asset, twr_asset = json.loads(raw)
+        return (total_asset, twr_asset)
+    except Exception as e:
+        print(f"[redis_store] get_daily_summary_cache 실패: {e}")
+        return None
+
+
 def recalc_today_row() -> None:
     """
     현재 positions + Redis 시세로 오늘치 실적 row를 계산해 Redis today_row에 저장.
@@ -245,7 +356,6 @@ def recalc_today_row() -> None:
 
     try:
         # lazy import: app 패키지는 scheduler에서도 호출될 수 있으므로 내부에서 import
-        from app.db import get_db
         from app.utils.metrics import calculate_exposure_and_ratios, to_f
 
         r = get_redis()
@@ -271,26 +381,19 @@ def recalc_today_row() -> None:
         if "^NDX" in prices:
             ndx100 = float(prices["^NDX"]["price"])
 
-        with get_db() as conn:
-            cur = conn.cursor()
+        # 4. positions (is_watch=false 계좌만) — Redis 캐시 우선, 미스 시 DB로 채운 뒤 사용
+        position_rows = get_position_cache()
+        if position_rows is None:
+            print(f"[DEBUG-RECALC] {_t0} position_cache miss — DB로 채움")
+            refresh_position_cache()
+            position_rows = get_position_cache() or []
 
-            # 4. positions (is_watch=false 계좌만)
-            cur.execute("""
-                SELECT p.ticker, p.quantity, t.leverage, t.market
-                FROM positions p
-                LEFT JOIN tickers t ON p.ticker = t.ticker
-                LEFT JOIN accounts a ON p.account_id = a.id
-                WHERE (a.is_watch = false OR a.is_watch IS NULL)
-            """)
-            position_rows = cur.fetchall()
-
-            # 5. 전일 (total_asset, twr_asset)
-            cur.execute("""
-                SELECT total_asset, twr_asset FROM daily_summary
-                ORDER BY date DESC LIMIT 1
-            """)
-            prev = cur.fetchone()
-            cur.close()
+        # 5. 전일 (total_asset, twr_asset) — Redis 캐시 우선, 미스 시 DB로 채운 뒤 사용
+        prev = get_daily_summary_cache()
+        if prev is None:
+            print(f"[DEBUG-RECALC] {_t0} daily_summary_cache miss — DB로 채움")
+            refresh_daily_summary_cache()
+            prev = get_daily_summary_cache()  # 그래도 None이면 실제로 이력이 없는 것(최초 실행)
 
         # 6. 시세 매핑 (Redis prices 우선, 없으면 0)
         db_rows = []

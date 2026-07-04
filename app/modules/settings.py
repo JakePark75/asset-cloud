@@ -4,7 +4,7 @@ from app.modules.components import fmt_change
 from app.price_signal import price_signal, ticker_signal
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display_split
-from common.redis_store import get_all_prices, publish_ticker_changed
+from common.redis_store import get_all_prices, publish_ticker_changed, refresh_position_cache
 import subprocess
 
 from app.modules.news import news_script_ui, news_ui_section, news_modals_ui, news_server_logic
@@ -25,6 +25,7 @@ def _notify_ticker_changed():
       - 실패해도 설정 화면 자체의 갱신(refresh)에는 영향 없으므로 예외를 삼킨다.
     """
     try:
+        refresh_position_cache()
         publish_ticker_changed()
     except Exception as e:
         print(f"[settings] ticker_changed 신호 발행 실패 (무시): {e}")
