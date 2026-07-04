@@ -7,6 +7,8 @@ import time
 import calendar
 
 import urllib3
+
+from common.notify import notify_telegram_alert as _notify_telegram_alert
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 패키지 경로 설정
@@ -27,12 +29,56 @@ with open(CONFIG_FILE, encoding="utf-8") as f:
 MAX_QUERY_DAYS = 1000  # 조회 가능한 최대 날짜 범위 (일). 이 값을 초과하면 조회를 거부한다.
 
 # ---------------------------------------------------------------------------
+# 커스텀 예외
+# ---------------------------------------------------------------------------
+class KISTokenError(Exception):
+    """KIS 토큰 발급 실패 — 일시적 네트워크 이슈로 간주, 재시도 대상"""
+    pass
+
+class KRPriceFetchError(Exception):
+    """
+    KIS 국내 시세 API 자체가 실패한 경우 (네트워크 오류 등).
+    "정말 가격이 0/데이터 없음"과 "API 호출 실패"를 구분하기 위함.
+    있어선 안 되는 이상상황이므로 조용히 넘어가지 않고 상위로 전파한다.
+    """
+    pass
+
+class YahooFetchError(Exception):
+    """
+    Yahoo Finance API 호출 자체가 실패한 경우 (네트워크/응답 오류 등).
+    "해당 티커가 그 시점에 데이터가 없는 경우(상장 전 등)"와 "API 호출 실패"를
+    구분하기 위함. 있어선 안 되는 이상상황이므로 조용히 넘어가지 않고 상위로 전파한다.
+    """
+    pass
+
+# ---------------------------------------------------------------------------
 # API 최적화를 위한 글로벌 캐시 저장소 (기존 로직 훼손 방지)
 # ---------------------------------------------------------------------------
 _GLOBAL_START_DATE_STR = None
 _GLOBAL_END_DATE_STR = None
 _KR_CACHE = {}
 _YAHOO_CACHE = {}
+
+# ---------------------------------------------------------------------------
+# 배치 범위 설정 (+ 캐시 리셋을 한 덩어리로 강제)
+# ---------------------------------------------------------------------------
+def set_batch_range(start_date_str: str, end_date_str: str) -> None:
+    """
+    새 배치(날짜 범위)를 시작할 때 반드시 호출해야 한다.
+    날짜 범위 설정과 캐시 초기화를 하나로 묶어, 호출하는 쪽이 캐시 리셋을
+    깜빡할 수 없게 한다.
+
+    (버그 배경: daily_inserter.py는 하나의 프로세스가 계속 살아있으면서
+    _backfill()을 여러 번 호출한다. 캐시 초기화 없이 날짜 범위만 갱신하면,
+    이전 배치에서 캐시된 티커는 재조회되지 않고 그대로 재사용되어 — 가격
+    조회의 "target 이전 가장 최근값" fallback 로직 때문에 — 새 배치의
+    날짜에 대해 예전 배치의(더 과거) 가격이 조용히 반환될 수 있다.)
+    """
+    global _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR, _KR_CACHE, _YAHOO_CACHE
+    _GLOBAL_START_DATE_STR = start_date_str
+    _GLOBAL_END_DATE_STR   = end_date_str
+    _KR_CACHE = {}
+    _YAHOO_CACHE = {}
 
 # ---------------------------------------------------------------------------
 # KIS API (호출 횟수를 줄이기 위한 내부 캐싱 로직만 추가됨)
@@ -44,8 +90,15 @@ def get_kis_access_token():
         "appkey":     config_data["kis_app_key"],
         "appsecret":  config_data["kis_app_secret"],
     }
-    res = requests.post(url, json=body, timeout=10, verify=False)
-    return res.json().get("access_token")
+    try:
+        res = requests.post(url, json=body, timeout=10, verify=False)
+        token = res.json().get("access_token")
+    except Exception as e:
+        raise KISTokenError(f"토큰 요청 실패: {e}")
+
+    if not token:
+        raise KISTokenError(f"토큰 응답에 access_token 없음: {res.text[:200]}")
+    return token
 
 def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> float:
     """KIS 국내주식 기간별시세"""
@@ -53,7 +106,6 @@ def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> fl
     
     # 캐시에 없으면 100건씩 루프로 전체 기간 조회 (KIS KR API 1회 최대 100건 제한 대응)
     if ticker not in _KR_CACHE:
-        _KR_CACHE[ticker] = []
         url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
         headers = {
             "authorization": f"Bearer {token}",
@@ -69,11 +121,14 @@ def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> fl
 
         total_days = (current_end_dt - global_start_dt).days
         if total_days > MAX_QUERY_DAYS:
-            print(f"❌ 조회 범위({total_days}일)가 최대치({MAX_QUERY_DAYS}일)를 초과합니다. 범위를 줄여주세요.")
-            return 0.0
-
+            raise KRPriceFetchError(
+                f"[{ticker}] 조회 범위({total_days}일)가 최대치({MAX_QUERY_DAYS}일)를 초과합니다. "
+                f"체크포인트/날짜 범위를 확인하세요."
+            )
         loop_count = (total_days // 100) + 2  # 100건씩, 여유 2회 추가
 
+        fetched_rows: list = []
+        fetch_failed = False
         for _ in range(loop_count):
             params = {
                 "FID_COND_MRKT_DIV_CODE": "J",
@@ -85,10 +140,19 @@ def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> fl
             }
             try:
                 res = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
-                rows = res.json().get("output2", [])
+                res_json = res.json()
+                rt_cd = res_json.get("rt_cd")
+                if rt_cd is not None and rt_cd != "0":
+                    # HTTP 자체는 성공했지만 KIS API가 에러코드를 응답한 경우
+                    # (예: 인증 실패, 점검중). output2가 비어서 그냥 "데이터 없음"으로
+                    # 오인되지 않도록 여기서 명시적으로 실패 처리한다.
+                    raise KRPriceFetchError(
+                        f"[{ticker}] KIS API 오류 응답 (rt_cd={rt_cd}, msg={res_json.get('msg1')})"
+                    )
+                rows = res_json.get("output2", [])
                 if not rows:
                     break
-                _KR_CACHE[ticker].extend(rows)
+                fetched_rows.extend(rows)
                 # 가장 오래된 날짜(마지막 row)보다 하루 앞이 이미 start 이전이면 종료
                 oldest_date_str = rows[-1].get("stck_bsop_date", "")
                 if not oldest_date_str:
@@ -100,7 +164,22 @@ def get_historical_kr_price(ticker: str, target_date_str: str, token: str) -> fl
                 current_end = (oldest_dt - datetime.timedelta(days=1)).strftime("%Y%m%d")
             except Exception as e:
                 print(f"⚠️ [{ticker}] KIS 국내 과거 시세 조회 실패: {e}")
+                fetch_failed = True
                 break
+
+        # API 호출 자체가 실패했고, 그 결과 데이터를 하나도 못 채운 경우
+        # → "정말 가격이 없는 상황"이 아니라 "장애/이상 상황"이므로
+        #   0.0으로 조용히 넘어가지 않고 예외를 던져 상위(backfill)에서 처리하도록 한다.
+        #   이때 캐시에는 아무 것도 등록하지 않는다 — 빈 상자를 남기면, 같은 배치 안에서
+        #   이 티커를 다시 조회할 때 "이미 조회했다"고 오인해 재시도도, 재예외도 없이
+        #   조용히 0.0을 반환하게 되므로(캐시 오염) 절대 남기지 않는다.
+        if fetch_failed and not fetched_rows:
+            raise KRPriceFetchError(
+                f"[{ticker}] KIS 국내 시세 API 호출 실패 (target={target_date_str})"
+            )
+
+        # 성공(또는 부분 성공)한 경우에만 캐시에 등록한다.
+        _KR_CACHE[ticker] = fetched_rows
 
     rows = _KR_CACHE[ticker]
     
@@ -120,6 +199,7 @@ def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float
     global _YAHOO_CACHE, _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR
     
     if ticker not in _YAHOO_CACHE:
+        fetch_failed = False
         try:
             # [수정] Naive 객체에 명확한 UTC 타임존 정보를 강제 주입하여 실행 환경(KST/UTC)에 따른 타임스탬프 틀어짐 원천 차단
             start_dt = datetime.datetime.strptime(_GLOBAL_START_DATE_STR or target_date.strftime("%Y%m%d"), "%Y%m%d").replace(tzinfo=datetime.timezone.utc)
@@ -139,10 +219,20 @@ def get_historical_yahoo_index(ticker: str, target_date: datetime.date) -> float
                 for ts, c in zip(ts_list, closes):
                     if c is not None:
                         cache_list.append((ts, float(c)))
+            cache_list.sort(key=lambda x: x[0])
             _YAHOO_CACHE[ticker] = cache_list
         except Exception as e:
             print(f"⚠️ [{ticker}] 지수/환율 조회 실패: {e}")
+            fetch_failed = True
             _YAHOO_CACHE[ticker] = []
+
+        # API 호출 자체가 실패한 경우(네트워크/파싱 오류)만 예외로 전파한다.
+        # 호출은 성공했지만 그 시점에 데이터가 없는 경우(상장 전 등)는 정상적인
+        # "매칭 없음"이므로 아래 fallback(0.0)을 그대로 신뢰한다.
+        if fetch_failed:
+            raise YahooFetchError(
+                f"[{ticker}] Yahoo Finance API 호출 실패 (target={target_date})"
+            )
 
     cache_list = _YAHOO_CACHE.get(ticker, [])
     
@@ -174,15 +264,22 @@ def date_range(start: datetime.date, end: datetime.date) -> list:
 # 단일 날짜 스냅샷 계산 (기존 로직 100% 동일)
 # ---------------------------------------------------------------------------
 def fetch_snapshot(target_date: datetime.date, position_rows: list, token: str):
+    """
+    매일 기록하는 구조이므로 '휴장일 스킵' 개념은 없다.
+    가격이 0이면 daily_snapshot.py와 동일하게 fallback(최근 종가) 로직을 그대로 신뢰하고,
+    API 호출 자체가 실패한 경우에만 KRPriceFetchError가 던져져 상위로 전파된다.
+    """
     date_str = target_date.strftime("%Y%m%d")
 
     usd_krw = get_historical_yahoo_index('USDKRW=X', target_date)
     ndx100  = get_historical_yahoo_index('^NDX', target_date)
+    
     if usd_krw == 0:
-        usd_krw = 1350.0
+        usd_krw = 9999.0
+        # 디버깅이 필요하도록 알림 발송
+        _notify_telegram_alert(f"⚠️ {target_date} 환율 데이터 없음. 폴백 9999원 적용")
 
     final_db_rows = []
-    is_holiday = False
 
     for ticker, qty, leverage, market in position_rows:
         qty = to_f(qty)
@@ -194,16 +291,10 @@ def fetch_snapshot(target_date: datetime.date, position_rows: list, token: str):
             past_price = usd_krw
         elif market_str == "KR":
             past_price = get_historical_kr_price(ticker, date_str, token)
-            if past_price == 0.0:
-                is_holiday = True
-                break
         else:
             past_price = get_historical_yahoo_index(ticker, target_date)
 
         final_db_rows.append((ticker, qty, past_price, leverage, market))
-
-    if is_holiday:
-        return None
 
     ratios = calculate_exposure_and_ratios(final_db_rows, usd_krw)
     return ratios, ndx100, usd_krw, final_db_rows
@@ -291,8 +382,6 @@ def fmt_db_row(row):
 # 메인
 # ---------------------------------------------------------------------------
 def main():
-    global _GLOBAL_START_DATE_STR, _GLOBAL_END_DATE_STR  # 글로벌 변수 추가
-    
     print("==================================================")
     print("🕒 [타임머신] 과거 일자 자산 스냅샷 복원기")
     print("==================================================")
@@ -315,9 +404,8 @@ def main():
         print("❌ 시작일이 종료일보다 늦습니다.")
         return
 
-    # [수정된 부분] 함수 안에서 쓸 수 있도록 전체 조회 구간 날짜를 저장해 둡니다.
-    _GLOBAL_START_DATE_STR = start_date.strftime("%Y%m%d")
-    _GLOBAL_END_DATE_STR = end_date.strftime("%Y%m%d")
+    # 전체 조회 구간 날짜 설정 + 캐시 리셋 (한 번의 호출로 묶어서 처리)
+    set_batch_range(start_date.strftime("%Y%m%d"), end_date.strftime("%Y%m%d"))
 
     # [이하 사용자님 원본 로직과 100% 동일]
     prev_date = start_date - datetime.timedelta(days=1)

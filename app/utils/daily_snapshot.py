@@ -16,6 +16,9 @@ import requests
 import urllib3
 from pathlib import Path
 
+from app.utils.snap import KISTokenError, KRPriceFetchError, YahooFetchError
+from common.notify import notify_telegram_alert as _notify_telegram_alert
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from app.db import get_db, get_config, get_market_currency
@@ -41,17 +44,25 @@ def _get_token() -> str:
     global _TOKEN
     if _TOKEN:
         return _TOKEN
-    res = requests.post(
-        "https://openapi.koreainvestment.com:9443/oauth2/tokenP",
-        json={
-            "grant_type": "client_credentials",
-            "appkey":     CONFIG["kis_app_key"],
-            "appsecret":  CONFIG["kis_app_secret"],
-        },
-        timeout=10,
-        verify=False,
-    )
-    _TOKEN = res.json().get("access_token")
+    try:
+        res = requests.post(
+            "https://openapi.koreainvestment.com:9443/oauth2/tokenP",
+            json={
+                "grant_type": "client_credentials",
+                "appkey":     CONFIG["kis_app_key"],
+                "appsecret":  CONFIG["kis_app_secret"],
+            },
+            timeout=10,
+            verify=False,
+        )
+        token = res.json().get("access_token")
+    except Exception as e:
+        raise KISTokenError(f"토큰 요청 실패: {e}")
+
+    if not token:
+        raise KISTokenError(f"토큰 응답에 access_token 없음: {res.text[:200]}")
+
+    _TOKEN = token
     return _TOKEN
 
 # ---------------------------------------------------------------------------
@@ -71,11 +82,12 @@ def _get_kr_price(ticker: str, target_date_str: str, token: str) -> float:
             "tr_id":         "FHKST03010100",
             "custtype":      "P",
         }
-        # 넉넉히 60일 전부터 조회
+        # 넉넉히 30일 전부터 조회
         end_dt = datetime.datetime.strptime(target_date_str, "%Y%m%d")
-        start_dt = end_dt - datetime.timedelta(days=60)
+        start_dt = end_dt - datetime.timedelta(days=30)
         current_end = end_dt.strftime("%Y%m%d")
 
+        fetch_failed = False
         for _ in range(3):
             params = {
                 "FID_COND_MRKT_DIV_CODE": "J",
@@ -86,9 +98,15 @@ def _get_kr_price(ticker: str, target_date_str: str, token: str) -> float:
                 "FID_INPUT_DATE_2":       current_end,
             }
             try:
-                rows = requests.get(
+                res_json = requests.get(
                     url, headers=headers, params=params, timeout=10, verify=False
-                ).json().get("output2", [])
+                ).json()
+                rt_cd = res_json.get("rt_cd")
+                if rt_cd is not None and rt_cd != "0":
+                    raise KRPriceFetchError(
+                        f"[{ticker}] KIS API 오류 응답 (rt_cd={rt_cd}, msg={res_json.get('msg1')})"
+                    )
+                rows = res_json.get("output2", [])
                 if not rows:
                     break
                 _KR_CACHE[ticker].extend(rows)
@@ -101,7 +119,14 @@ def _get_kr_price(ticker: str, target_date_str: str, token: str) -> float:
                 current_end = (oldest_dt - datetime.timedelta(days=1)).strftime("%Y%m%d")
             except Exception as e:
                 print(f"⚠️ [{ticker}] KR 시세 조회 실패: {e}")
+                fetch_failed = True
                 break
+
+        # API 호출 자체가 실패했고, 그 결과 캐시에 아무 데이터도 못 채운 경우
+        # → "정말 가격이 없는 상황"이 아니라 "장애로 못 가져온 상황"이므로
+        #   0.0으로 조용히 넘어가지 않고 예외를 던져 상위에서 INSERT를 막는다.
+        if fetch_failed and not _KR_CACHE[ticker]:
+            raise KRPriceFetchError(f"[{ticker}] KIS 국내 시세 API 호출 실패 (target={target_date_str})")
 
     rows = _KR_CACHE[ticker]
     # 정확히 일치하는 날짜 우선, 없으면 target_date 이전 가장 최근값
@@ -115,6 +140,11 @@ def _get_kr_price(ticker: str, target_date_str: str, token: str) -> float:
 
 # ---------------------------------------------------------------------------
 # KIS 해외주식 과거 종가 (fallback: 가장 최근 종가)
+# NOTE: 2026-07 기준 get_daily_snapshot()에서는 해외 종목 조회에 이 함수 대신
+#       _get_yahoo_price()를 사용 중이라 실제로는 호출되지 않는 코드다(dead code).
+#       그래도 API 실패 시 조용히 0.0으로 넘어가면 나중에 이 함수가 다시
+#       연결됐을 때 조용한 데이터 오염으로 이어질 수 있어 방어 로직은 유지한다.
+#       실제로 안 쓰는 게 확실하면 삭제 후보.
 # ---------------------------------------------------------------------------
 def _get_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> float:
     if ticker not in _US_CACHE:
@@ -131,6 +161,7 @@ def _get_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> f
             "custtype":      "P",
         }
         current_end = target_date_str
+        fetch_failed = False
         for _ in range(3):
             params = {
                 "AUTH": "", "EXCD": excd, "SYMB": ticker,
@@ -152,7 +183,15 @@ def _get_us_price(ticker: str, excd: str, target_date_str: str, token: str) -> f
                 current_end = dt.strftime("%Y%m%d")
             except Exception as e:
                 print(f"⚠️ [{ticker}] US 시세 조회 실패: {e}")
+                fetch_failed = True
                 break
+
+        # API 호출 자체가 실패했고 캐시에 아무 데이터도 못 채운 경우
+        # → KR/Yahoo와 동일하게 0.0으로 조용히 넘어가지 않고 예외를 던진다.
+        if fetch_failed and not _US_CACHE[ticker]:
+            raise KRPriceFetchError(
+                f"[{ticker}] KIS 해외 시세 API 호출 실패 (target={target_date_str})"
+            )
 
     rows = _US_CACHE[ticker]
     # 조회된 날짜 목록 로그
@@ -183,6 +222,7 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
     from datetime import datetime as dt_cls, timezone, timedelta
 
     if ticker not in _YAHOO_CACHE:
+        fetch_failed = False
         try:
             end_dt = dt_cls(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
             start_dt = end_dt - timedelta(days=15)
@@ -211,7 +251,16 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
             _YAHOO_CACHE[ticker] = cache_list
         except Exception as e:
             print(f"⚠️ [{ticker}] Yahoo 시세 조회 실패: {e}")
+            fetch_failed = True
             _YAHOO_CACHE[ticker] = []
+
+        # API 호출 자체가 실패한 경우(네트워크/파싱 오류)만 예외로 전파한다.
+        # 호출은 성공했지만 그 시점에 데이터가 없는 경우(상장 전 등)는 정상적인
+        # "매칭 없음"이므로 아래 fallback(0.0)을 그대로 신뢰한다.
+        if fetch_failed:
+            raise YahooFetchError(
+                f"[{ticker}] Yahoo Finance API 호출 실패 (target={target_date})"
+            )
 
     cache_list = _YAHOO_CACHE[ticker]
     target_str = target_date.strftime("%Y-%m-%d")
@@ -280,7 +329,12 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
     token = _get_token()
 
     # 환율 / NDX100
-    usd_krw = _get_yahoo_price("USDKRW=X", target_date) or 1350.0
+    usd_krw = _get_yahoo_price("USDKRW=X", target_date)
+    if usd_krw is None:
+        usd_krw = 9999.0
+        # 디버깅이 필요하도록 알림 발송
+        _notify_telegram_alert(f"⚠️ {target_date} 환율 데이터 없음. 폴백 9999원 적용")
+        
     ndx100  = _get_yahoo_price("^NDX",     target_date)
 
     # 포지션별 시세 조회
