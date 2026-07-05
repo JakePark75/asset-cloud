@@ -254,11 +254,17 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
             matched.append((dt_utc_str, dt_full_str, c))
 
     if matched:
-        # 로그에 [YYYY-MM-DD HH:MM:SS UTC] 형태로 상세 출력하도록 변경
-        print(f"  [{ticker}] Yahoo(UTC 매칭) → {matched[-1][1]} UTC | 가격: {matched[-1][2]}")
-        return matched[-1][2]
-        
-    print(f"  [{ticker}] Yahoo → 매칭 없음")
+        matched_date_str = matched[-1][0]   # 실제 종가 기준일 (YYYY-MM-DD)
+        price = matched[-1][2]
+
+        if matched_date_str == target_str:
+            print(f"  [{ticker}] {matched_date_str} 종가: {price:,.4f}")
+        else:
+            print(f"  [{ticker}] {target_str} 데이터 없음 → {matched_date_str} 종가로 대체: {price:,.4f}")
+
+        return price
+
+    print(f"  [{ticker}] {target_str} 종가 없음 (상장 전이거나 매칭 실패)")
     return 0.0
 
 # ---------------------------------------------------------------------------
