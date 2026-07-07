@@ -5,7 +5,7 @@
 | 파일 | 역할 |
 |------|------|
 | `scheduler/price_updater.py` | 런처 — config.json의 interval 값에 따라 REST/WS 모드 분기 |
-| `scheduler/price_updater_common.py` | 공통 — 설정 로드, DB 연결, 시장 상태, 공휴일 캐시, Yahoo 시세, DB 업데이트 |
+| `scheduler/price_updater_common.py` | 공통 — 설정 로드, DB 연결, 시장 상태, 공휴일 캐시, Yahoo 시세, Redis 시세 업데이트 |
 | `scheduler/price_updater_rest.py` | REST 폴링 모드 — interval > 0일 때 동작, N분 주기 전 종목 조회 |
 | `scheduler/price_updater_ws.py` | 웹소켓 모드 — interval = 0일 때 동작, KIS WS 실시간 수신 |
 
@@ -61,12 +61,7 @@ _close_lock       # _close_confirmed 멀티스레드 보호용 Lock
 - 미국: Finnhub market-holiday API (`finnhub_api_key`)
 
 #### get_market_status(market) → str
-- 반환값: `"open"` / `"pre"` / `"closing"` / `"after"` / `"closed"`
-- KR: 09:00~15:30 → open, 15:30~18:00 → closing, 그 외 → closed
-- US(NAS/NYS/AMS/ARC): 04:00~09:30 → pre, 09:30~16:00 → open, 16:00~20:00 → after, 그 외 → closed
-- FX/CRYPTO/INDEX: 항상 "open" (24시간)
-- 주말/공휴일: closed
-- `buf` = config의 interval 값(분)을 버퍼로 적용
+ 반환값: `"open"` / `"pre"` / `"after"` / `"closed"`
 
 #### is_market_open(market) → bool
 - 하위 호환용 래퍼. `get_market_status(market) == "open"` 과 동일
@@ -81,10 +76,10 @@ _close_lock       # _close_confirmed 멀티스레드 보호용 Lock
 - 지수, 환율(USDKRW=X 등), 암호화폐(BTC-KRW 등) 포함
 - 반환: (price, change_pct, data_time)
 
-#### update_ticker_in_db(conn, ticker, price, change_pct, data_time=None)
-- tickers 테이블 UPDATE
-- 업데이트 컬럼: current_price, change_pct, updated_at(현재시각), data_time
-- data_time은 FX/INDEX/CRYPTO만 값 있음, 나머지는 NULL
+#### update_price_cache(ticker, price, change_pct, data_time=None)
+- Redis `prices` hash 갱신
+- FX/INDEX/CRYPTO는 `data_time`을 쓰지만, 실제 Redis 저장 함수는 `price`와 `change_pct`만 기록
+- data_time은 설명용 값이며, Redis에 별도 저장되지 않는다
 
 #### _is_close_confirmed(market_group) → bool
 - 오늘 날짜로 해당 그룹(KR) 종가 확정 여부 반환
@@ -116,11 +111,9 @@ run_update_cycle(force=False)
   ├─ force=True: 전체 종목 실시간 조회
   └─ force=False:
        ├─ status in open/pre/after  → targets (실시간 조회)
-       ├─ status == "closing"       → close_targets (종가확정 조회)
-       │                              단, _is_close_confirmed("KR") == True면 스킵
        └─ status == "closed"        → 스킵
        종목별 threading.Thread 병렬 실행 (모든 스레드 join 후 완료)
-       완료 후 NOTIFY price_updated 전송
+       완료 후 Redis pub/sub `publish_price_updated()` 전송
 ```
 
 ```
@@ -128,15 +121,14 @@ update_worker(row)
   ├─ market == "KR"             → get_kr_price()
   ├─ market in NAS/NYS/AMS/ARC → get_us_price()
   ├─ market in FX/INDEX/CRYPTO → get_yahoo_price()
-  ├─ price == 0 이면 DB 업데이트 건너뜀
-  └─ update_ticker_in_db()
+  ├─ price == 0 이면 Redis 업데이트 건너뜀
+  └─ update_price_cache()
 ```
 
 ```
-close_confirm_worker(row)
-  ├─ market == "KR" 만 처리
-  ├─ get_confirmed_close_kr() → None이면 미확정, 종료
-  └─ 확정이면 update_ticker_in_db() + _set_close_confirmed("KR")
+KR final close
+  ├─ `should_run_kr_final_close()`로 하루 1회 실행 여부 판정
+  └─ 확정 시 `run_kr_final_close_update()` 호출 — Redis 시세 갱신, `recalc_today_row()`, `publish_price_updated()` 실행
 ```
 
 ### 함수 목록
@@ -163,7 +155,7 @@ close_confirm_worker(row)
 
 ### 개요
 - KR/US 종목: KIS 웹소켓 (H0STCNT0 / HDFSCNT0) push 수신
-- FX/INDEX/CRYPTO: Yahoo Finance REST 폴링 (별도 asyncio task, 60초 주기)
+- FX/INDEX/CRYPTO: Yahoo Finance REST 폴링 (별도 asyncio task, 10초 주기)
 - asyncio 기반 (asyncio.gather로 태스크 병렬 실행)
 
 ### 상수
@@ -171,8 +163,8 @@ close_confirm_worker(row)
 WS_URL = "ws://ops.koreainvestment.com:21000"
 US_MARKET_PREFIX = {"NAS": "DNAS", "NYS": "DNYS", "AMS": "DAMS", "ARC": "DARC"}
 KR_IDX_PRICE = 2, KR_IDX_CHANGE_PCT = 5      # H0STCNT0 필드 인덱스
-US_IDX_PRICE = 10, US_IDX_CHANGE_PCT = 13    # HDFSCNT0 필드 인덱스
-YAHOO_POLL_INTERVAL = 60                      # Yahoo 폴링 주기 (초)
+US_IDX_PRICE = 11, US_IDX_CHANGE_PCT = 14    # HDFSCNT0 필드 인덱스
+YAHOO_POLL_INTERVAL = 10                      # Yahoo 폴링 주기 (초)
 WS_RECONNECT_DELAY = 10                       # 재연결 대기 (초)
 ```
 
@@ -202,16 +194,16 @@ kis_ws_task(approval_key, kr_tickers, us_rows)
             └─ "|" 구분 데이터: 형식 = 0|tr_id|data_cnt|data (parts[1]=tr_id, parts[3]=데이터)
                  ├─ H0STCNT0 → parse_kr() → _save_price()
                  └─ HDFSCNT0 → parse_us() → tr_key_map 역매핑 → _save_price()
-            일정 주기(60초)마다 _notify()
+            약 0.2초 주기마다 _notify()
       연결 끊기면 WS_RECONNECT_DELAY 후 재연결
 ```
 
 ```
 yahoo_poll_task(yahoo_rows)
   └─ while True:
-       FX/INDEX/CRYPTO 종목별 get_yahoo_price() → update_ticker_in_db()
+       FX/INDEX/CRYPTO 종목별 get_yahoo_price() → update_price_cache()
        _notify()
-       await asyncio.sleep(60)
+       await asyncio.sleep(10)
 ```
 
 ```
@@ -234,7 +226,7 @@ subscription_refresh_task(approval_key_holder)
 
 #### get_subscribe_targets() → (kr_tickers, us_rows, yahoo_rows)
 - DB tickers 전체 조회 후 get_market_status()에 따라 분류
-- KR: open/pre/after/closing → kr_tickers
+- KR: open → kr_tickers
 - US: open/pre/after → us_rows
 - FX/INDEX/CRYPTO: 항상 → yahoo_rows
 
@@ -249,11 +241,11 @@ subscription_refresh_task(approval_key_holder)
 - prefix 4자리 제거 후 us_ticker_set에서 ticker 확인
 
 #### _save_price(ticker, price, change_pct)
-- DB 커넥션 열고 update_ticker_in_db() 호출 후 닫음
+- update_price_cache()로 Redis `prices` hash 갱신
 - price == 0이면 스킵
 
 #### _notify()
-- PostgreSQL `NOTIFY price_updated` 전송
+- `recalc_today_row()` 실행 후 Redis pub/sub `publish_price_updated()` 전송
 
 ---
 

@@ -4,6 +4,7 @@
 `app/modules/asset.py`
 
 ## 관련 파일
+- `app/app.py` — 상위 엔트리 포인트, `asset_server()`에 `active_tab` 주입
 - `app/modules/dashboard.py` — 서브탭: 대시보드
 - `app/modules/portfolio.py` — 서브탭: 포트폴리오
 - `app/modules/accounts.py` — 서브탭: 계좌

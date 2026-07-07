@@ -4,6 +4,7 @@
 
 | 파일 | 역할 |
 |------|------|
+| `app/app.py` | 최상위 엔트리 포인트, `active_tab` 관리 및 `asset_server()` 상위 호출 |
 | `app/modules/portfolio.py` | UI + Server (단일 파일) |
 | `app/modules/asset.py` | 히어로 헤더 + 서브탭 관리 (portfolio의 상위 모듈) |
 | `app/modules/components.py` | `build_ticker_row_skeleton`, `build_ticker_row_values`, `build_account_row_skeleton`, `build_account_row_values` |

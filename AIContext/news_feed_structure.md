@@ -1,188 +1,143 @@
-# 뉴스 피드 기능 구현 — 작업 정리
+# 뉴스 피드 기능 구조 요약
 
-작업일: 2026-06-24
-**업데이트: 2026-06-25 — 아래 ⚠️[2026-06-25 갱신] 표시된 항목은 이후 코드 변경을 DB 스키마 확인 + 코드 검토로 반영한 내용. 표시 없는 본문은 작성 당시 내용 그대로 보존(설계 이력 확인용).**
+## 1. 현재 구현 위치
 
-## 1. DB 테이블 생성 (완료)
+| 파일 | 역할 |
+|------|------|
+| `app/modules/settings.py` | 뉴스 소스/키워드/피드 UI와 서버 로직을 실제로 호출하는 상위 모듈 |
+| `app/modules/news.py` | settings.py가 호출하는 뉴스 관련 UI 조각과 서버 로직 함수 모음 |
+| `app/modules/news_js.py` | 뉴스 소스/키워드/피드용 클라이언트 JS |
+| `scheduler/news_fetcher.py` | RSS 폴링 + 키워드 매칭 + 번역 + Redis 캐시 저장 |
+| `common/redis_store.py` | 뉴스 번역/피드 캐시와 pub/sub 발행 |
 
-```sql
-CREATE TABLE news_sources (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    url TEXT NOT NULL,
-    enabled BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE news_keywords (
-    id SERIAL PRIMARY KEY,
-    keyword VARCHAR(100) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-`news_keywords`,`news_sources` 는 비어있는 상태로 시작 (UI에서 사용자가 직접 추가).
-
-⚠️[2026-06-25 갱신] **두 테이블 모두 `lang` 컬럼이 추가됨.** DB 직접 조회로 확인된 실제 스키마:
-
-```
-news_sources.lang   character varying(2)  NOT NULL  DEFAULT 'en'
-news_keywords.lang  character varying(2)  NOT NULL  DEFAULT 'en'
-```
-
-확인 명령어:
-```bash
-PGPASSWORD=qkrworb0! psql -U jake -d assetdb -c "\d news_sources"
-PGPASSWORD=qkrworb0! psql -U jake -d assetdb -c "\d news_keywords"
-```
-
-이로 인해 본 문서 3번·5-2번 섹션에 적었던 **"한글 키워드는 단어경계 매칭이 구조적으로 거의 항상 실패 → 키워드는 항상 영어로 정규화해 저장"이라는 설계 결정은 폐기되었고, en/ko 언어별로 분리 관리하는 구조로 변경됨.** 아래 3번·5번 섹션에 상세 반영.
-
-확인용 명령어:
-```bash
-PGPASSWORD=qkrworb0! psql -U jake -d assetdb -c "SELECT * FROM news_sources;"
-PGPASSWORD=qkrworb0! psql -U jake -d assetdb -c "SELECT * FROM news_keywords;"
-```
+> 이 기능은 별도 `@module.ui` / `@module.server` 모듈로 분리되어 있지 않고, `settings.py` 안에서 `news_script_ui()`, `news_ui_section()`, `news_modals_ui()`, `news_server_logic()`를 호출하는 형태로 붙어 있다.
 
 ---
 
-## 2. `common/redis_store.py` 수정 (완료)
+## 2. DB 스키마
 
-기존 파일 끝에 함수 4개 추가 (기존 코드 변경 없음):
+실제 사용 테이블은 `news_sources` 와 `news_keywords` 두 개이며, 둘 다 `lang` 컬럼을 포함한다.
 
-| 함수 | 역할 | TTL |
-|---|---|---|
-| `get_news_translation_cache(url_hash)` | 캐시된 번역 제목 조회 | - |
-| `set_news_translation_cache(url_hash, translated_title, ttl=3600)` | 번역 제목 캐시 저장 | 1시간 |
-| `get_news_feed_cache()` | 캐시된 뉴스 피드 리스트 조회 | - |
-| `set_news_feed_cache(items, ttl=300)` | 매칭된 뉴스 피드 캐시 저장 | 5분 |
+| 테이블 | 주요 컬럼 |
+|------|------|
+| `news_sources` | `id`, `name`, `url`, `enabled`, `lang`, `created_at` |
+| `news_keywords` | `id`, `keyword`, `lang`, `created_at` |
 
-**설계 근거**: 기존 코드베이스 전체가 "Redis 접근은 `common/redis_store.py`를 거친다"는 단일 진입점 구조를 따르고 있어, `news_fetcher.py`와 `settings.py` 양쪽에서 동일 함수를 재사용하도록 함.
-
-키 구조:
-- `news:translated:{md5(url)}` → 번역된 제목 문자열
-- `news:feed` → 매칭된 기사 리스트 JSON
+- `news_sources.lang` 는 소스 언어 구분용이다.
+- `news_keywords.lang` 는 키워드 언어 구분용이다.
+- 두 테이블 모두 기본값은 `en`이다.
 
 ---
 
-## 3. `scheduler/news_fetcher.py` 신규 작성 (완료)
+## 3. `common/redis_store.py`
 
-`daily_inserter.py`와 동일한 독립 실행 구조 (`threading.Timer`, while 루프 없음, KST 명시).
+뉴스 기능은 Redis를 통해 캐시와 갱신 신호를 주고받는다.
 
-⚠️[2026-06-25 갱신] **실행 구조가 변경됨.** 실제 코드는 `threading.Timer` 방식이 아니라 `asyncio.gather()`로 두 태스크를 병렬 실행:
-- `_poll_loop()`: `while True` + `asyncio.sleep(300)`로 5분 주기 폴링 (동기 함수 `_fetch_and_cache()`는 `run_in_executor`로 별도 스레드에서 실행해 asyncio 루프 블로킹 방지)
-- `_change_listener()`: `news_keyword_changed` **및** `news_source_changed` 두 채널을 함께 구독해 즉시 재폴링 (아래 6번 항목에서 `news_source_changed` 추가 배경 설명)
+### 캐시 함수
 
-**배치 위치**: `/home/ubuntu/asset-cloud/scheduler/news_fetcher.py` (`price_updater.py`와 동일 디렉토리 — `PROJECT_ROOT` 계산 방식이 같아야 하므로)
+| 함수 | 역할 |
+|------|------|
+| `get_news_translation_cache(url_hash)` | 번역된 제목 캐시 조회 |
+| `set_news_translation_cache(url_hash, translated_title, ttl=3600)` | 번역 제목 캐시 저장 |
+| `get_news_feed_cache()` | 뉴스 피드 캐시 조회 |
+| `set_news_feed_cache(items, ttl=300)` | 매칭된 뉴스 피드 저장 |
 
-**동작 흐름**:
-1. DB에서 `enabled=true`인 `news_sources` + 전체 `news_keywords` 로드
-2. 각 소스를 `feedparser`로 폴링
-3. 제목에 키워드가 **단어 단위(word boundary, `\b`)로 매칭**되는 기사만 추출
-   - 영어 키워드(예: `AI`)는 `said` 같은 단어 내부 문자열에 우연히 매칭되지 않도록 단어 경계 적용
-   - ⚠️ 한글 키워드는 조사가 붙는 한국어 특성상 단어경계 매칭이 구조적으로 거의 항상 실패함을 확인 (`삼성전자가` ≠ `삼성전자\b`) → 키워드는 항상 영어로 저장하는 것으로 설계 확정 (3번 섹션 참고)
-4. 매칭된 기사만 제목 번역 (URL 해시 기준 Redis 캐시 우선 조회 → 중복 번역 방지)
-   - 번역 실패 시(`TooManyRequests`, `RequestError`, `TranslationNotFound` 등) 원문 제목 + `[번역실패]` 표시, 해당 기사 스킵하지 않고 계속 진행
-5. 매칭 기사를 발행시각 내림차순 정렬 후 `news:feed`에 캐시 (TTL 5분)
-6. 5분(300초) 주기로 반복
+### pub/sub 함수
 
-⚠️[2026-06-25 갱신] **위 3번의 "키워드는 항상 영어로 저장" 설계는 폐기됨.** 실제 코드(`news_fetcher.py`)는 다음과 같이 동작:
-- `news_keywords`/`news_sources` 모두 `lang`(en/ko) 컬럼 기준으로 분리 관리
-- en 소스 → en 키워드만 매칭, ko 소스 → en+ko 키워드 모두 매칭 (ko 소스는 en 키워드가 한국어 기사 제목에 그대로 등장할 경우를 대비해 포함)
-- ko 키워드도 동일한 `\b` 단어경계 정규식으로 매칭 시도함 — 본문에서 지적한 "한글은 조사 때문에 단어경계 매칭이 거의 항상 실패" 문제가 구조적으로 해소되었는지는 코드만으로 확인 불가 (사실 아님, 추정 표시). 실사용 데이터로 ko 키워드 매칭률 검증 필요 — 별도 확인 과제로 8번 섹션에 추가.
-- 매칭 기사 항목에 `summary`/`translated_summary` 필드가 추가되어 제목 외 요약문도 함께 캐시됨 (ko 소스는 번역 생략, en 소스는 본문과 동일한 번역 캐시 로직 사용, 캐시 키는 `link + ":summary"`로 제목과 분리)
-
-**날짜 처리 (검색 확인된 정석 방식)**:
-> feedparser의 `published_parsed`는 UTC 기준 `struct_time`으로 정규화되어 있음. `time.mktime()`을 쓰면 로컬 시간대로 잘못 해석되어 시간이 틀어지므로, `calendar.timegm()`으로 UTC epoch를 구한 뒤 timezone-aware datetime으로 변환해야 함. (기존 UTC/KST 버그 패턴과 동일 종류의 함정)
-
-**의존성**: `feedparser`, `deep-translator` — VM에 설치 확인됨 (`/usr/bin/python3 -c "import feedparser, deep_translator"` → OK)
+| 함수 | 채널 |
+|------|------|
+| `publish_news_keyword_changed()` | `news_keyword_changed` |
+| `publish_news_source_changed()` | `news_source_changed` |
+| `publish_news_feed_updated()` | `news_feed_updated` |
 
 ---
 
-## 4. systemd 서비스 등록 (완료, 동작 확인됨)
+## 4. `scheduler/news_fetcher.py`
 
-`/etc/systemd/system/news_fetcher.service`:
-```ini
-[Unit]
-Description=Asset Cloud News Fetcher
-After=network.target postgresql.service
+`news_fetcher.py`는 `asyncio.gather()`로 두 태스크를 병렬 실행한다.
 
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/asset-cloud/scheduler
-ExecStart=/usr/bin/python3 /home/ubuntu/asset-cloud/scheduler/news_fetcher.py
-Restart=on-failure
-RestartSec=10
+### 실행 흐름
 
-[Install]
-WantedBy=multi-user.target
-```
+1. `news_sources` 에서 `enabled=true` 인 소스와 `news_keywords` 전체를 읽는다.
+2. RSS를 `feedparser` 로 폴링한다.
+3. 제목에 키워드가 단어 경계(`\b`) 기준으로 매칭되는 기사만 남긴다.
+4. 소스 언어에 따라 번역 여부를 결정한다.
+5. 매칭된 기사만 발행시각 내림차순으로 정렬해 Redis `news:feed` 에 저장한다.
 
-등록/실행:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable news_fetcher
-sudo systemctl start news_fetcher
-journalctl -u news_fetcher -f
-```
+### 언어 규칙
 
-**동작 확인됨** (2026-06-24 11:23 KST): 정상 기동, 키워드 없을 때 "매칭 기사 없음" 로그까지 확인. 실제 키워드 매칭 테스트는 아직 미완료 (5번 항목 참고).
+- `source_lang == "en"` 이면 `lang=en` 키워드만 매칭한다.
+- `source_lang == "ko"` 이면 `lang=en` + `lang=ko` 키워드를 모두 매칭한다.
+- `ko` 소스는 제목/요약을 번역하지 않고 원문을 그대로 사용한다.
+- `en` 소스는 제목과 요약을 번역한다.
 
----
+### 번역 규칙
 
-## 5. `app/modules/settings.py` 수정 (완료, VM 배포/테스트 전)
+- 번역은 `deep-translator` 의 `GoogleTranslator(source="en", target="ko")` 를 사용한다.
+- 번역 결과는 URL 해시 기준 Redis 캐시에 저장한다.
+- 번역 실패 시 기사 자체는 버리지 않고, 제목/요약에 `[번역실패]` 를 붙여 계속 포함한다.
 
-기존 UI 패턴(모달, `Shiny.setInputValue`, 토글 스위치, `st_init`/`st_tick` 커스텀 메시지 핸들러 구조)을 그대로 따라 "티커 관리" 섹션과 "내보내기" 섹션 사이에 3개 영역 추가.
+### 날짜 처리
 
-### 5-1. 뉴스 소스 토글
-- `news_sources` 테이블의 `enabled` 컬럼을 켜고 끄는 토글 스위치
-- 토글 변경 시 즉시 DB UPDATE (`news_fetcher.py`는 5분 주기로 DB를 다시 읽으므로 별도 Redis 신호 발행 불필요)
+- `published_parsed` / `updated_parsed` 는 UTC 기준으로 해석한다.
+- `calendar.timegm()` 으로 epoch 를 만든 뒤 timezone-aware `datetime` 으로 변환한다.
 
-⚠️[2026-06-25 갱신] **위 설명과 달리 Redis 신호 발행이 추가됨.** 토글뿐 아니라 소스 추가/수정/삭제 시 모두 `publish_news_source_changed()` 호출, `news_fetcher.py`가 `news_source_changed` 채널을 구독해 즉시 재폴링. (5분 대기 없이 변경 즉시 반영하는 쪽으로 정책 변경 — 기존 `news_keyword_changed` 패턴과 동일하게 일관성 있게 확장된 것으로 판단, 클릭 단위 저빈도 이벤트라 DB/Redis 호출 비용 우려 없음.) 단, `_fetch_and_cache()`에 디바운스/락이 없어 토글을 짧은 시간에 연속으로 누르면 전체 재폴링이 그만큼 반복 실행됨 — 의도적으로 막지 않기로 함(8번 항목 참고).
-- **소스 추가/수정 모달도 함께 구현 완료** (md 작성 시점엔 토글만 언급됐으나 실제로는 이름/URL/lang/enabled를 입력하는 모달 + `save_news_source`(추가/수정 겸용)/`delete_news_source` 핸들러까지 구현됨
+### 갱신 트리거
 
-### 5-2. 키워드 관리
-- 입력창 + **[번역]** 버튼 + **[추가]** 버튼 + 기존 키워드 칩 목록(삭제 버튼 포함)
-- **[번역] 버튼**: 입력창 내용을 `GoogleTranslator(source='auto', target='en')`으로 번역해 **입력창 값을 그 자리에서 교체** (DB에는 저장 안 됨)
-  - 예: `반도체` 입력 → 번역 클릭 → 입력창이 `semiconductor`로 바뀜
-- **[추가] 버튼**: 그 시점 입력창 내용(영어로 변환된 상태)을 `news_keywords.keyword`로 INSERT
-- **설계 확정 배경**: 한글 키워드를 그대로 저장하면 영어 원문 제목과 매칭이 구조적으로 불가능하므로(번역 전 매칭이라 원문이 영어), 저장 시점에 항상 영어로 변환해 저장하는 방식으로 결정. 한글 원본은 따로 저장하지 않음(요청에 따라 불필요 판단).
-- 번역 API 호출은 별도 백엔드 분리 없이 `settings.py` 서버 함수 내에서 동기 호출 (Shiny가 같은 프로세스 내 서버 함수 호출 구조이고, 오라클 프리티어 안에서 별도 엔드포인트를 둘 이유가 없다고 판단)
-
-⚠️[2026-06-25 갱신] **"항상 영어로 변환 저장" 설계는 폐기됨.** DB에 `lang` 컬럼이 추가되어 실제로는:
-- 키워드 저장 시 `lang`(en/ko)을 함께 저장 (`save_news_keyword` → `INSERT/UPDATE news_keywords (keyword, lang)`)
-- 칩 목록에 `lang` 배지가 표시됨 (`_build_news_keywords_html`)
-- [번역] 버튼은 여전히 입력창 텍스트를 영어로 보여주는 보조 기능으로 남아있지만, **번역 결과를 그대로 저장하도록 강제하지는 않음** — 사용자가 한글 그대로 `lang=ko`로 저장할 수도 있는 구조로 변경됨 (`save_news_keyword` 핸들러가 `payload.get("lang", "en")`을 그대로 받아 저장)
-- 소스(`news_sources`)에도 동일하게 `lang` 필드가 추가되어 소스 추가/수정 모달에서 언어를 지정함
-
-### 5-3. 뉴스 피드 표시
-- `get_news_feed_cache()`를 60초마다 조회해 표시 (탭이 "settings"가 아닐 때는 스킵 — 기존 `_send_update`와 동일한 비활성 탭 스킵 패턴)
-- 번역된 제목(또는 번역 실패 시 원문+`[번역실패]`) + 원문 링크 + 소스명 + 발행시각(KST 변환) 표시
-
-### 변경 파일 요약
-- import: `deep_translator`, `datetime`, `zoneinfo.ZoneInfo`
-- CSS: 범용 토글(`news-toggle-checkbox`), 키워드 칩, 피드 아이템 스타일 추가
-- JS: `st_news_sources` / `st_news_keywords` / `st_news_feed` / `st_news_translated` 커스텀 메시지 핸들러 추가
-- Server: `_news_source_rows`/`_news_keyword_rows`(`@reactive.calc`), 소스 토글/키워드 추가/삭제/번역/피드표시 `@reactive.effect` 6개 추가
+- `_poll_loop()` 는 300초 주기로 실행된다.
+- `_change_listener()` 는 `news_keyword_changed` 와 `news_source_changed` 두 채널을 구독하고, 수신 즉시 재폴링한다.
 
 ---
 
-## 6. 다음 세션에서 진행할 것 (미완료)
+## 5. `app/modules/settings.py` 쪽 UI
 
-1. **`settings.py` VM 배포 및 실제 테스트**
-   - 영어 키워드(예: `semiconductor`, `AI`) 등록 후 `news_fetcher.py` 재시작/대기로 실제 매칭 확인
-   - Redis에 `news:feed` 캐시가 정상 저장되는지 확인 (`redis-cli GET news:feed`)
-   - 설정 탭 UI에서 토글/키워드 추가삭제/피드 표시가 실제로 정상 렌더링되는지 화면 확인
-2. **키워드 [번역] 버튼 동작 확인** — 한글 입력 시 영어로 정상 치환되는지, 실패 시 콘솔 로그(`[settings] 키워드 번역 실패 ...`)만 찍히고 조용히 무시되는 현재 동작이 사용자 입장에서 괜찮은지(피드백 UI 없음) 재검토 필요할 수 있음
-3. **뉴스 피드 새로고침 주기(60초) 적절성 재검토** — 캐시 자체는 5분 주기 갱신이므로 60초는 다소 과한 polling일 수 있음, 필요시 120~300초로 조정 가능
-4. **CSS/모달 충돌 여부 실제 화면에서 확인** — 코드 리뷰로는 충돌 가능성 낮다고 판단했으나 실제 브라우저 렌더링 확인 필요
+뉴스 UI는 설정 화면 안에 들어간다.
+
+### 화면 구성
+
+- 뉴스 소스 목록
+- 뉴스 키워드 목록
+- 뉴스 피드 목록
+- 뉴스 소스 편집 모달
+- 뉴스 키워드 편집 모달
+- 뉴스 슬라이드업 패널(ko 소스용)
+
+### 주요 서버 함수
+
+`news_server_logic(input, output, session, active_tab)` 가 실제 상태를 관리한다.
+
+### 커스텀 메시지
+
+| 메시지 | 용도 |
+|------|------|
+| `st_news_sources` | 소스 목록/토글 갱신 |
+| `st_news_keywords` | 키워드 칩 목록 갱신 |
+| `st_news_feed` | 뉴스 피드 갱신 |
+| `st_news_translated` | 키워드 번역 결과를 입력창에 반영 |
+
+### 실제 동작
+
+- 소스 추가/수정/삭제/토글은 `publish_news_source_changed()` 를 호출한다.
+- 키워드 추가/삭제/수정은 `publish_news_keyword_changed()` 를 호출한다.
+- 피드는 `news_feed_signal` 변화와 settings 탭 활성 상태를 기준으로 갱신한다.
+- 피드 표시 주기는 `reactive.invalidate_later(60)` 이다.
 
 ---
 
-## 참고: 적용된 핵심 설계 원칙 (이번 세션에서 재확인/적용)
+## 6. `app/modules/news.py`
 
-- DB/Redis 접근은 항상 공용 모듈(`redis_store.py`)을 거치는 구조 유지 — 직접 호출 금지
-- 키워드 매칭은 항상 영어(원문 RSS 언어) 기준으로 이루어지므로, 사용자가 입력하는 키워드도 저장 시점에 영어로 정규화
-- 기술/API 동작 방식(feedparser 날짜 처리, deep-translator 예외 종류)은 기억이 아닌 웹 검색으로 사실 확인 후 코드 작성
-- 오라클 클라우드 프리티어 제약 — 별도 백엔드/엔드포인트 추가 없이 기존 프로세스(Shiny 서버 함수) 내에서 번역 호출 처리
+`news.py`는 독립 Shiny 모듈이 아니라 일반 함수 모음이다.
+
+- `news_script_ui()` → `news_js()` 를 `<script>` 로 주입
+- `news_ui_section()` → 설정 화면의 뉴스 섹션 UI 생성
+- `news_modals_ui()` → 소스/키워드 편집 모달과 뉴스 패널 생성
+- `news_server_logic()` → DB 캐시, 토글, 저장, 삭제, 번역, 피드 전송 처리
+
+---
+
+## 7. 현재 구조에서 중요한 점
+
+- 키워드와 소스는 `lang` 을 함께 저장한다.
+- 뉴스 피드는 번역 결과가 있으면 번역 제목을 보여주고, 없으면 원문 제목에 `[번역실패]` 를 붙인다.
+- 피드 항목에는 `translated_title`, `summary`, `translated_summary`, `source_lang`, `published_at`, `matched_keywords` 가 포함된다.
+- 뉴스 관련 Redis 발행은 모두 `common/redis_store.py` 를 통해 간접 호출한다.

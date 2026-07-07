@@ -4,6 +4,7 @@
 
 | 파일 | 역할 |
 |------|------|
+| `app/app.py` | 최상위 엔트리 포인트, `active_tab` 관리 및 `asset_server()` 상위 호출 |
 | `app/modules/dashboard.py` | UI + Server (단일 파일) |
 | `app/modules/asset.py` | 히어로 헤더 + 서브탭 관리 (dashboard의 상위 모듈) |
 | `app/static/dashboard.css` | 대시보드 전용 스타일 (Bloomberg 다크테마) |

@@ -1,308 +1,119 @@
-# asset-cloud — 이벤트 & 데이터 흐름 맵
-
-> 발행자 / 채널 / 구독자 / 반응 동작을 전체 정리한 문서.  
-> 마지막 갱신: 2026-06-16
+# 이벤트 흐름 맵
 
 ---
 
-## 1. 전체 구조 개요
+## 1. 전체 흐름
 
-이벤트/트리거는 두 계층으로 나뉜다.
+```mermaid
+flowchart LR
+  subgraph SCHED[Scheduler]
+    PU[price_updater.py]
+    DI[daily_inserter.py]
+    NF[news_fetcher.py]
+  end
 
-| 계층 | 수단 | 범위 | 예시 |
-|------|------|------|------|
-| **A. 프로세스 간** | Redis pub/sub | 서비스 경계 넘음 | price_updater → myassets |
-| **B. 모듈 내부** | Shiny reactive.value | 단일 모듈 안 | 사용자 CRUD → 해당 화면 갱신 |
+  subgraph REDIS[Redis]
+    P[(prices)]
+    T[(today_row)]
+    CF[(today_cash_flow)]
+    NEWS[(news:feed)]
+  end
 
----
+  subgraph APP[Shiny App]
+    A[accounts.py]
+    H[history.py]
+    D[dashboard.py]
+    PRT[portfolio.py]
+    S[settings.py]
+    PS[price_signal.py]
+  end
 
-## 2. [계층 A] Redis pub/sub
+  PU --> P
+  PU --> T
+  PU --> PS
+  DI --> T
+  DI --> CF
+  NF --> NEWS
+  NF --> PS
 
-### 2-1. 채널 구조
-
-```
-발행자(Publisher)                  채널                    구독자
-────────────────────────────────────────────────────────────────────
-price_updater_rest.py    ──┐
-price_updater_ws.py      ──┤──► price_updated      ──► price_signal.py
-price_updater_common.py  ──┘
-
-accounts.py              ──────► position_changed   ──► price_signal.py
-
-settings.py              ──────► ticker_changed     ──► price_signal.py
-
-daily_inserter.py        ──────► daily_inserted     ──► price_signal.py
-```
-
-### 2-2. `price_updated` 채널 — 발행 상세
-
-| 발행자 | 발행 시점 | 비고 |
-|--------|-----------|------|
-| `scheduler/price_updater_rest.py` | REST 폴링 1사이클 완료 후 | interval > 0 모드 |
-| `scheduler/price_updater_ws.py` | KIS WS 메시지 수신 후 주기마다 | interval = 0 모드 |
-| `scheduler/price_updater_common.py` | KR 종가 확정 시 | closing 상태 전용 |
-
-### 2-3. `position_changed` 채널 — 발행 상세
-
-| 발행자 | 발행 시점 | 비고 |
-|--------|-----------|------|
-| `app/modules/accounts.py` | 계좌 추가·삭제, 종목 추가·수정·삭제, 현금 추가·수정·삭제, 매수·매도 완료 후 (8개 액션 전부) | recalc_today_row() 포함 |
-
-### 2-4. `ticker_changed` 채널 — 발행 상세
-
-> **2026-07-04 정정**: 기존 문서는 `settings.py`만 발행자로 기재했으나, `accounts.py`의 grep 전수조사 결과 아래 3개 지점도 실제 발행자로 확인됨.
-
-| 발행자 | 발행 시점 | 비고 |
-|--------|-----------|------|
-| `app/modules/settings.py` | 티커 추가·삭제 완료 후 | tickers 테이블 변경 즉시 반영 |
-| `app/modules/accounts.py` `_add_position` | 종목 추가 완료 후 | 신규 티커면 `tickers` INSERT 발생 |
-| `app/modules/accounts.py` `_edit_position` | 종목 수정 완료 후 | `tickers.name/market/leverage` UPDATE 발생 |
-| `app/modules/accounts.py` `_delete_position` | 종목 삭제 후, **`accounts_DAL.delete_position()`이 tickers 레코드를 실제로 삭제한 경우에만** | `is_manual=false` 티커의 마지막 포지션이 삭제되는 경우. 2026-07-04 이전엔 이 경로에서 `ticker_changed` 미발행 버그 있었음 (수정완료, 7절 참고) |
-
-### 2-5. `daily_inserted` 채널 — 발행 상세
-
-| 발행자 | 발행 시점 | 비고 |
-|--------|-----------|------|
-| `scheduler/daily_inserter.py` | `daily_summary` INSERT 완료 후 | 매일 `daily_insert_time` KST 1회 |
-
-### 2-6. 구독자 — `price_signal.py` 내부 처리
-
-```
-Redis asyncio pubsub
-  ├── "price_updated"    수신 → _price_counter += 1
-  │                           → price_signal.set(_price_counter)
-  │                           → reactive.flush()
-  ├── "position_changed" 수신 → _position_counter += 1
-  │                           → position_signal.set(_position_counter)
-  │                           → reactive.flush()
-  ├── "ticker_changed"   수신 → _ticker_counter += 1
-  │                           → ticker_signal.set(_ticker_counter)
-  │                           → reactive.flush()
-  └── "daily_inserted"   수신 → _insert_counter += 1
-                              → daily_insert_signal.set(_insert_counter)
-                              → reactive.flush()
-```
-
-- 백그라운드 태스크: 첫 세션 접속 시 1회만 시작 (`_task_started` 플래그)
-- 잠금: `async with reactive.lock()` 보호 하에 signal.set() 호출
-
-### 2-7. 화면별 reactive 반응 매핑
-
-| 화면 | `price_signal` | `position_signal` | `ticker_signal` | `daily_insert_signal` | 반응 동작 |
-|------|:--------------:|:-----------------:|:---------------:|:---------------------:|-----------|
-| `dashboard.py` | ✅ | ✅ | ✅ | ✅ | 총자산·수익률·비중 등 전체 지표 재계산 |
-| `portfolio.py` | ✅ | ✅ | ✅ | ✅ | Redis 시세 재조회 → 종목별 평가액·등락률 갱신 |
-| `accounts.py` | ✅ | ✗ | ✗ | ✅ | Redis 시세 재조회 → 계좌별 평가액·손익 갱신 |
-| `history.py` (today_row) | ✅ | ✅ | ✗ | ✅ | `recalc_today_row()` → Redis today_row 갱신 → 행 갱신 |
-| `history.py` (전체 테이블) | ✅ | ✅ | ✗ | ✅ | DB에 새 행 추가됐으므로 전체 테이블 재전송 |
-| `settings.py` | ✅ | ✗ | ✅ | ✗ | Redis 시세 재조회 → 티커 목록 현재가 갱신 |
-
-> **accounts.py 비고**: `position_signal`/`ticker_signal`은 `_send_update`에서 직접 구독하지 않음.  
-> 구조 변경(종목 추가·삭제 등)은 `accounts.py` 내부 `refresh` (계층 B)로 즉시 처리하고,  
-> 타 모듈에서 발생한 `position_signal`/`ticker_signal`에는 반응하지 않음.
-
-### 2-8. DB 조회 트리거 매핑
-
-각 화면의 DB 조회(`@reactive.calc`)는 데이터가 실제로 바뀌는 signal에만 연결됨. `price_updated`는 Redis 시세 조회만 유발.
-
-| 데이터 | DB 재조회 트리거 | 해당 화면 |
-|--------|-----------------|-----------|
-| `daily_summary` 전체 이력 | `daily_insert_signal` | `dashboard.py` |
-| `positions` + `tickers` 메타 (수량·레버리지·마켓) | `position_signal` + `ticker_signal` | `dashboard.py`, `portfolio.py` |
-| `accounts` 목록 + `positions` 상세 | `refresh` (accounts 내부) | `accounts.py` |
-| `tickers` 목록 | `ticker_signal` + `refresh` | `settings.py` |
-| 드릴다운 계좌 목록 | `position_signal` + `ticker_signal` + `selected_ticker` | `portfolio.py` |
-
-### 2-9. 발행 시나리오별 흐름
-
-#### 시나리오 1. 시세 업데이트 (REST/WS)
-```
-price_updater (REST/WS)
-  → Redis 시세 키 갱신
-  → publish_price_updated()
-  → price_signal.py 수신 → price_signal.set()
-  → dashboard / portfolio / accounts / history(today_row) / settings
-    (DB 재조회 없음 — 각 화면 내부 DB 캐시 그대로, Redis 시세만 재조회)
-```
-
-#### 시나리오 2. KR 종가 확정
-```
-price_updater_common.py (closing 상태 감지)
-  → KR 종가 API 호출 → Redis 갱신
-  → publish_price_updated()
-  → 시나리오 1과 동일한 화면 반응
-```
-
-#### 시나리오 3. 계좌에서 종목/현금 추가·수정·삭제
-```
-사용자 액션 (accounts.py)
-  → DB write (positions)
-  → recalc_today_row()          ← Redis today_row 즉시 갱신
-  → refresh.set(refresh() + 1)  ← accounts 화면 내부 즉시 갱신 (계층 B)
-      → _db_accounts() / _db_detail() calc 무효화 → DB 재조회
-  → publish_position_changed()  ← 타 화면 갱신 (계층 A)
-      → position_signal.set()
-      → dashboard / portfolio / history(today_row) 재실행
-        (positions DB 캐시 무효화 → DB 재조회)
-  → [종목 추가/수정 시, 또는 종목 삭제로 tickers 레코드가 실제 제거된 경우]
-     publish_ticker_changed() ← tickers 메타 변경을 dashboard/portfolio에 전파
-```
-
-#### 시나리오 4. 설정에서 티커 추가·삭제
-```
-사용자 액션 (settings.py)
-  → DB write (tickers)
-  → refresh.set(refresh() + 1)  ← settings 화면 내부 즉시 갱신 (계층 B)
-  → publish_ticker_changed()    ← 타 화면 갱신 (계층 A)
-      → ticker_signal.set()
-      → dashboard / portfolio 재실행
-        (tickers DB 캐시 무효화 → DB 재조회)
-      ※ accounts.py는 ticker_signal 미구독 → 반응 없음
-```
-
-#### 시나리오 5. daily_inserter 자동 실행
-```
-daily_inserter.py (매일 daily_insert_time KST)
-  → daily_summary INSERT
-  → publish_daily_inserted()
-  → price_signal.py 수신 → daily_insert_signal.set()
-  → dashboard / accounts / history(today_row + 전체 테이블) 재실행
-    (daily_summary DB 캐시 무효화 → DB 재조회)
+  PS --> A
+  PS --> H
+  PS --> D
+  PS --> PRT
+  PS --> S
 ```
 
 ---
 
-## 3. [계층 B] 모듈 내부 reactive 트리거
+## 2. Redis pub/sub 채널
 
-프로세스 경계를 넘지 않고, 단일 모듈 안에서 특정 렌더러만 재실행시키는 트리거.
-
-### 3-1. 트리거 목록
-
-| 트리거 | 모듈 | 발생 시점 | 반응 대상 |
-|--------|------|-----------|-----------|
-| `refresh` | `accounts.py` | 종목/현금 CRUD 완료 후 | `_db_accounts()` / `_db_detail()` calc 무효화 → 계좌 목록·상세 재렌더 |
-| `selected_account` | `accounts.py` | 계좌 카드 클릭 / 삭제 후 초기화 | `_db_detail()` calc 무효화 → 계좌 상세 뷰 전환 |
-| `selected_ticker` | `portfolio.py` | 종목 클릭 / 뒤로가기 | `_db_ticker_accounts()` calc 무효화 → 드릴다운 뷰 전환 |
-| `refresh` | `settings.py` | 티커 CRUD 완료 후 | 티커 목록 재렌더 (DB 캐시도 무효화) |
-| `today_cf_trigger` | `history.py` | 오늘 입출금 저장 후 | today_row 렌더러 강제 갱신 |
-| `_reload_trigger` | `history.py` | 과거 입출금 수정 후 | DB rows 전체 재로드 |
-| `invalidate_later(60)` | `settings.py` | 60초 주기 자동 | 시장 상태 배지 갱신 |
-
-### 3-2. 내부 트리거 흐름
-
-#### accounts.py
-```
-사용자 CRUD (계좌/종목/현금 추가·수정·삭제)
-  → DB write
-  → refresh.set(refresh() + 1)         ← _db_accounts()/_db_detail() calc 무효화
-                                           → 계좌 화면 즉시 갱신
-  → [동시에] publish_position_changed() ← 타 화면 갱신 (계층 A로 상승)
-
-계좌 카드 클릭
-  → selected_account.set(acc_id)       ← _db_detail() calc 무효화 → 상세 뷰 전환
-
-계좌 삭제
-  → selected_account.set(None)         ← 상세 뷰 초기화
-  → refresh.set(refresh() + 1)
-```
-
-#### portfolio.py
-```
-종목 클릭
-  → selected_ticker.set(ticker)        ← _db_ticker_accounts() calc 무효화
-                                           → 드릴다운 뷰 전환
-
-뒤로가기
-  → selected_ticker.set(None)          ← 목록 뷰 복원
-```
-
-#### history.py
-```
-오늘 입출금 저장
-  → DB write
-  → today_cf_trigger.set(+1)           ← today_row만 강제 갱신
-
-과거 입출금 수정
-  → DB write
-  → _reload_trigger.set(+1)            ← DB rows 전체 재로드
-```
-
-#### settings.py
-```
-티커 CRUD
-  → DB write
-  → refresh.set(refresh() + 1)         ← 티커 목록 즉시 갱신 + DB 캐시 무효화
-  → [동시에] publish_ticker_changed()  ← 타 화면 갱신 (계층 A로 상승)
-
-60초 경과
-  → invalidate_later(60) 자동 실행     ← 시장 상태 배지만 갱신
-```
+| 채널 | 발행자 | 구독/반응 주체 | 의미 |
+|------|--------|----------------|------|
+| `price_updated` | `price_updater_rest.py`, `price_updater_ws.py`, `price_updater_common.py` | `price_signal.py` | 현재가 갱신 |
+| `position_changed` | `accounts.py` | `price_signal.py` | 포지션/현금 수정 |
+| `ticker_changed` | `accounts.py`, `settings.py` | `price_signal.py` | 티커 메타 수정 |
+| `daily_inserted` | `daily_inserter.py` | `price_signal.py` | 일간 스냅샷 갱신 |
+| `news_keyword_changed` | `settings.py` | `news_fetcher.py` | 뉴스 키워드 변경 |
+| `news_source_changed` | `settings.py` | `news_fetcher.py` | 뉴스 소스 변경 |
+| `news_feed_updated` | `news_fetcher.py` | `price_signal.py` | 뉴스 피드 갱신 |
 
 ---
 
-## 4. `initialized` 플래그 — 초기 렌더 가드
+## 3. price_signal.py 역할
 
-트리거가 아니라 **"첫 렌더가 완료됐는가"** 를 기억하는 가드.  
-비활성 탭에서 불필요한 재렌더를 막기 위해 사용.
+`price_signal.py` 는 Redis pub/sub 메시지를 받아 앱 내부 반응형 신호로 변환한다.
 
-| 플래그 | 모듈 | 역할 |
-|--------|------|------|
-| `initialized` | `dashboard.py` | 초기 렌더 전 active_tab 가드 스킵 |
-| `initialized` | `portfolio.py` | 초기 렌더 전 active_tab 가드 스킵 |
-| `initialized` | `accounts.py` | 초기 렌더 전 active_tab 가드 스킵 |
-| `initialized` | `settings.py` | 초기 렌더 전 active_tab 가드 스킵 |
-| `initialized_today_row` | `history.py` | today_row 첫 렌더 완료 여부 |
-| `initialized_historytable` | `history.py` | 전체 테이블 첫 렌더 완료 여부 |
+### 신호
 
-패턴:
-```python
-# 초기 렌더 전엔 가드 무시 → 렌더 실행 → initialized.set(True)
-# 이후엔 비활성 탭이면 조기 return
-if initialized.get() and active_tab and active_tab.get() != "xxx":
-    return
-```
+| 신호 | 의미 |
+|------|------|
+| `price_signal` | 현재가가 바뀜 |
+| `position_signal` | 포지션/현금이 바뀜 |
+| `ticker_signal` | ticker 메타가 바뀜 |
+| `daily_insert_signal` | daily_summary 가 바뀜 |
+| `news_feed_signal` | 뉴스 피드가 바뀜 |
+
+### 동작
+
+- `redis.pubsub()` 로 채널을 구독한다.
+- 메시지가 오면 대응되는 signal 값을 증가시키거나 재설정한다.
+- 앱의 각 탭은 이 signal 을 reactive dependency 로 사용한다.
 
 ---
 
-## 5. 서비스 간 의존성 (systemd 레벨)
+## 4. 화면 반응 흐름
 
-```
-[price_updater 서비스]       [myassets 서비스]
-  price_updater_*.py    →Redis pub/sub→  price_signal.py
-                               │
-                           Redis 공유
-                               │
-                    [daily_inserter]
-                    (myassets 프로세스 내
-                     threading.Timer로 동작)
-```
+### price_updated
 
-- `price_updater`와 `myassets`는 독립 프로세스 — Redis만 공유
-- `daily_inserter`는 `myassets` 내부에서 실행 (별도 프로세스 아님)
-- 세 서비스 모두 VM 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
+1. `price_updater.py` 가 Redis `prices` 를 갱신한다.
+2. `publish_price_updated()` 가 호출된다.
+3. `price_signal.py` 가 메시지를 받아 `price_signal` 을 올린다.
+4. `dashboard.py`, `portfolio.py`, `accounts.py`, `settings.py` 가 해당 신호를 보고 현재가를 다시 읽는다.
 
----
+### position_changed
 
-## 6. 주요 함수 참조
+1. `accounts.py` CRUD 완료
+2. `refresh_position_cache()` 및 `recalc_today_row()` 수행
+3. `publish_position_changed()` 호출
+4. 다른 탭이 포지션/총자산을 다시 계산한다.
 
-| 함수 | 위치 | 역할 |
-|------|------|------|
-| `publish_price_updated()` | `common/redis_store.py` | `price_updated` 채널에 "1" 발행 |
-| `publish_position_changed()` | `common/redis_store.py` | `position_changed` 채널에 "1" 발행 |
-| `publish_ticker_changed()` | `common/redis_store.py` | `ticker_changed` 채널에 "1" 발행 |
-| `publish_daily_inserted()` | `common/redis_store.py` | `daily_inserted` 채널에 "1" 발행 |
-| `recalc_today_row()` | `common/redis_store.py` | Redis today_row 키 재계산·갱신 |
-| `start_signal_listener()` | `app/price_signal.py` | asyncio pubsub 백그라운드 태스크 시작 |
-| `price_signal.get()` | `app/price_signal.py` | Shiny reactive 의존성 등록용 |
-| `position_signal.get()` | `app/price_signal.py` | Shiny reactive 의존성 등록용 |
-| `ticker_signal.get()` | `app/price_signal.py` | Shiny reactive 의존성 등록용 |
-| `daily_insert_signal.get()` | `app/price_signal.py` | Shiny reactive 의존성 등록용 |
+### daily_inserted
+
+1. `daily_inserter.py` 가 `daily_summary` 를 upsert 한다.
+2. `publish_daily_inserted()` 호출
+3. `history.py` 가 오늘 행/과거 행 렌더링을 갱신한다.
+
+### news_feed_updated
+
+1. `news_fetcher.py` 가 뉴스 피드를 갱신한다.
+2. Redis `news:feed` 와 번역 캐시를 갱신한다.
+3. `publish_news_feed_updated()` 호출
+4. `settings.py` 의 뉴스 패널이 다시 렌더링된다.
 
 ---
 
-## 7. 현재 알려진 이슈 (이벤트 흐름 관련)
+## 5. 현재 주의사항
 
-| 이슈 | 설명 | 상태 |
-|------|------|------|
-| 모든 탭 reactive 항상 실행 | CSS show/hide 탭 전환이 Shiny의 output suspend 메커니즘을 우회 → 숨겨진 탭의 reactive도 매초 실행됨 | 수정완료 (각 화면 가드 적용) |
-| 종목 삭제 시 ticker_changed 미발행 | `accounts_DAL.delete_position()`이 조건부로 `tickers` 레코드를 삭제하는데도, 호출부(`accounts.py _delete_position`)는 `publish_ticker_changed()`를 호출하지 않아 dashboard/portfolio가 삭제된 티커 메타를 못 받는 문제 | 수정완료 (2026-07-04, `delete_position()`이 삭제 여부를 bool로 반환 → 호출부가 조건부 발행) |
+- 시그널 이름과 pub/sub 채널 이름은 1:1로 문서화해야 한다.
+- UI 는 DB 폴링보다 Redis 신호를 우선해서 다시 그린다.
+- 뉴스 피드 흐름은 `settings.py` 와 `news_fetcher.py` 의 결합을 기준으로 읽어야 한다.

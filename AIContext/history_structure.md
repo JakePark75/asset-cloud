@@ -3,10 +3,11 @@
 ## 파일 구성
 | 파일 | 역할 |
 |------|------|
+| `app/app.py` | 최상위 엔트리 포인트, `active_tab` 및 최상위 탭 전환 관리 |
 | `app/modules/history.py` | UI / Server 진입점, 테이블 JS 렌더링 포함 |
 | `app/modules/history_DAL.py` | DB 조회 및 TWR 재계산 |
-| `app/modules/history_charts.py` | Plotly 차트 생성 |
-| `app/modules/history_utils.py` | 포맷 유틸 |
+
+> **구현 위치 참고**: Plotly 차트 생성, 터치 인터랙션, 테이블 렌더링용 JS, `fmt_krw`/`fmt_10m` 계열 포맷 헬퍼는 현재 별도 모듈이 아니라 `app/modules/history.py`와 `app/modules/history_DAL.py` 안에 함께 들어 있습니다.
 
 ---
 
@@ -80,51 +81,3 @@
 - TWR 계산식: `twr = prev_twr × (total - cf) / prev_total`
 
 ---
-
-## history_charts.py
-
-### 공통 레이아웃 `_BASE_LAYOUT`
-- 다크테마 (paper_bgcolor 투명, plot_bgcolor #111111)
-- hovermode: x unified
-- dragmode: False (JS 터치 직접 처리)
-- fixedrange: True (Plotly 줌 비활성, JS로 range 제어)
-- 높이: 220px
-
-### `make_chart_asset(rows)` → HTML str
-- 총자산 추이 라인 차트 (녹색 #00c073)
-- 입금 마커: 삼각형 위 (빨강 #ff4d4d)
-- 출금 마커: 삼각형 아래 (파랑 #4d9fff)
-- y축: 억 단위 포맷 (`fmt_10m`)
-- 초기 범위: 최근 3개월
-- `fig.to_html(full_html=False, include_plotlyjs=False, div_id="chart-asset")`
-- 뒤에 `_touch_script("chart-asset")` 삽입
-
-### `make_chart_twr(rows)` → HTML str
-- TWR(녹색 실선) vs NDX100(파랑 점선) 비교 차트
-- y축: % 단위
-- 초기 범위: 최근 3개월
-- `div_id="chart-twr"`, `_touch_script("chart-twr")` 삽입
-
-### `_touch_script(chart_id)` → str
-- 모바일 터치 이벤트 처리 스크립트 (차트 HTML 뒤에 삽입)
-- 롱프레스: 커스텀 팝업 + 수직 보조선 표시
-- 스와이프: x축 범위 패닝
-- Plotly 기본 hover/drag 비활성화 후 직접 구현
-
-### `_init_range(date_strs, period)` → list
-- "1m" / "3m" / "all" 기준으로 초기 x축 범위 반환
-
-### 비고
-- plotly.js는 `app.py` head에서 CDN으로 전역 로드 (`include_plotlyjs=False`)
-
----
-
-## history_utils.py
-
-| 함수 | 설명 |
-|------|------|
-| `fmt_krw(val)` | 억/만 단위 축약 (예: "1.2억", "3,500만") |
-| `fmt_10m(val)` | 억 단위 소수점 2자리 (예: "1.23억") |
-
-### 비고
-- `history_utils.fmt_krw`는 `components.fmt_krw`와 다름 — 히스토리 테이블 전용 축약 포맷

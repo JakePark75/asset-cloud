@@ -42,15 +42,15 @@
 
 ### 서버 구조
 - **nginx**: 활성화 (systemd), 443/80 리스닝, SSL은 Certbot으로 관리
-  - `/` → `http://127.0.0.1:8080` 프록시 (WebSocket 포함)
-  - `/api/` → `http://127.0.0.1:8080/api/` 프록시
-  - `/AIContext/` → `/var/www/html` 정적 파일 서빙
-  - `proxy_read_timeout 3600`, `proxy_send_timeout 3600` 설정 (WebSocket 끊김 방지)
+	- `/` → `http://127.0.0.1:8080` 프록시 (WebSocket 포함)
+	- `/api/` → `http://127.0.0.1:8080/api/` 프록시
+	- `/AIContext/` → `/var/www/html` 정적 파일 서빙
+	- `proxy_read_timeout 3600`, `proxy_send_timeout 3600` 설정 (WebSocket 끊김 방지)
 - **Shiny 앱**: systemd 서비스로 실행 (`/etc/systemd/system/myassets.service`)
-  - 실행 커맨드: `python3 -m shiny run app/app.py --host 0.0.0.0 --port 8080`
-  - 서비스 파일 원본: `scheduler/myassets.service` (깃허브 관리)
+	- 실행 커맨드: `python3 -m shiny run app/app.py --host 0.0.0.0 --port 8080`
+	- 서비스 파일 원본: `scheduler/myassets.service` (깃허브 관리)
 - **price_updater**: systemd 서비스로 실행 (`/etc/systemd/system/price_updater.service`)
-  - 서비스 파일 원본: `scheduler/price_updater.service` (깃허브 관리)
+	- 서비스 파일 원본: `scheduler/price_updater.service` (깃허브 관리)
 
 ### 프로젝트 디렉토리 구조
 
@@ -71,7 +71,7 @@
 │   ├── scheduler_structure.md
 │   └── price_updater_structure.md
 ├── README.md
-├── common/                  # ★ 신규 — app/scheduler 공용 모듈
+├── common/                  # ★ app/scheduler 공용 모듈
 │   └── redis_store.py       # Redis 연결, 시세 R/W, recalc_today_row()
 │                            # → 상세: redis_migration_context.md
 ├── app/
@@ -85,7 +85,7 @@
 │   │                    # get_market_map() / get_market_currency() / get_market_label()
 │   │                    # is_us_market() / get_supported_markets()
 │   ├── context_api.py   # AI 컨텍스트 MD 서빙 API
-│   ├── price_signal.py  # 실시간 시세 갱신 신호 (LISTEN/NOTIFY)
+│   ├── price_signal.py  # 실시간 시세 갱신 신호 (Redis pub/sub)
 │   │                    # price_signal.get() 호출로 렌더러에 의존성 등록
 │   ├── static/          # CSS 화면별 분리 완료 (style.css는 레거시, 실제 적재 안 함)
 │   │   ├── base.css           # 공통 기반 (다크테마, 타이포, 공통 컴포넌트)
@@ -128,33 +128,33 @@
 │       │                            # fmt_krw() / fmt_10m()
 │       └── settings.py              # 설정 화면 UI/server → settings_structure.md
 └── scheduler/
-    ├── price_updater.py         # 런처 — interval=0이면 WS모드, >0이면 REST모드 분기
-    │                            # → 상세: price_updater_structure.md
-    ├── price_updater_common.py  # 공통 모듈 — 설정/DB/시장상태/공휴일/Yahoo/Redis 시세 업데이트
-    │                            # get_market_status() ★ — daily_inserter, settings에서 import
-    │                            # get_yahoo_price() / update_price_cache()
-    │                            # HolidayCache / get_access_token()
-    ├── price_updater_rest.py    # REST 폴링 모드 — N분 주기 전 종목 조회
-    │                            # get_kr_price() / get_us_price() / get_confirmed_close_kr()
-    │                            # run_update_cycle() / update_worker() / close_confirm_worker()
-    ├── price_updater_ws.py      # 웹소켓 모드 — KIS WS 실시간 수신 + Yahoo 폴링
-    │                            # get_approval_key() / kis_ws_task() / yahoo_poll_task()
-    │                            # subscription_refresh_task() / get_subscribe_targets()
-    ├── daily_inserter.py        # 일간 누적 데이터 자동 삽입 → scheduler_structure.md
-    │                            # threading.Timer 기반, 매일 daily_insert_time KST 실행
-    │                            # 서비스 시작 시 누락 날짜 자동 보정 (_backfill)
-    ├── gen_daily_data.py        # 누락 기간 수동 보정용 스탠드얼론 스크립트 (서비스 아님)
-    ├── config.json              # 공통 설정값
-    │                            # kis_app_key / kis_app_secret / db_password / interval
-    │                            # data_go_kr_key / finnhub_api_key
-    │                            # retirement_date / daily_insert_time
-    │                            # market_map: 마켓별 currency / label / market_time 정의
-    │                            #   currency: KRW / USD / NUM(지수)
-    │                            #   label: 화면 표시용 마켓명
-    │                            #   market_time: KR / US / 24h (시장 운영시간 그룹)
-    ├── price_updater.service    # systemd 서비스 파일 원본
-    ├── daily_inserter.service   # systemd 서비스 파일 원본
-    └── myassets.service         # systemd 서비스 파일 원본
+		├── price_updater.py         # 런처 — interval=0이면 WS모드, >0이면 REST모드 분기
+		│                            # → 상세: price_updater_structure.md
+		├── price_updater_common.py  # 공통 모듈 — 설정/DB/시장상태/공휴일/Yahoo/Redis 시세 업데이트
+		│                            # get_market_status() ★ — daily_inserter, settings에서 import
+		│                            # get_yahoo_price() / update_price_cache()
+		│                            # HolidayCache / get_access_token()
+		├── price_updater_rest.py    # REST 폴링 모드 — N분 주기 전 종목 조회
+		│                            # get_kr_price() / get_us_price() / get_confirmed_close_kr()
+		│                            # run_update_cycle() / update_worker() / close_confirm_worker()
+		├── price_updater_ws.py      # 웹소켓 모드 — KIS WS 실시간 수신 + Yahoo 폴링
+		│                            # get_approval_key() / kis_ws_task() / yahoo_poll_task()
+		│                            # subscription_refresh_task() / get_subscribe_targets()
+		├── daily_inserter.py        # 일간 누적 데이터 자동 삽입 → scheduler_structure.md
+		│                            # threading.Timer 기반, 매일 daily_insert_time KST 실행
+		│                            # 서비스 시작 시 누락 날짜 자동 보정 (_backfill)
+		├── gen_daily_data.py        # 누락 기간 수동 보정용 스탠드얼론 스크립트 (서비스 아님)
+		├── config.json              # 공통 설정값
+		│                            # kis_app_key / kis_app_secret / db_password / interval
+		│                            # data_go_kr_key / finnhub_api_key
+		│                            # retirement_date / daily_insert_time
+		│                            # market_map: 마켓별 currency / label / market_time 정의
+		│                            #   currency: KRW / USD / NUM(지수)
+		│                            #   label: 화면 표시용 마켓명
+		│                            #   market_time: KR / US / 24h (시장 운영시간 그룹)
+		├── price_updater.service    # systemd 서비스 파일 원본
+		├── daily_inserter.service   # systemd 서비스 파일 원본
+		└── myassets.service         # systemd 서비스 파일 원본
 ```
 ---
 
@@ -197,6 +197,7 @@
 ### TWR (시간가중수익률)
 - 입출금 영향을 제거한 순수 운용 수익률
 - twr_asset(오늘) = twr_asset(어제) × (total_asset(오늘) - cash_flow(오늘)) / total_asset(어제)
+
 ---
 
 ## 5. 화면 구성 (확정)
@@ -292,6 +293,7 @@
 | `get_market_label(market)` | `str` | 마켓 코드 → 표시 레이블 (미정의 마켓은 코드 그대로) |
 | `is_us_market(market)` | `bool` | USD 통화 마켓 여부 |
 | `get_supported_markets()` | `list[str]` | market_map에 정의된 전체 마켓 코드 목록 |
+
 ---
 
 ## 8. 시세 수집 스케줄러
@@ -307,18 +309,18 @@
 | `scheduler/price_updater.service` | systemd 서비스 파일 원본 |
 
 ### 동작 방식
-- `interval = 0`: 웹소켓 모드 — KIS WS로 KR/US 종목 실시간 push 수신, FX/INDEX/CRYPTO는 Yahoo 60초 폴링
+- `interval = 0`: 웹소켓 모드 — KIS WS로 KR/US 종목 실시간 push 수신, FX/INDEX/CRYPTO는 Yahoo 10초 폴링
 - `interval > 0`: REST 폴링 모드 — N분 주기로 전 종목 REST API 조회
 - 설정 변경 시 `systemctl restart price_updater` → 런처가 새 interval로 모드 재분기
-- 시장별 개장 시간 기반 필터링 (get_market_status) — 불필요한 API 호출 차단
+- 시장별 개장 시간 기반 필터링 (`get_market_status`) — 불필요한 API 호출 차단
 - FX / CRYPTO / INDEX / COM: 24시간 조회
-- 국내/미국 주식: 현지 장 시간 기반 (pre/open/after/closing/closed)
+- 국내/미국 주식: 현지 장 시간 기반 (`pre/open/after/closing/closed`)
 - 공휴일 캐싱: HolidayCache 클래스, 매일 08:00 KST 1회 갱신
-  - 한국: 공공데이터포털 특일 API (`data_go_kr_key`)
-  - 미국: Finnhub market-holiday API (`finnhub_api_key`)
+	- 한국: 공공데이터포털 특일 API (`data_go_kr_key`)
+	- 미국: Finnhub market-holiday API (`finnhub_api_key`)
 - 업데이트 완료 후 Redis pub/sub `publish_price_updated()` 발행
 - systemd 서비스: VM 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
-- 웹소켓 모드에서 구독 대상 변경 감지 시 os.execv()로 자체 재시작
+- 웹소켓 모드에서 구독 대상 변경 감지 시 `os.execv()`로 자체 재시작
 
 ---
 
@@ -331,7 +333,7 @@
 - 각 모듈 ui/server를 네임스페이스로 등록
 
 ### 실시간 시세 갱신 구조
-- `price_signal.py`: redis.asyncio pubsub으로 `price_updated` / `daily_inserted` 채널 구독
+- `price_signal.py`: `redis.asyncio` pubsub으로 `price_updated` / `daily_inserted` 채널 구독
 - 메시지 수신 시 `async with reactive.lock()` → `price_signal.set()` → `await reactive.flush()` 호출
 - 각 화면 모듈에서 `price_signal.get()`을 렌더러 안에서 호출해 의존성 등록
 - 시세 업데이트 시 의존 렌더러 자동 재실행 → Redis/DB 재조회 → 화면 갱신
@@ -340,9 +342,9 @@
 ### 설정 화면 구현 특이점
 
 - 시세조회 간격 버튼: 실시간(0) / 1분 / 3분 / 5분 / 10분 / 30분
-  - interval=0 선택 시 웹소켓 모드로 전환 (price_updater 서비스 재시작)
-  - JS로 active 클래스 전환 + `settings-btn_save_interval` input 세팅 (네임스페이스 하드코딩)
-- 티커 목록 내 시장 상태 배지 5종 (open/pre/after/closing/closed), `reactive.invalidate_later(60)` 1분 자동 갱신
+	- interval=0 선택 시 웹소켓 모드로 전환 (`price_updater` 서비스 재시작)
+	- JS로 active 클래스 전환 + `settings-btn_save_interval` input 세팅 (네임스페이스 하드코딩)
+- 티커 목록 내 시장 상태 배지 5종 (`open/pre/after/closing/closed`), `reactive.invalidate_later(60)` 1분 자동 갱신
 - 로그아웃: Shiny server 거치지 않고 JS에서 직접 쿠키 삭제 후 reload
 - 티커 추가 시 ON CONFLICT로 기존 티커 덮어쓰기 가능
 
@@ -358,60 +360,44 @@
 - 종목 클릭 시 수정 모달 (종목명/시장/레버리지/수량), 현금 클릭 시 수정 모달 (통화/금액) 분기
 - 실시간 시세 갱신 (Redis pub/sub 기반)
 - 모바일 사파리 WebSocket 끊김 대응:
-  - iOS Safari는 백그라운드 전환 시 약 5초 후 WebSocket을 능동적으로 끊음 (iOS 레벨 동작, 서버 설정으로 변경 불가)
-  - shiny:disconnected 이벤트 감지 시 location.reload()로 자동 재연결
-  - 재연결 후 localStorage로 마지막 탭 복원
-- plotly 차트는 shinywidgets 대신 fig.to_html(full_html=False, include_plotlyjs=False) + @render.ui 방식 사용. plotly.js는 app.py head에서 CDN으로 전역 로드.
+	- iOS Safari는 백그라운드 전환 시 약 5초 후 WebSocket을 능동적으로 끊음 (iOS 레벨 동작, 서버 설정으로 변경 불가)
+	- `shiny:disconnected` 이벤트 감지 시 `location.reload()`로 자동 재연결
+	- 재연결 후 `localStorage`로 마지막 탭 복원
+- plotly 차트는 `shinywidgets` 대신 `fig.to_html(full_html=False, include_plotlyjs=False)` + `@render.ui` 방식 사용. plotly.js는 app.py head에서 CDN으로 전역 로드.
+
 ---
 
-## 11. 앞으로 할 일
+## 10. 사용자 요청별로 먼저 볼 파일
 
-| 상태 | 항목 |
+이 표는 다음 에이전트가 "이것도 봐줘", "이 기능 수정해줘" 같은 요청을 받았을 때 어디부터 읽으면 되는지 알려주기 위한 것이다.
+
+| 요청 유형 | 먼저 볼 파일 |
 |------|------|
-| ✅ 완료 | 개발범위 설정 |
-| ✅ 완료 | 개발스택 결정 |
-| ✅ 완료 | 개발환경 구성 (회사 윈도우, 집 맥미니) |
-| ✅ 완료 | AI 컨텍스트 md 파일 서빙 API 구축 |
-| ✅ 완료 | PostgreSQL 설치 (VM) |
-| ✅ 완료 | 화면 구성 확정 |
-| ✅ 완료 | DB 스키마 설계 및 생성 |
-| ✅ 완료 | 시세 수집 스케줄러 개발 |
-| ✅ 완료 | 시세 수집 효율화 (is_market_open 필터링 및 버퍼 적용) |
-| ✅ 완료 | 설정 화면 — 티커 목록 내 실시간 수집 상태 배지 표시 |
-| ✅ 완료 | Shiny 앱 기본 구조 세팅 (라우팅, DB 연결, 공통 레이아웃) |
-| ✅ 완료 | 계좌 목록/상세 화면 (계좌/종목/현금 추가·수정·삭제) |
-| ✅ 완료 | 계좌 화면 UI 개선 (일간손익 환율반영, 삼각형 표시, 총자산 요약 섹션, 타이틀바 개선, 삭제버튼 하단 분리) |
-| ✅ 완료 | nginx WebSocket timeout 설정 (proxy_read_timeout 3600) |
-| ✅ 완료 | 실시간 시세 갱신 (Redis pub/sub) — PostgreSQL LISTEN/NOTIFY 전환 완료 |
-| ✅ 완료 | NOTIFY → Redis pub/sub 전환 — price_signal.py/accounts/settings/daily_inserter, update_price_cache() 함수명 변경 |
-| ✅ 완료 | nginx Basic Auth 접근 제한 | → Shiny 앱 내 로그인으로 방향 변경 |
-| ✅ 완료 | Shiny 앱 로그인 화면 구현 |
-| ✅ 완료 | 계좌 화면 환율 표시 (USD/KRW, 등락률, 색상) |
-| ✅ 완료 | 설정 화면 구현 (시세조회 간격, 수동 티커 관리, 로그아웃) | → 티커 정렬, 레버리지 뱃지, 수동/자동 구분 표시 포함 |
-| ✅ 완료 | 설정 화면 — 스케줄러 interval 조절 |
-| ✅ 완료 | 설정 화면 — 티커 정렬 방식 (수동/자동 → 마켓순(KR→US→CRYPTO→COM→FX/INDEX) → 레버리지 높은순 → 알파벳순) |
-| ✅ 완료 | 포트폴리오 화면 (전체 종목 통합 뷰) |
-| ✅ 완료 | 기존 일일자산누적 데이터 DB 일괄 이전 (2025-06-19~) |
-| ✅ 완료 | 과거 입출금내역 변경하도록 개선 → 입출금기록 변경시 twr_asset 업데이트됨 |
-| ✅ 완료 | 실적 히스토리 화면 (추이 그래프 + 누적 테이블) |
-| ✅ 완료 | 시세 수집 공휴일 캐싱 (HolidayCache 클래스, 매일 08:00 KST 갱신, is_market_open() 연동, update_worker() data_time 버그 수정) |
-| ✅ 완료 | 시장 상태 4단계 (`get_market_status()` — open/pre/after/closed), 기존 `is_market_open()` 하위호환 유지 |
-| ✅ 완료 | 종가 확정 로직 — closing 상태에서 KR 종가 API 병행 호출, 확정 시 당일 조회 중단 (`_close_confirmed` 플래그) |
-| ✅ 완료 | 설정 화면 티커 배지 5종류 (open/pre/after/closing/closed, 색상 구분) |
-| ✅ 완료 | 포트폴리오/계좌상세 종목 카드 현재가 표시 (거래 화폐단위, 등락률과 동일 색상) |
-| ✅ 완료 | 현금(KRW/USD) 종목 카드 배지 미표시 |
-| ✅ 완료 | 시세 수집 웹소켓 모드 추가 (price_updater_ws.py) — KIS WS 실시간 push, Yahoo 폴링 병행 |
-| ✅ 완료 | price_updater 3파일 분리 (common/rest/ws) + 런처(price_updater.py)로 모드 분기 |
-| ✅ 완료 | 설정 화면 interval 버튼에 실시간(0) 옵션 추가 |
-| ✅ 완료 | insert_daily_row 스케줄러 자동화 (daily_inserter.py, systemd 서비스) |
-| ✅ 완료 | daily_summary usd_krw 컬럼 추가 (NUMERIC(10,2)) 및 과거 데이터 업데이트 (2025-06-19~2026-05-29) |
-| ✅ 완료 | 미국주식 Yahoo로 대체 (daily_snapshot.py) |
-| ✅ 완료 | daily_inserter.py threading.Timer 구조로 개편 + 누락 날짜 자동추가 로직 추가 |
-| ✅ 완료 | 대시보드 화면 (Bloomberg 스타일 전면 재작성 — SVG 라인차트/도넛, Exposure 통합카드, JetBrains Mono 폰트, dashboard.css 분리) |
-| ✅ 완료 | 계좌 목록 화면 감시 계좌 기능 추가 (is_watch 컬럼, 섹션 분리, 총자산 합계 제외) |
-| ✅ 완료 | market_map 리팩토링 — 하드코딩 마켓 목록 제거, config.json market_map 중앙화 (currency/label/market_time 필드 추가, 전 파일 적용) |
-| ✅ 완료 | CSS 화면별 분리 — style.css → base.css / dashboard.css / portfolio.css / accounts.css / history.css. page-inner이 좌우 패딩 단일 기준 |
-| ✅ 완료 | Redis 전환 (Phase 1) — common/redis_store.py 신규, 시세 R/W Redis화, recalc_today_row() 도입, 각 화면 시세 조회 DB→Redis 전환 완료. 상세: redis_migration_context.md |
-| ✅ 완료 | Redis 전환 (Phase 2) — NOTIFY/LISTEN 완전 제거, Redis pub/sub 통일. price_signal.py 재작성, accounts/settings/daily_inserter 전환, update_price_cache() 함수명 정리 |
-| ✅ 완료 | 평단 관리 기능 — positions.avg_price 컬럼 추가, 종목 수정 모달 탭 3개(정보/매수/매도) 구조로 개편, 매수 시 가중평균 평단 재계산 + 현금 자동 차감, 매도 시 현금 자동 가산 + 실현손익 미리보기, 포트폴리오 화면 평단/수익률 표시 |
-| ✅ 완료 | accounts.py 파일 분리 — 1032줄 → accounts.py / accounts_helpers.py / accounts_modals.py / accounts_DAL.py 4파일로 분리 |
+| 앱 전체 흐름 / 로그인 / 탭 전환 | `app/app.py`, `app/auth.py`, `AIContext/app_structure.md` |
+| 계좌 추가/수정/삭제 | `app/modules/accounts.py`, `app/modules/accounts_DAL.py`, `app/modules/accounts_helpers.py`, `app/modules/accounts_modals.py`, `app/modules/accounts_js.py`, `AIContext/accounts_structure.md` |
+| 포트폴리오 화면 | `app/modules/portfolio.py`, `app/modules/components.py`, `app/utils/metrics.py`, `AIContext/portfolio_structure.md` |
+| 대시보드 지표/차트 | `app/modules/dashboard.py`, `app/modules/components.py`, `app/utils/metrics.py`, `AIContext/dashboard_structure.md` |
+| 실적 히스토리 / today_row / 입출금 | `app/modules/history.py`, `app/modules/history_DAL.py`, `common/redis_store.py`, `app/utils/daily_snapshot.py`, `app/utils/snap.py`, `AIContext/history_structure.md` |
+| 설정 화면 / 티커 관리 / 시장 상태 | `app/modules/settings.py`, `app/modules/settings_js.py`, `scheduler/price_updater_common.py`, `AIContext/settings_structure.md` |
+| 뉴스 피드 / 뉴스 재폴링 | `scheduler/news_fetcher.py`, `app/modules/settings.py`, `common/redis_store.py`, `AIContext/news_feed_structure.md` |
+| 실시간 시세 수집 | `scheduler/price_updater.py`, `scheduler/price_updater_common.py`, `scheduler/price_updater_rest.py`, `scheduler/price_updater_ws.py`, `AIContext/price_updater_structure.md` |
+| Redis 전환 전반 / 캐시 / 신호 | `common/redis_store.py`, `app/price_signal.py`, `AIContext/redis_migration_context.md`, `AIContext/event_flow_map.md` |
+| 스케줄러 일간 삽입 / 백필 | `scheduler/daily_inserter.py`, `scheduler/gen_daily_data.py`, `app/utils/daily_snapshot.py`, `app/utils/snap.py`, `AIContext/scheduler_structure.md` |
+| 순수 계산 함수 | `app/utils/metrics.py`, `AIContext/utils_structure.md` |
+
+---
+
+## 11. 현재 개발 단계 요약
+
+- 앱의 주요 화면은 이미 구현되어 있다.
+- Redis 전환은 완료되었고, 남은 이슈는 런타임 검증과 운영 안정성 점검이다.
+- `project_status.md` 는 다음 에이전트가 이어서 작업할 때 보는 인수인계 문서로 쓰는 것이 맞다.
+
+### 아직 최종 확인이 필요한 것
+- 서비스 재기동 후 Redis pub/sub 와 화면 reactive 갱신이 모두 정상인지 점검
+- `daily_inserter` 정상 마감 경로에서 `today_cash_flow` 반영이 유지되는지 점검
+- `news_fetcher` 폴링/즉시 재폴링 흐름이 실제 운영 환경에서 안정적인지 점검
+
+### 해석 기준
+- 문서가 오래된 것처럼 보이면 코드 기준이 우선이다.
+- 이 파일은 "프로젝트가 뭔지"보다 "어디를 봐야 하는지"를 알려주는 것이 목적이다.
