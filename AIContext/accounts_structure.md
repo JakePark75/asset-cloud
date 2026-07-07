@@ -7,13 +7,14 @@
 - `app/modules/asset.py` — 상위 모듈 (서브탭 관리)
 - `app/modules/accounts_DAL.py` — `fetch_accounts_summary`, `calc_accounts_summary`, `fetch_account_details`, `calc_account_details`, `execute_buy`, `execute_sell`
 - `app/modules/accounts_helpers.py` — `_build_account_card_skeleton`, `_build_account_card_values`, `_build_position_row_skeleton`, `_build_position_row_values`
+- `app/modules/accounts_js.py` — `accounts_js()` 전체 화면 JS 주입
 - `app/modules/accounts_modals.py` — `modal_edit_position_html`, `modal_edit_position_js`
 - `app/db.py` — `get_db()`, `get_usd_krw()`, `get_market_map()`, `get_market_label()`, `get_market_currency()`
 - `app/modules/components.py` — `fmt_krw`, `fmt_usd`, `fmt_pct`, `fmt_pnl`, `fmt_change`
 - `app/price_signal.py` — `price_signal`, `daily_insert_signal`
 - `app/utils/display_diff.py` — `diff_display`, `diff_display_split`
 - `scheduler/price_updater_common.py` — `get_market_status()`
-- `common/redis_store.py` — `get_all_prices()`, `recalc_today_row()`, `publish_position_changed()`, `publish_ticker_changed()`
+- `common/redis_store.py` — `get_all_prices()`, `refresh_position_cache()`, `recalc_today_row()`, `publish_position_changed()`, `publish_ticker_changed()`
 
 ---
 
@@ -31,11 +32,11 @@
 ## 모듈 레벨 헬퍼 함수
 
 ### `_notify_position_changed()`
-- `recalc_today_row()` + `publish_position_changed()` 호출
+- `refresh_position_cache()` + `recalc_today_row()` + `publish_position_changed()` 호출
 - positions 변경 후 Redis 신호 발행 (실패 시 무시)
 
 ### `_notify_ticker_changed()`
-- `publish_ticker_changed()` 호출
+- `refresh_position_cache()` + `publish_ticker_changed()` 호출
 - tickers 메타데이터 변경 후 Redis 신호 발행 (실패 시 무시)
 
 ---
@@ -81,6 +82,14 @@
 | `acLookupTickerEdit()` | 종목 수정 모달 — 티커 자동조회 트리거 |
 | `acUpdateAddPreview()` | 종목 추가 모달 — 보유현금/매수금액/잔여현금 preview 갱신. NUM 마켓이면 숨김 |
 | `acTriggerAddPosition()` | 종목 추가 확인 — 현금 초과 시 alert, `btn_confirm_add_position` 발송 |
+| `acOpenEditPositionModal(el)` | 종목 수정 모달 열기 — row의 `data-*`에서 초기값 채움 |
+| `acSwitchTab(tab)` | 종목 수정 모달 탭 전환 (정보·매수·매도) |
+| `acUpdateBuyPreview()` | 매수 탭 preview 갱신 |
+| `acUpdateSellPreview()` | 매도 탭 preview 갱신 |
+| `acTriggerEditPositionSave()` | 종목 수정 저장 — `btn_confirm_edit_position` 발송 |
+| `acTriggerBuy()` | 매수 확인 — 입력값 검증 후 `btn_confirm_buy` 발송 |
+| `acTriggerSell()` | 매도 확인 — 입력값 검증 후 `btn_confirm_sell` 발송 |
+| `acTriggerPositionDelete()` | 종목 삭제 확인 후 `confirm_delete_position` 발송 |
 | `acOpenEditCashModal(el)` | 현금 수정 모달 열기 — `data-*`에서 초기값 채움 |
 | `acTriggerEditCashSave()` | 현금 수정 저장 — `btn_confirm_edit_cash` 발송 |
 | `acTriggerCashDelete()` | 현금 삭제 확인 후 `confirm_delete_cash` 발송 |
