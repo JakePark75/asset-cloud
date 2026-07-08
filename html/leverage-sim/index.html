@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>레버리지 ETF 디케이 시뮬레이터</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 16px;
+    background: #f7f7f5;
+    color: #1a1a1a;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin: 8px 0 20px; }
+  .controls-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  @media (min-width: 520px) {
+    .controls-grid { grid-template-columns: 1fr 1fr; }
+  }
+  label { font-size: 13px; color: #555; display: block; margin-bottom: 4px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  input[type=range] { flex: 1; }
+  .out { font-size: 14px; font-weight: 600; min-width: 44px; text-align: right; }
+  .lev-buttons { display: flex; gap: 8px; }
+  button {
+    border: 1px solid #ccc;
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    cursor: pointer;
+    flex: 1;
+  }
+  button.active { border: 2px solid #2a78d6; color: #2a78d6; font-weight: 600; }
+  .reroll-btn { width: 100%; margin-top: 4px; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 12px;
+    border: 1px solid #e5e5e0;
+  }
+  .stat-label { font-size: 12px; color: #777; margin-bottom: 4px; }
+  .stat-value { font-size: 20px; font-weight: 700; }
+  .red { color: #d0342c; }
+  .green { color: #1a7a3a; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: #555; margin-bottom: 8px; }
+  .legend span { display: flex; align-items: center; gap: 4px; }
+  .dot { width: 10px; height: 10px; border-radius: 2px; }
+  .chart-wrap { position: relative; width: 100%; height: 300px; background: #fff; border-radius: 10px; border: 1px solid #e5e5e0; padding: 8px; }
+  .note { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<h1>레버리지 ETF 디케이 시뮬레이터</h1>
+
+<div class="controls-grid">
+  <div>
+    <label>지수 하락률 (N%)</label>
+    <div class="row">
+      <input type="range" id="nDrop" min="5" max="50" value="20" step="1"/>
+      <span class="out" id="nDropOut">20%</span>
+    </div>
+  </div>
+  <div>
+    <label>레버리지 배수</label>
+    <div class="lev-buttons">
+      <button id="lev2">2x</button>
+      <button id="lev3">3x</button>
+    </div>
+  </div>
+  <div>
+    <label>하락 기간 (거래일)</label>
+    <div class="row">
+      <input type="range" id="d1" min="1" max="60" value="10" step="1"/>
+      <span class="out" id="d1Out">10</span>
+    </div>
+  </div>
+  <div>
+    <label>회복 기간 (거래일)</label>
+    <div class="row">
+      <input type="range" id="d2" min="1" max="60" value="20" step="1"/>
+      <span class="out" id="d2Out">20</span>
+    </div>
+  </div>
+  <div>
+    <label>일일 변동성 (출렁임)</label>
+    <div class="row">
+      <input type="range" id="sigma" min="0" max="4" value="1.5" step="0.1"/>
+      <span class="out" id="sigmaOut">1.5%</span>
+    </div>
+  </div>
+  <div>
+    <label>연 운용보수</label>
+    <div class="row">
+      <input type="range" id="fee" min="0" max="2" value="0.9" step="0.1"/>
+      <span class="out" id="feeOut">0.9%</span>
+    </div>
+  </div>
+  <div>
+    <label>연 조달비용 (스프레드)</label>
+    <div class="row">
+      <input type="range" id="borrow" min="0" max="8" value="4" step="0.1"/>
+      <span class="out" id="borrowOut">4%</span>
+    </div>
+  </div>
+  <div style="display:flex; align-items:flex-end;">
+    <button class="reroll-btn" id="reroll">🔄 다른 경로로 재시뮬레이션</button>
+  </div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-label">지수 최종 (회복)</div>
+    <div class="stat-value" id="idxFinal">100</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">레버리지 최종</div>
+    <div class="stat-value" id="levFinal">-</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">회복 격차</div>
+    <div class="stat-value" id="gapOut">-</div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><span class="dot" style="background:#2a78d6;"></span>지수 (1배)</span>
+  <span><span class="dot" style="background:#e34948;"></span>레버리지 상품</span>
+</div>
+<div class="chart-wrap">
+  <canvas id="chart"></canvas>
+</div>
+
+<p class="note">
+  지수가 N% 하락했다가 원래 가격(100)으로 완전히 회복돼도, 레버리지 상품은 매일 리밸런싱하는 구조 때문에 100% 회복되지 않을 수 있습니다.
+  특히 "일일 변동성"을 높이면 (지수는 그대로 회복되는데도) 레버리지 상품의 손실이 커지는 걸 볼 수 있습니다. 이게 변동성 손실(volatility drag)입니다.
+</p>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+let leverage = 2;
+let noiseSeed = null;
+let chart = null;
+
+function els(id){ return document.getElementById(id); }
+
+function updateLabels(){
+  els('nDropOut').textContent = els('nDrop').value + '%';
+  els('d1Out').textContent = els('d1').value;
+  els('d2Out').textContent = els('d2').value;
+  els('sigmaOut').textContent = parseFloat(els('sigma').value).toFixed(1) + '%';
+  els('feeOut').textContent = parseFloat(els('fee').value).toFixed(1) + '%';
+  els('borrowOut').textContent = parseFloat(els('borrow').value).toFixed(1) + '%';
+  els('lev2').classList.toggle('active', leverage===2);
+  els('lev3').classList.toggle('active', leverage===3);
+}
+
+function gaussianNoise(n, sigma){
+  const arr = [];
+  for(let i=0;i<n;i++){
+    let u=0,v=0;
+    while(u===0) u=Math.random();
+    while(v===0) v=Math.random();
+    const z = Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+    arr.push(z*sigma);
+  }
+  const mean = arr.reduce((a,b)=>a+b,0)/n;
+  return arr.map(x=>x-mean);
+}
+
+function simulate(){
+  const N = parseFloat(els('nDrop').value)/100;
+  const D1 = parseInt(els('d1').value);
+  const D2 = parseInt(els('d2').value);
+  const sigma = parseFloat(els('sigma').value)/100;
+  const annualFee = parseFloat(els('fee').value)/100;
+  const annualBorrow = parseFloat(els('borrow').value)/100;
+  const dailyFee = annualFee/252;
+  const dailyBorrow = annualBorrow/252;
+
+  const totalDays = D1+D2;
+  const logDrop = Math.log(1-N);
+  const trendLog = [];
+  for(let i=0;i<D1;i++) trendLog.push(logDrop/D1);
+  for(let i=0;i<D2;i++) trendLog.push((-logDrop)/D2);
+
+  if(!noiseSeed || noiseSeed.length !== totalDays){
+    noiseSeed = gaussianNoise(totalDays, sigma);
+  }
+
+  let idxPrice = 100, levPrice = 100;
+  const idxPath = [idxPrice], levPath = [levPrice], labels=[0];
+
+  for(let t=0;t<totalDays;t++){
+    const logRet = trendLog[t] + noiseSeed[t];
+    const simpleRet = Math.exp(logRet) - 1;
+    idxPrice = idxPrice * (1+simpleRet);
+    const fundRet = leverage*simpleRet - dailyFee - dailyBorrow*(leverage-1);
+    levPrice = levPrice * (1+fundRet);
+    idxPath.push(idxPrice);
+    levPath.push(levPrice);
+    labels.push(t+1);
+  }
+
+  els('idxFinal').textContent = idxPath[idxPath.length-1].toFixed(1);
+  const levF = levPath[levPath.length-1];
+  els('levFinal').textContent = levF.toFixed(1);
+  const gap = levF - 100;
+  els('gapOut').textContent = (gap>=0?'+':'') + gap.toFixed(1) + '%';
+  els('gapOut').className = 'stat-value ' + (gap<0 ? 'red' : 'green');
+  els('levFinal').className = 'stat-value ' + (gap<0 ? 'red' : 'green');
+
+  const ctx = document.getElementById('chart');
+  if(chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {label:'지수', data: idxPath, borderColor:'#2a78d6', backgroundColor:'transparent', borderWidth:2, pointRadius:0, tension:0.1},
+        {label:'레버리지', data: levPath, borderColor:'#e34948', backgroundColor:'transparent', borderWidth:2, pointRadius:0, tension:0.1}
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ title:{display:true, text:'거래일'}, grid:{display:false} },
+        y:{ title:{display:true, text:'가격 (시작=100)'} }
+      }
+    }
+  });
+}
+
+els('nDrop').addEventListener('input', ()=>{updateLabels(); simulate();});
+els('d1').addEventListener('input', ()=>{updateLabels(); simulate();});
+els('d2').addEventListener('input', ()=>{updateLabels(); simulate();});
+els('sigma').addEventListener('input', ()=>{updateLabels(); noiseSeed=null; simulate();});
+els('fee').addEventListener('input', ()=>{updateLabels(); simulate();});
+els('borrow').addEventListener('input', ()=>{updateLabels(); simulate();});
+els('lev2').addEventListener('click', ()=>{leverage=2; updateLabels(); simulate();});
+els('lev3').addEventListener('click', ()=>{leverage=3; updateLabels(); simulate();});
+els('reroll').addEventListener('click', ()=>{noiseSeed=null; simulate();});
+
+updateLabels();
+simulate();
+</script>
+
+</body>
+</html>
