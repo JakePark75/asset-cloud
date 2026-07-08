@@ -1,0 +1,22 @@
+# ══════════════════════════════════════════════════════════════════════════
+# [실행 시각 상수] 08:30 KST (Asia/Seoul)
+#
+# - 자산관리 시스템의 daily_inserter(config.json daily_insert_time=08:30)와 동일 시각으로
+#   맞춤. 임의로 고른 값 아님.
+# - 34차 세션에서 확인: DB 커넥션(max_connections=100, 사용중 12개)/테이블(daily_inserter는
+#   daily_summary/accounts, 본 파이프라인은 sec_xbrl_facts_raw/fmp_quarterly_financials)/
+#   외부 API(daily_inserter는 KIS, 본 파이프라인은 SEC EDGAR) 전부 서로 겹치지 않음을 확인 완료.
+# - 서버 시스템 시간대가 UTC이므로, 뒤에 타임존(Asia/Seoul)을 명시하지 않으면
+#   08:30 UTC(=KST 17:30)에 잘못 실행됨 — 반드시 타임존 표기 유지할 것.
+# - 시각을 바꿀 경우, valuation_fmp_collector.timer와의 10분 간격만 유지하면 됨
+# ══════════════════════════════════════════════════════════════════════════
+[Unit]
+Description=Timer for Valuation SEC EDGAR Pipeline (08:30 KST daily)
+
+[Timer]
+OnCalendar=*-*-* 08:30:00 Asia/Seoul
+# 시스템이 재부팅/일시중단 등으로 실행을 놓쳤을 경우, 다음 부팅 시 1회 자동 실행
+Persistent=true
+
+[Install]
+WantedBy=timers.target

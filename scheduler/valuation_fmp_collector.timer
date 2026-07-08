@@ -1,0 +1,21 @@
+# ══════════════════════════════════════════════════════════════════════════
+# [실행 시각 상수] 08:40 KST (Asia/Seoul)
+#
+# valuation_sec_edgar_pipeline.timer(08:30 KST)와 10분 간격을 두어 동시 실행 회피.
+# 두 파이프라인이 사용하는 테이블/API는 서로 겹치지 않아 동시 실행해도 무방하나,
+# 여유를 두기로 결정함 (2026-07-08).
+#
+# - 서버 시스템 시간대가 UTC이므로, 뒤에 타임존(Asia/Seoul)을 명시하지 않으면
+#   08:40 UTC(=KST 17:40)에 잘못 실행됨 — 반드시 타임존 표기 유지할 것.
+# - 시각을 바꿀 경우, valuation_sec_edgar_pipeline.timer와의 10분 간격만 유지하면 됨
+#   (두 값이 동일할 필요는 없음).
+# ══════════════════════════════════════════════════════════════════════════
+[Unit]
+Description=Timer for Valuation FMP Collector (08:40 KST daily)
+
+[Timer]
+OnCalendar=*-*-* 08:40:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target

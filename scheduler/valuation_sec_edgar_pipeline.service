@@ -1,0 +1,18 @@
+[Unit]
+Description=Valuation SEC EDGAR Pipeline (raw collect -> backfill -> review log classify)
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/asset-cloud/scheduler
+# 순차 실행: 앞 단계가 실패(non-zero exit)하면 systemd가 기본적으로 뒤 ExecStart를 실행하지 않음
+# (raw_collect 실패 시 backfill이 낡은/불완전한 raw로 도는 것을 방지)
+ExecStart=/usr/bin/python3 /home/ubuntu/asset-cloud/scheduler/valuation_sec_edgar_raw_collect.py
+ExecStart=/usr/bin/python3 /home/ubuntu/asset-cloud/scheduler/valuation_sec_edgar_backfill.py
+ExecStart=/usr/bin/python3 /home/ubuntu/asset-cloud/scheduler/valuation_classify_review_log.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
