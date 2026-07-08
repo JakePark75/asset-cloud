@@ -254,3 +254,45 @@ subscription_refresh_task(approval_key_holder)
 - 실행 유저: ubuntu
 - 재부팅 시 자동 시작, 크래시 시 10초 후 자동 재시작
 - 웹소켓 모드에서 구독 대상 변경 시 os.execv()로 자체 재시작 (systemd가 재기동)
+
+---
+
+## 한눈에 보는 업데이트 흐름
+
+```mermaid
+flowchart TD
+  A[systemd가 price_updater.py 실행] --> B{config.json interval}
+  B -- 0 --> C[웹소켓 모드]
+  B -- 1 이상 --> D[REST 폴링 모드]
+
+  C --> E[KR/US: 시장상태에 따라 구독]
+  C --> F[FX/INDEX/CRYPTO: Yahoo 10초 폴링]
+  C --> G[구독 데이터 수신 시 Redis prices 갱신]
+  C --> H[5분마다 구독 대상 재검사]
+  H --> I{대상 변경?}
+  I -- 예 --> J[프로세스 재시작]
+  I -- 아니오 --> C
+
+  D --> K[interval 분마다 tickers 전체 조회]
+  K --> L{시장상태}
+  L -- open/pre/after --> M[종목별 병렬 조회]
+  L -- closed --> N[스킵]
+  M --> O[Redis prices 갱신]
+  O --> P[recalc_today_row + price_updated 발행]
+
+  D --> Q{KR 종가 확정 시각 도달?}
+  Q -- 예 & 1일 1회 --> R[KR 전 종목 종가 확정 조회]
+  R --> P
+  Q -- 아니오 --> S[대기]
+```
+
+## 업데이트 / 중단 조건 요약
+
+- 시작 조건: systemd가 `scheduler/price_updater.py`를 실행하고, `scheduler/config.json`의 `interval` 값으로 REST/WS를 결정한다.
+- REST 업데이트 조건: `interval > 0`일 때만 동작하고, 주기마다 `tickers`를 다시 읽은 뒤 `open/pre/after` 종목만 갱신한다.
+- 웹소켓 업데이트 조건: `interval = 0`일 때 동작하고, KR/US는 시장 상태에 따라 구독, 24h 종목은 Yahoo 폴링으로 계속 갱신한다.
+- 중단 조건: 종목별 가격이 0이면 그 종목 저장을 건너뛴다.
+- 전체 스킵 조건: 휴장, 주말, closed 구간이면 해당 종목은 이번 사이클에서 제외된다.
+- KR 종가 확정: 평일/한국 공휴일이 아니고, 15:40 + 안전마진 이후이면 하루 1번만 종가 확정 조회를 추가로 수행한다.
+- 재시작 조건: 웹소켓 모드에서 구독 대상이 바뀌면 프로세스를 다시 띄운다.
+- 장애 복구: systemd의 `Restart=on-failure`로 프로세스 실패 시 10초 뒤 재시작된다.
