@@ -9,5 +9,16 @@ yahoo_test.py
 find_unused.py
 해야할 작업.txt
 scheduler/av_response_cache_*.json
+.github/
 # 미사용 파일 보관
 unused/
+scheduler/alphavantage_fill_log.json
+scheduler/eps_restatement_override_log.json
+scheduler/review_log.json
+scheduler/review_log_classified.json
+scheduler/self_inconsistency_log.json
+scheduler/split_adjustment_log.json
+scheduler/missing_fields_full_log.json
+scheduler/missing_fields_new_log.json
+scheduler/*.sql
+scheduler/*.timer.bak
