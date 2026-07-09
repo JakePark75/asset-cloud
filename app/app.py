@@ -20,6 +20,15 @@ app_ui = ui.page_fluid(
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "settings.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "news.css")),
     ui.tags.script(src="https://cdn.plot.ly/plotly-latest.min.js"),
+
+    # ── 끊김→새로고침 상태 복원 레지스트리 (모듈 스크립트보다 먼저 실행돼야 함) ──
+    ui.tags.script("""
+        window._restoreRegistry = window._restoreRegistry || [];
+        window.registerStateRestore = function(name, saveFn, restoreFn) {
+            window._restoreRegistry.push({ name: name, save: saveFn, restore: restoreFn });
+        };
+    """),
+
     # 로그인 화면
     ui.div(
         ui.div(
@@ -98,6 +107,34 @@ app_ui = ui.page_fluid(
             document.getElementById('screen-login').style.display = 'none';
             document.getElementById('screen-main').style.display = 'block';
             restoreTab();
+            runPendingRestores();
+        }
+
+        // ── 끊김→새로고침 시 상태 복원 실행 ───────────────────────────────
+        // window.registerStateRestore()로 등록된 각 모듈의 저장/복원 로직은
+        // 페이지 최상단 스크립트에서 정의됨 (모듈 스크립트보다 먼저 실행되어야 하므로).
+        // 여기서는 "언제 복원을 실행할지"만 담당한다.
+        function runPendingRestores() {
+            var raw = sessionStorage.getItem('_pendingRestore');
+            // 1회용: 성공/실패 여부와 무관하게 즉시 제거 (유령 복원 방지)
+            sessionStorage.removeItem('_pendingRestore');
+            if (!raw) return;
+            var snapshot;
+            try {
+                snapshot = JSON.parse(raw);
+            } catch (e) {
+                console.error('[restore] snapshot 파싱 실패', e);
+                return;
+            }
+            window._restoreRegistry.forEach(function(r) {
+                var s = snapshot[r.name];
+                if (!s) return;
+                try {
+                    r.restore(s);
+                } catch (e) {
+                    console.error('[restore] restore 실패 (' + r.name + ')', e);
+                }
+            });
         }
 
         function showLogin() {
@@ -156,6 +193,24 @@ app_ui = ui.page_fluid(
 
         // Shiny 끊김 감지 시 reload
         $(document).on('shiny:disconnected', function() {
+            // 새로고침 전, 등록된 모듈들의 상태를 스냅샷으로 저장.
+            // 저장이 실패해도(모듈 코드 에러 등) 새로고침 자체는 반드시 실행돼야 함.
+            try {
+                var snapshot = {};
+                (window._restoreRegistry || []).forEach(function(r) {
+                    try {
+                        var s = r.save();
+                        if (s) snapshot[r.name] = s;
+                    } catch (e) {
+                        console.error('[restore] save 실패 (' + r.name + ')', e);
+                    }
+                });
+                if (Object.keys(snapshot).length > 0) {
+                    sessionStorage.setItem('_pendingRestore', JSON.stringify(snapshot));
+                }
+            } catch (e) {
+                console.error('[restore] 스냅샷 저장 실패', e);
+            }
             // 히스토리 오염을 막고, 현재 페이지를 즉시 대체(교체)
             window.location.replace(window.location.href);
         });

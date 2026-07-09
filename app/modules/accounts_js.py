@@ -44,6 +44,8 @@ def accounts_js(market_currency_map_js: str) -> str:
       if (!accEl) window._acOpenId = null;
     }
     _applyAccountCards(m.cards);
+    // 새로고침 후 상태 복원 로직이 "계좌 목록 렌더링 완료"를 알 수 있도록 알림
+    document.dispatchEvent(new CustomEvent('ac:list_init'));
   });
 
   // ── ac_list_tick ───────────────────────────────────────────────────────
@@ -73,6 +75,8 @@ def accounts_js(market_currency_map_js: str) -> str:
       el.style.display = '';
     }
     _applyPositions(m.positions);
+    // 새로고침 후 상태 복원 로직이 "이 계좌의 종목 목록 렌더링 완료"를 알 수 있도록 알림
+    document.dispatchEvent(new CustomEvent('ac:acc_init', { detail: { acc_id: m.acc_id } }));
   });
 
   // ── ac_acc_tick: 아코디언 변경값만 patch ──────────────────────────────
@@ -389,5 +393,201 @@ def accounts_js(market_currency_map_js: str) -> str:
   // _fmtNum / _getCashAmount 는 modal_edit_position_js() 에서 정의됨 (같은 IIFE 내)
 
 """ + modal_edit_position_js() + """
+
+  // ── 끊김→새로고침 시 상태 저장/복원 ────────────────────────────────────
+  // _editPosId, _editCurQty, _editCurAvg, _editMarket, _editCurrency 는
+  // modal_edit_position_js()에서 선언됨 (같은 IIFE 스코프 내 접근 가능)
+
+  function _val(id) {
+    var el = document.getElementById(id);
+    return el ? el.value : '';
+  }
+  function _setVal(id, v) {
+    var el = document.getElementById(id);
+    if (el && v !== undefined && v !== null && v !== '') el.value = v;
+  }
+  function _isModalOpen(id) {
+    var el = document.getElementById(id);
+    return !!(el && el.style.display !== 'none');
+  }
+
+  function _acSaveRestoreState() {
+    var state = {};
+
+    if (window._acOpenId) {
+      state.openAccountId = window._acOpenId;
+    }
+
+    // 모달은 한 번에 하나만 뜰 수 있는 구조 (UI 상 중첩 없음)
+    if (_isModalOpen('ac-modal-edit-position')) {
+      var activeTabBtn = document.querySelector('.ac-tab-btn.ac-tab-active');
+      var allTabBtns   = document.querySelectorAll('.ac-tab-btn');
+      var tabIdx       = activeTabBtn ? Array.prototype.indexOf.call(allTabBtns, activeTabBtn) : 0;
+      var tabName      = ['info', 'buy', 'sell'][tabIdx] || 'info';
+
+      state.modal = {
+        type: 'edit-position',
+        posId: _editPosId,
+        tab: tabName,
+        fields: {
+          name:       _val('ac-edit-pos-name'),
+          market:     _val('ac-edit-pos-market'),
+          leverage:   _val('ac-edit-pos-leverage'),
+          qty:        _val('ac-edit-pos-qty'),
+          avg_price:  _val('ac-edit-pos-avg-price'),
+          buy_qty:    _val('ac-buy-qty'),
+          buy_price:  _val('ac-buy-price'),
+          sell_qty:   _val('ac-sell-qty'),
+          sell_price: _val('ac-sell-price'),
+        },
+      };
+    } else if (_isModalOpen('ac-modal-edit-cash')) {
+      state.modal = {
+        type: 'edit-cash',
+        posId: _editCashId,
+        fields: {
+          cash_type: _val('ac-edit-cash-type'),
+          amount:    _val('ac-edit-cash-amount'),
+        },
+      };
+    } else if (_isModalOpen('ac-modal-add-position')) {
+      state.modal = {
+        type: 'add-position',
+        fields: {
+          ticker:    _val('ac-new-pos-ticker'),
+          name:      _val('ac-new-pos-name'),
+          market:    _val('ac-new-pos-market'),
+          leverage:  _val('ac-new-pos-leverage'),
+          qty:       _val('ac-new-pos-qty'),
+          avg_price: _val('ac-new-pos-avg-price'),
+        },
+      };
+    } else if (_isModalOpen('ac-modal-add-cash')) {
+      state.modal = {
+        type: 'add-cash',
+        fields: {
+          cash_type: _val('ac-new-cash-type'),
+          amount:    _val('ac-new-cash-amount'),
+        },
+      };
+    } else if (_isModalOpen('ac-modal-add-account')) {
+      var watchEl = document.getElementById('ac-new-account-is-watch');
+      state.modal = {
+        type: 'add-account',
+        fields: {
+          name:     _val('ac-new-account-name'),
+          alias:    _val('ac-new-account-alias'),
+          is_watch: watchEl ? watchEl.checked : false,
+        },
+      };
+    }
+
+    if (Object.keys(state).length === 0) return null;
+    return state;
+  }
+
+  // 계좌 목록이 이미 렌더링돼 있으면 즉시, 아니면 ac:list_init 이벤트를 1회 대기 후 실행
+  function _withAccountList(cb) {
+    var listEl = document.getElementById('ac-account-list');
+    if (listEl && listEl.innerHTML.trim() !== '') {
+      cb();
+      return;
+    }
+    document.addEventListener('ac:list_init', function handler() {
+      document.removeEventListener('ac:list_init', handler);
+      cb();
+    });
+  }
+
+  // 해당 계좌의 종목 목록이 렌더링될 때까지 ac:acc_init 이벤트 대기
+  function _withAccPositions(accId, cb) {
+    document.addEventListener('ac:acc_init', function handler(e) {
+      if (e.detail && e.detail.acc_id === accId) {
+        document.removeEventListener('ac:acc_init', handler);
+        cb();
+      }
+    });
+  }
+
+  function _acOpenModalFromState(state) {
+    var m = state.modal;
+    if (!m) return;
+
+    if (m.type === 'add-account') {
+      acShowModal('ac-modal-add-account');
+      _setVal('ac-new-account-name', m.fields.name);
+      _setVal('ac-new-account-alias', m.fields.alias);
+      var watchEl = document.getElementById('ac-new-account-is-watch');
+      if (watchEl) watchEl.checked = !!m.fields.is_watch;
+      return;
+    }
+
+    // 아래 타입들은 계좌가 열려있는 상태에서만 의미가 있음
+    if (!state.openAccountId) return;
+
+    if (m.type === 'add-position') {
+      acShowModal('ac-modal-add-position');
+      _setVal('ac-new-pos-ticker', m.fields.ticker);
+      _setVal('ac-new-pos-name', m.fields.name);
+      _setVal('ac-new-pos-market', m.fields.market);
+      _setVal('ac-new-pos-leverage', m.fields.leverage);
+      _setVal('ac-new-pos-qty', m.fields.qty);
+      _setVal('ac-new-pos-avg-price', m.fields.avg_price);
+      acUpdateAddPreview();
+      return;
+    }
+
+    if (m.type === 'add-cash') {
+      acShowModal('ac-modal-add-cash');
+      _setVal('ac-new-cash-type', m.fields.cash_type);
+      _setVal('ac-new-cash-amount', m.fields.amount);
+      return;
+    }
+
+    // edit-position / edit-cash 는 실제 row(data-pos-id)가 DOM에 있어야 함
+    var row = document.querySelector('[data-pos-id="' + m.posId + '"]');
+    if (!row) return; // 그 사이 삭제/변경됐으면 조용히 포기 (stale 데이터로 덮어쓰지 않음)
+
+    if (m.type === 'edit-position') {
+      window.acOpenEditPositionModal(row);
+      if (m.tab && m.tab !== 'info') acSwitchTab(m.tab);
+      _setVal('ac-edit-pos-name', m.fields.name);
+      _setVal('ac-edit-pos-market', m.fields.market);
+      _setVal('ac-edit-pos-leverage', m.fields.leverage);
+      _setVal('ac-edit-pos-qty', m.fields.qty);
+      _setVal('ac-edit-pos-avg-price', m.fields.avg_price);
+      _setVal('ac-buy-qty', m.fields.buy_qty);
+      _setVal('ac-buy-price', m.fields.buy_price);
+      _setVal('ac-sell-qty', m.fields.sell_qty);
+      _setVal('ac-sell-price', m.fields.sell_price);
+      if (m.tab === 'buy')  acUpdateBuyPreview();
+      if (m.tab === 'sell') acUpdateSellPreview();
+    } else if (m.type === 'edit-cash') {
+      window.acOpenEditCashModal(row);
+      _setVal('ac-edit-cash-type', m.fields.cash_type);
+      _setVal('ac-edit-cash-amount', m.fields.amount);
+    }
+  }
+
+  function _acRestoreState(state) {
+    if (!state) return;
+    var accId = state.openAccountId;
+
+    if (!accId) {
+      // 열려있던 계좌가 없으면 add-account 모달만 있을 수 있음 — 바로 처리
+      _acOpenModalFromState(state);
+      return;
+    }
+
+    _withAccountList(function() {
+      _withAccPositions(accId, function() {
+        _acOpenModalFromState(state);
+      });
+      window.acToggleCard(accId);
+    });
+  }
+
+  window.registerStateRestore('accounts', _acSaveRestoreState, _acRestoreState);
+
 })();
 """
