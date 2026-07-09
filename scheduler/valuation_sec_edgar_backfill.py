@@ -199,6 +199,13 @@ from collections import defaultdict, Counter
 
 import psycopg2
 
+# common/ 패키지 접근을 위해 PROJECT_ROOT를 sys.path에 추가
+# (price_updater_common.py와 동일한 패턴 - WorkingDirectory=scheduler로 systemd가
+#  실행하므로 common/이 형제 디렉토리라 명시적으로 추가 안 하면 ModuleNotFoundError 발생)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 from common.notify import notify_telegram_alert
 
 # ---- 설정 ----
