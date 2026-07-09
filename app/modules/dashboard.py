@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import json
 import math
 from zoneinfo import ZoneInfo
@@ -317,27 +318,29 @@ def _build_donut_payload(positions: list[dict]) -> dict:
     others     = items_sorted[8:]
     other_eval = sum(p["eval_krw"] for p in others)
 
-    slices = []
-    lev_palettes = {
-        1: ["#00c073", "#00a862", "#009050", "#007840", "#005c30"],
-        2: ["#e6a817", "#c98f0f", "#ad7a0c", "#916509", "#755207"],
-        3: ["#ff4d4d", "#e63c3c", "#cc2c2c", "#b21c1c", "#991010"],
-    }
-    lev_count = {1: 0, 2: 0, 3: 0}
+    # 다크테마(#0a0a0a) + base.css 기존 액센트 토큰(green/amber/red/blue/purple)과
+    # 동일한 채도(S≈68%)·명도(L≈58%) 대역에서 색상환(H)만 균등 10분배한 카테고리 팔레트
+    TICKER_PALETTE = [
+        "#dd634b", "#ddbb4b", "#a7dd4b", "#50dd4b", "#4bdd9e",
+        "#4bc4dd", "#4b6ddd", "#804bdd", "#d84bdd", "#dd4b8a",
+    ]
 
+    def _ticker_color(ticker: str) -> str:
+        # 프로세스 재시작 시에도 항상 같은 색이 나오도록 안정적인 해시(md5) 사용.
+        # 파이썬 내장 hash()는 보안을 위해 실행마다 시드가 랜덤화되어 사용 불가.
+        digest = hashlib.md5(ticker.encode("utf-8")).hexdigest()
+        idx = int(digest, 16) % len(TICKER_PALETTE)
+        return TICKER_PALETTE[idx]
+
+    slices = []
     for p in top8:
         if p["ticker"] == "CASH":
             slices.append({"label": "현금", "value": p["eval_krw"], "color": "#111111"})
             continue
-        lev     = p["leverage"]
-        idx     = lev_count.get(lev, 0)
-        palette = lev_palettes.get(lev, ["#888888"])
-        color   = palette[min(idx, len(palette) - 1)]
-        lev_count[lev] = idx + 1
         slices.append({
             "label": p["name"] or p["ticker"],
             "value": p["eval_krw"],
-            "color": color,
+            "color": _ticker_color(p["ticker"]),
         })
 
     if other_eval > 0:
