@@ -146,10 +146,10 @@ def _load_summary_data(rows, raw_rows) -> dict:
     row_30   = next((r for r in rows if r[0] >= cutoff), rows[0])
     alpha_30 = calculate_alpha((to_f(row_30[9]), to_f(row_30[3])), (live_twr, live_ndx))
 
-    beta_rows_all = [(to_f(r[1]), to_f(r[3])) for r in rows] + [(total_asset, live_ndx)]
+    beta_rows_all = [(to_f(r[9]), to_f(r[3])) for r in rows] + [(live_twr, live_ndx)]
     beta_all      = calculate_beta(beta_rows_all)
     rows_30       = [r for r in rows if r[0] >= cutoff]
-    beta_rows_30  = [(to_f(r[1]), to_f(r[3])) for r in rows_30] + [(total_asset, live_ndx)]
+    beta_rows_30  = [(to_f(r[9]), to_f(r[3])) for r in rows_30] + [(live_twr, live_ndx)]
     beta_30       = calculate_beta(beta_rows_30) if len(beta_rows_30) >= 3 else 0.0
 
     # MDD / Current DD / Recovery — 전체 기간, TWR(내 실적) vs NDX100 비교

@@ -129,7 +129,7 @@ def calculate_retirement_asset(total_asset: float, monthly_irr: float, retiremen
 def calculate_beta(rows: list[tuple]) -> float:
     """
     포트폴리오 베타 (vs NDX100)
-    rows: [(total_asset, ndx100), ...] 날짜 오름차순
+    rows: [(series_value, ndx100), ...] 날짜 오름차순
     일별 수익률 기반 공분산 / NDX100 분산
     반환값: 베타 (예: 1.5)
     """
