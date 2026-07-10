@@ -363,6 +363,39 @@ def _split_ratio_between(symbol: str, filed_from: date, filed_to: date) -> float
     return ratio
 
 
+def _apply_split_adjustment_pre_derivation(period_dict, symbol, field):
+    """
+    eps_diluted 전용 (v9, 이 세션 신규).
+
+    배경: 기존에는 running_cum/Q4 역산을 raw(분할조정 전) 값끼리 수행한 뒤,
+    Q1~Q4 각각에 대해 사후적으로 자기 filed일자 기준 분할조정을 적용했다.
+    회계연도 중간에 분할이 낀 경우(Q1~Q3는 분할 이전 filed, annual(10-K)은
+    분할 이후 filed), annual의 raw 값은 이미 분할 후(작은 수)인데 Q1~Q3
+    raw 합은 분할 전(큰 수) 그대로라 Q4 = annual_raw - running_cum_raw
+    뺄셈 자체가 서로 다른 기준값끼리 이루어져 결과가 크게 왜곡됨.
+    실측 확인: GOOGL 2022-12-31, NVDA 2025-01-26, NFLX 2025-12-31
+    (모두 해당 회계연도 중 분할이 있었던 종목의 Q4).
+
+    수정: quarterly/semiannual/ninemonth/annual 추출 직후, running_cum
+    계산 이전에 각 entry를 자기 filed일자 기준으로 먼저 분할조정해
+    "현재 주식수 기준"으로 정규화한다. 이후 뺄셈은 일관된 기준으로 이루어진다.
+    """
+    for end_date, info in period_dict.items():
+        mult = split_multiplier(symbol, info["filed"])
+        if mult != 1.0:
+            raw_val = info["val"]
+            info["val"] = raw_val / mult
+            split_adjustment_log.append({
+                "symbol": symbol,
+                "field": field,
+                "end": end_date.isoformat(),
+                "raw_val": raw_val,
+                "multiplier": mult,
+                "adjusted_val": info["val"],
+                "stage": "pre_derivation",
+            })
+
+
 def _pick_eps_entry(group_sorted, symbol: str):
     """
     eps_diluted 전용 (v6, 8차 세션 신규).
@@ -633,13 +666,14 @@ def collect_concept_with_q4(conn, tag, symbol, field, pick_mode):
 
     Q4 = 연간값 - (슬롯 3개의 누계).
 
-    field == SPLIT_ADJUSTED_FIELD("eps_diluted")인 경우:
+    field == SPLIT_ADJUSTED_FIELD("eps_diluted")인 경우 (v9로 갱신):
     - pick_mode는 "earliest"로 호출된 상태여야 함 (단, 실제 채택은 _pick_eps_entry로
       "분할일 뿐"인지 "진짜 재작성"인지 판정 후 결정됨, v6/8차 세션)
-    - 위 처리를 마친 뒤, 각 분기의 "채택된 filing의 filed일자" 기준으로 남은 분할 배수를
-      곱해 최종값 산출 (v6: 기존엔 period_end 기준이었으나, latest로 전환된 케이스는
-      해당 filing이 자체적으로 그 시점까지의 분할을 이미 반영했을 수 있어 filed일자
-      기준으로 바꿔야 이중 조정을 피할 수 있음)
+    - quarterly/semiannual/ninemonth/annual 추출 직후, running_cum 계산 및 Q4 역산
+      이전에 각 raw entry를 자기 filed일자 기준으로 먼저 분할조정한다
+      (_apply_split_adjustment_pre_derivation). 회계연도 중간에 분할이 낀 경우
+      annual과 quarterly가 서로 다른 분할 기준(전/후)의 raw 값으로 남아있으면
+      Q4 역산 뺄셈 자체가 왜곡되기 때문에, 뺄셈 이전에 정규화를 마쳐야 한다.
     - split_adjustment_log에 적용 내역, eps_restatement_override_log에 전환 내역 기록 (검증용)
 
     반환: { end_date: {"val", "filed", "accn", "fy", "fp"} }
@@ -678,6 +712,12 @@ def collect_concept_with_q4(conn, tag, symbol, field, pick_mode):
         entries, forms={"10-K", "10-K/A"}, min_days=ANNUAL_MIN_DAYS, max_days=ANNUAL_MAX_DAYS,
         symbol=symbol, field=field, period_label="annual", pick_mode=pick_mode,
     )
+
+    # v9: running_cum/Q4 역산 이전에 분할조정을 선반영 (자세한 배경은
+    # _apply_split_adjustment_pre_derivation() docstring 참조)
+    if field == SPLIT_ADJUSTED_FIELD:
+        for period_dict in (quarterly, semiannual, ninemonth, annual):
+            _apply_split_adjustment_pre_derivation(period_dict, symbol, field)
 
     # discrete 분기값은 기존과 동일하게 그대로 베이스로 사용 (영향 없는 concept은 동작 불변)
     result = dict(quarterly)
@@ -764,24 +804,12 @@ def collect_concept_with_q4(conn, tag, symbol, field, pick_mode):
         log.info(f"[{symbol}/{field}] Q4 역산 {derived_q4_count}건 추가")
 
     if field == SPLIT_ADJUSTED_FIELD:
-        for end_date, info in result.items():
-            # v6(8차 세션): period_end가 아니라 채택된 filing의 filed일자 기준으로
-            # "그 이후 남은 분할"만 적용. latest로 전환된 케이스(진짜 재작성)는 그
-            # filing 시점까지의 분할이 이미 자체 반영돼 있을 수 있어, period_end 기준으로
-            # 잡으면 이미 반영된 분할을 또 나눠 이중 조정하는 오류가 생기기 때문.
-            mult = split_multiplier(symbol, info["filed"])
-            if mult != 1.0:
-                raw_val = info["val"]
-                # 분할로 주식수가 mult배 늘어났으므로 EPS는 mult로 나눠야 현재 주식수 기준값이 됨
-                info["val"] = raw_val / mult
-                split_adjustment_log.append({
-                    "symbol": symbol,
-                    "field": field,
-                    "end": end_date.isoformat(),
-                    "raw_val": raw_val,
-                    "multiplier": mult,
-                    "adjusted_val": info["val"],
-                })
+        # v9: 분할조정은 이제 running_cum/Q4 역산 이전(_apply_split_adjustment_pre_derivation)
+        # 에서 이미 완료됨. 여기서 다시 적용하면 이중조정이 되므로 제거함.
+        # (quarterly/semiannual/ninemonth/annual 각 raw entry가 자기 filed일자 기준으로
+        # 이미 조정된 상태로 result에 들어와 있고, Q4(derived)도 그 조정된 값들로
+        # 역산됐으므로 result 안의 모든 entry는 이미 최종값이다.)
+        pass
 
     return result
 
