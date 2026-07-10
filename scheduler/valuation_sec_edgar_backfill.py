@@ -205,6 +205,8 @@ import psycopg2
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+# 로그 파일은 실행 시 cwd에 관계없이 항상 scheduler/ 아래에 쓰기 위한 절대경로 기준
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from common.notify import notify_telegram_alert
 
@@ -1130,7 +1132,9 @@ def upsert_rows(conn, rows):
     return len(rows)
 
 
-def _append_missing_log(new_entries, path="missing_fields_new_log.json"):
+def _append_missing_log(new_entries, path=None):
+    if path is None:
+        path = os.path.join(_SCRIPT_DIR, "missing_fields_new_log.json")
     """
     v9 (35차 세션 신규): 신규 결측 항목을 기존 로그에 append(누적)한다.
     기존 review_log.json 등과 달리 매 실행마다 덮어쓰지 않음 - 과거 실행에서 발견된
@@ -1172,7 +1176,7 @@ def scan_all_missing_full(conn):
                     "missing_field": field,
                 })
 
-    with open("missing_fields_full_log.json", "w") as f:
+    with open(os.path.join(_SCRIPT_DIR, "missing_fields_full_log.json"), "w") as f:
         json.dump(
             {"scanned_at": date.today().isoformat(), "entries": entries},
             f, indent=2, ensure_ascii=False,
@@ -1206,14 +1210,14 @@ def main():
 
     if review_log:
         log.warning(f"=== 값 차이 1% 이상 케이스 {len(review_log)}건 (review_log.json 저장) ===")
-        with open("review_log.json", "w") as f:
+        with open(os.path.join(_SCRIPT_DIR, "review_log.json"), "w") as f:
             json.dump(review_log, f, indent=2, ensure_ascii=False)
     else:
         log.info("값 차이 1% 이상 케이스 없음")
 
     if split_adjustment_log:
         log.info(f"=== eps_diluted 분할조정 적용 {len(split_adjustment_log)}건 (split_adjustment_log.json 저장) ===")
-        with open("split_adjustment_log.json", "w") as f:
+        with open(os.path.join(_SCRIPT_DIR, "split_adjustment_log.json"), "w") as f:
             json.dump(split_adjustment_log, f, indent=2, ensure_ascii=False)
 
     if eps_restatement_override_log:
@@ -1221,7 +1225,7 @@ def main():
             f"=== eps_diluted earliest->latest 전환 {len(eps_restatement_override_log)}건 "
             f"(eps_restatement_override_log.json 저장, v6/8차 세션 신규) ==="
         )
-        with open("eps_restatement_override_log.json", "w") as f:
+        with open(os.path.join(_SCRIPT_DIR, "eps_restatement_override_log.json"), "w") as f:
             json.dump(eps_restatement_override_log, f, indent=2, ensure_ascii=False)
 
     if self_inconsistency_log:
@@ -1229,7 +1233,7 @@ def main():
             f"=== accn 자기모순으로 quarterly 격리 {len(self_inconsistency_log)}건 "
             f"(self_inconsistency_log.json 저장, v8/33차 세션 신규) ==="
         )
-        with open("self_inconsistency_log.json", "w") as f:
+        with open(os.path.join(_SCRIPT_DIR, "self_inconsistency_log.json"), "w") as f:
             json.dump(self_inconsistency_log, f, indent=2, ensure_ascii=False)
     else:
         log.info("accn 자기모순 케이스 없음")
