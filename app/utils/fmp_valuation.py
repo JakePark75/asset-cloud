@@ -366,3 +366,16 @@ def build_axis_scores(records: list[dict]) -> list[dict]:
         })
 
     return enriched
+
+
+def excess_return_vs_benchmark(
+    symbol_start_price,
+    symbol_end_price,
+    benchmark_start_price,
+    benchmark_end_price,
+) -> float | None:
+    symbol_ratio = safe_div(symbol_end_price, symbol_start_price)
+    benchmark_ratio = safe_div(benchmark_end_price, benchmark_start_price)
+    if symbol_ratio is None or benchmark_ratio is None:
+        return None
+    return (symbol_ratio - 1.0) - (benchmark_ratio - 1.0)
