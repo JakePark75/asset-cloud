@@ -186,9 +186,9 @@ def score_bucket(records: list[dict], axis_weights: list[tuple[str, float, bool]
 
 
 VALUTATION_AXIS_WEIGHTS = [
-    ("forward_pe", 35.0, True),
+    ("trailing_pe", 35.0, True),
     ("ev_fcf", 30.0, True),
-    ("trailing_pe", 20.0, True),
+    ("forward_pe", 20.0, True),
     ("psr", 15.0, True),
 ]
 
@@ -211,9 +211,9 @@ RISK_AXIS_WEIGHTS = [
 ]
 
 OVERALL_AXIS_WEIGHTS = {
-    "valuation": 25.0,
-    "growth": 35.0,
-    "quality": 30.0,
+    "valuation": 30.0,
+    "growth": 25.0,
+    "quality": 35.0,
     "risk": 10.0,
 }
 
@@ -366,6 +366,22 @@ def build_axis_scores(records: list[dict]) -> list[dict]:
         })
 
     return enriched
+
+
+def pe_run_rate_divergence(trailing_pe, run_rate_pe) -> float | None:
+    """Run-rate PE(최근 1개 분기 실적을 연환산한 값)가 Trailing PE(TTM) 대비 얼마나 괴리돼 있는지(%).
+
+    음수: run_rate_pe < trailing_pe → 최근 분기 실적이 TTM 평균보다 강함(가속 신호).
+    양수: run_rate_pe > trailing_pe → 최근 분기 실적이 TTM 평균보다 약함(둔화 신호).
+
+    괴리가 크다는 것 자체는 좋고 나쁨을 의미하지 않는다 — 구조적 실적 개선(레벨업)일 수도,
+    일시적 업황 정점(사이클 고점, 예: 반도체 공급부족 국면)일 수도 있어 방향 해석은 사람이 판단해야 하는
+    진단용 참고 지표다. Composite 가중치에는 포함하지 않는다."""
+    t = to_float(trailing_pe)
+    r = to_float(run_rate_pe)
+    if t is None or r is None or t == 0:
+        return None
+    return (r / t - 1.0) * 100.0
 
 
 def excess_return_vs_benchmark(

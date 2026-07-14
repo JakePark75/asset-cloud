@@ -7,6 +7,7 @@ from app.context_api import routes as context_routes
 from app.export_api import routes as export_routes
 from app.modules.asset import asset_ui, asset_server
 from app.modules.history import history_ui, history_server
+from app.modules.valuation import valuation_ui, valuation_server
 from app.modules.settings import settings_ui, settings_server
 from app.auth import verify_login, create_token, verify_token
 
@@ -17,6 +18,7 @@ app_ui = ui.page_fluid(
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "portfolio.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "accounts.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "history.css")),
+    ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "valuation.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "settings.css")),
     ui.include_css(str(__import__("pathlib").Path(__file__).parent / "static" / "news.css")),
     ui.tags.script(src="https://cdn.plot.ly/plotly-latest.min.js"),
@@ -47,15 +49,17 @@ app_ui = ui.page_fluid(
     # 메인 화면
     ui.div(
         ui.div(
-            ui.div(asset_ui("asset"),       id="tab-asset",    class_="tab-content active"),
-            ui.div(history_ui("history"),   id="tab-history",  class_="tab-content"),
-            ui.div(settings_ui("settings"), id="tab-settings", class_="tab-content"),
+            ui.div(asset_ui("asset"),           id="tab-asset",      class_="tab-content active"),
+            ui.div(history_ui("history"),       id="tab-history",    class_="tab-content"),
+            ui.div(valuation_ui("valuation"),   id="tab-valuation",  class_="tab-content"),
+            ui.div(settings_ui("settings"),     id="tab-settings",   class_="tab-content"),
             style="padding-bottom: 70px;"
         ),
         ui.div(
-            ui.div(ui.HTML("💼<br><span>자산</span>"),  class_="tab-btn active", onclick="switchTab('asset', this)"),
-            ui.div(ui.HTML("📈<br><span>실적</span>"),  class_="tab-btn", onclick="switchTab('history', this)"),
-            ui.div(ui.HTML("⚙️<br><span>관리</span>"),  class_="tab-btn", onclick="switchTab('settings', this)"),
+            ui.div(ui.HTML("💼<br><span>자산</span>"),      class_="tab-btn active", onclick="switchTab('asset', this)"),
+            ui.div(ui.HTML("📈<br><span>실적</span>"),      class_="tab-btn", onclick="switchTab('history', this)"),
+            ui.div(ui.HTML("🔍<br><span>투자검토</span>"),  class_="tab-btn", onclick="switchTab('valuation', this)"),
+            ui.div(ui.HTML("⚙️<br><span>관리</span>"),      class_="tab-btn", onclick="switchTab('settings', this)"),
             class_="bottom-tabbar"
         ),
         id="screen-main",
@@ -84,7 +88,7 @@ app_ui = ui.page_fluid(
         function restoreTab() {
             var saved = localStorage.getItem('activeTab');
             if (!saved) return;
-            var tabNames = ['asset', 'history', 'settings'];
+            var tabNames = ['asset', 'history', 'valuation', 'settings'];
             var idx = tabNames.indexOf(saved);
             if (idx === -1) { saved = 'asset'; idx = 0; }
             var content = document.getElementById('tab-' + saved);
@@ -231,6 +235,7 @@ def server(input, output, session):
 
     asset_server("asset", active_tab=active_tab)
     history_server("history", active_tab=active_tab)
+    valuation_server("valuation", active_tab=active_tab)
     settings_server("settings", active_tab=active_tab)
 
     # 페이지 로드 시 쿠키 토큰 검증

@@ -102,8 +102,8 @@
   - 기간 시작/종료 가격은 각각 해당 시점 "이전 가장 가까운 거래일" 종가 1건씩만 조회하면 충분 (구간 전체 날짜를 맞출 필요 없음 — 종목/NDX 모두 동일한 미국 거래소 캘린더를 따르므로).
   - **계산 순수 함수 `excess_return_vs_benchmark()`는 `app/utils/fmp_valuation.py`에 실제 구현·커밋 완료.** `safe_div`로 두 비율을 각각 구한 뒤 차감, 가격 None/0이면 None 반환.
   - `fmp_price_history` 실제 DB 조회(종목 + NDX 각각의 `close_price` 시계열 가져오는 부분)는 **아직 미구현**. 화면 모듈(`app/modules/`) 구현 시 `get_db()` + `@reactive.calc`로 함께 작성하는 것으로 확정 — "해야 할 일 순서"의 조회 로직 작업과 화면 UI 작업이 하나로 통합됨 (이 프로젝트엔 DB 조회 전용 독립 서비스 파일 선례가 없기 때문).
-- 검토 중 (보류, v2 후보)
-  - `growth_adj_value`, `revenue_efficiency`: origin 미확인 상태. v1에서는 계산·사용하지 않고, DROP도 하지 않는다.
+- 삭제됨
+  - `growth_adj_value`, `revenue_efficiency`: `fmp_metrics`에서 `ALTER TABLE ... DROP COLUMN` 완료. 코드베이스 어디에도 참조 없고(grep 0건), git 히스토리상 코드가 아니라 문서에만 등장했으며, 전체 테이블 기준 값도 0건(전부 NULL)임을 확인 후 제거. 웹 검색 결과 `growth_adj_value`는 실제 애널리스트가 쓰는 "growth-adjusted multiple" 개념과 겹치지만 이미 있는 `peg`와 중복이고, `revenue_efficiency`는 SaaS/은행업 맥락 용어라 빅테크 상장주 비교에는 표준적이지 않음(추정, 검색 근거). 필요해지면 그때 새로 설계해서 추가하기로 확정.
 - 제외
   - beta는 핵심 지표에서 제외
   - 과도하게 복잡한 파생점수는 v1에서 제외
@@ -199,9 +199,9 @@
   - **루트 디렉토리에 중복 생성돼 있던 로그 4종 파일 정리 완료**: `review_log`/`eps_restatement_override_log`/`self_inconsistency_log`는 scheduler 쪽과 내용 동일 확인 후 루트본 삭제. `split_adjustment_log.json`은 루트본(494건, `stage: pre_derivation` 필드 있음, v9 수정 반영된 최신본)과 scheduler본(290건, 구버전)이 실제로 다른 것을 발견 — 루트본 내용을 scheduler로 이관해 최신본 유지.
   - **로그 파일 상대경로 버그 수정 완료 및 커밋**: 6개 `open()` 호출을 `_SCRIPT_DIR` 기준 절대경로로 전환.
   - **`excess_return_vs_benchmark()` 순수 함수 실제 구현 및 커밋 완료**: 문서에 "이미 구현됨"으로 잘못 기재되어 있었으나 실제로는 없었음을 확인 후 신규 작성. `safe_div` 재사용, 가격 None/0 시 None 반환. 동작 테스트 완료 (+20%/+5% 케이스 → 0.15).
+  - **`growth_adj_value`, `revenue_efficiency` 컬럼 재검토 및 삭제 완료**: origin 실측 확인(코드 참조 0건, 값 0건, git 히스토리상 문서에만 등장) 후 `ALTER TABLE DROP COLUMN` 실행. 웹 검색으로 실제 애널리스트 용어인지 확인한 결과 `growth_adj_value`는 기존 `peg`와 개념 중복, `revenue_efficiency`는 빅테크 상장주 비교에 표준적이지 않은 것으로 판단, 필요 시 재설계하기로 확정.
 
 - 진행 중 / 미해결
-  - `growth_adj_value`, `revenue_efficiency` 컬럼 — origin 미확인, v1 미사용 확정, v2에서 의미 재검토 예정.
   - NDX 초과수익률의 `fmp_price_history` 실제 DB 조회 로직 — 화면 모듈(`app/modules/`) 구현 시 `get_db()`+`@reactive.calc`로 함께 작성 예정 (독립 작업으로 분리하지 않기로 확정).
   - `TSLA.operating_cash_flow_tag_used`가 일부 분기(2010-06-30~2010-12-31)에서 NULL이 아니라 빈 문자열로 저장된 것 발견 (원인 미확인, 후속 확인 필요 — 우선순위 낮음).
   - `AIContext/stock_analasys.md`(이 문서) — 세션 마무리 후 커밋 예정.
@@ -214,8 +214,8 @@
 4. ~~`valuation_fmp_metrics.service`/`.timer`를 systemd에 등록·활성화~~ ✅ 완료
 5. ~~git 정리 (로그 gitignore 확인, 커밋 3건, 로그 경로 버그 수정)~~ ✅ 완료
 6. ~~`excess_return_vs_benchmark()` 순수 계산 함수 작성~~ ✅ 완료
-7. `growth_adj_value`, `revenue_efficiency`의 v2 지표 여부 재검토 ← 다음 작업
-8. 화면에서 보여줄 항목 최종 목록 확정
+7. ~~`growth_adj_value`, `revenue_efficiency`의 v2 지표 여부 재검토~~ ✅ 완료 (삭제 확정)
+8. 화면에서 보여줄 항목 최종 목록 확정 ← 다음 작업
 9. 화면(UI) 구현 — **`fmp_price_history` 조회 로직(get_db + @reactive.calc)도 이 단계에서 함께 작성**
 10. (낮은 우선순위) TSLA `operating_cash_flow_tag_used` 빈 문자열 이슈 원인 확인
 
@@ -285,7 +285,7 @@
 - `~/asset-cloud/scheduler/config.json` — `telegram_token`, `telegram_chat_id`, `fmp_api_key`, `db_password` 포함. `.gitignore` 대상, 커밋 안 됨.
 - `~/asset-cloud/scheduler/valuation_sec_edgar_pipeline.service` / `.timer` — 08:30 KST.
 - `~/asset-cloud/scheduler/valuation_fmp_collector.service` / `.timer` — 08:40 KST.
-- `fmp_metrics` 테이블 — `trailing_pe`, `run_rate_pe`, `peg`, CAGR류, margin류, `roe`, `debt_equity`, `net_debt_equity`, (출처 미상)`growth_adj_value`, `revenue_efficiency` 컬럼 존재.
+- `fmp_metrics` 테이블 — `trailing_pe`, `run_rate_pe`, `peg`, CAGR류, margin류, `roe`, `debt_equity`, `net_debt_equity` 컬럼 존재. `growth_adj_value`, `revenue_efficiency`는 삭제 완료(미사용·origin 불명 확인 후 DROP).
 - `~/asset-cloud/app/db.py` — `get_connection()`(단발성), `get_db()`(풀 기반 contextmanager, `ThreadedConnectionPool`) 제공. 화면 모듈은 `with get_db() as conn:` 사용.
 
 ---
@@ -303,9 +303,48 @@
 
 ---
 
-# 현재 우선순위
+# 현재 우선순위 (다음 세션 여기서 바로 시작)
 
-1. `growth_adj_value`, `revenue_efficiency` v2 지표 여부 재검토
-2. 화면에서 보여줄 항목 최종 목록 확정
-3. 화면(UI) 구현 — `fmp_price_history` 조회 로직(`get_db`+`@reactive.calc`) 포함
-4. (세션 마무리 시) `AIContext/stock_analasys.md` 커밋
+## 🖥️ 화면(UI) 구현 — 다음 작업
+
+### 확정된 UI 구조
+- **기본 화면**: 10종목 한 줄씩 테이블, `composite_score` 기준 정렬. 행 클릭 시 종목 상세 뷰로 전환 (테이블 ↔ 상세 뷰 2단 구조).
+- **테이블에 노출할 컬럼**: v1 우선 노출 지표만 (문서 "투자 판단 지표 체계" 참고)
+  - Valuation: `trailing_pe`, `ev_fcf`, `psr`
+  - Growth: `revenue_cagr_3y`, `eps_cagr_3y`, `fcf_cagr_3y`
+  - Quality: `gross_margin`, `operating_margin`, `fcf_margin`, `roe`
+  - Risk: `debt_equity`, `net_debt_equity`
+  - 그 외(5년 CAGR, `net_margin`, `fcf_efficiency`, `ev_ebitda` 등 보조 지표)는 상세 뷰에서만.
+- **raw 값 vs score 표시 방식**: raw 값을 기본으로 노출하고, 셀 배경색을 percentile score(0~100) 기준 heatmap으로 표시 (Koyfin/Finviz 패턴 참고, 근거: 웹 검색). score 숫자를 별도 컬럼으로 중복 노출하지 않음. `composite_score`만 별도 숫자 컬럼으로 노출(정렬 기준이므로).
+- **NDX 초과수익률 기간 UI**: 고정 옵션(1년/3년/5년) 드롭다운 + "직접 입력" 커스텀 기간 옵션 추가.
+
+### 작업 순서 (합의된 방향)
+사용자가 화면을 보면서 계속 수정 요청할 것을 감안해, **성능 최적화를 뒤로 미루고 기능/레이아웃 확정을 먼저** 하는 순서로 진행하기로 확정. "HTML로 먼저 프로토타입 → 나중에 Shiny로 교체" 방식은 이중 작업이라 채택하지 않음 — **처음부터 Shiny로 시작**.
+
+1. **화면 뼈대 작업 (다음 세션 시작점)**
+   - `app/modules/valuation.py` 신규 생성 (다른 모듈 네이밍 관례 — `accounts.py`, `dashboard.py`, `portfolio.py` — 를 따름)
+   - 이 단계에서는 캐싱 없이 `get_db()`로 직접 조회 → 렌더링만 구현 (동작 확인이 목적, 성능은 아직 신경 안 씀)
+   - 위 "확정된 UI 구조"를 그대로 구현: 테이블 + 상세뷰, heatmap 색상, NDX 기간 드롭다운
+   - 라우팅/네비게이션에 이 모듈을 어떻게 연결할지(기존 `app/app.py`의 탭 구조 등)는 다음 세션에서 먼저 `app/app.py` 확인 후 결정 — 아직 미확인.
+2. **반복 수정 단계**
+   - 사용자가 보면서 레이아웃/표시 항목/색상 등 계속 수정 요청 → 그때그때 반영
+   - 이 단계 목표는 "기능/화면 확정"이지 성능이 아니므로, 최적화 관련 지적 사항은 메모만 해두고 나중으로 미룸
+3. **확정 후 최적화 단계**
+   - DB/Redis 호출 리뷰 (반복 호출 여부 점검, `@reactive.calc` 캐싱 적용)
+   - 필요시 로컬 캐싱 추가
+   - JS DOM patch 최적화 — **주의**: 이 프로젝트의 다른 화면 모듈들(`accounts_js.py`, `news_js.py`, `settings_js.py`)이 실제로 어떤 패턴을 쓰는지 이번 세션엔 확인 안 했음(추측성 발언이 있었으나 사용자가 "기존엔 그런 식으로 안 했다"고 정정함) — **이 단계 시작 시 반드시 실제 코드부터 grep해서 확인 후 그 패턴을 따라갈 것.** 지레짐작 금지.
+
+### NDX 초과수익률 `fmp_price_history` 조회 로직
+- 화면 모듈(`valuation.py`) 안에서 `with get_db() as conn:` + `@reactive.calc`로 구현 (이 프로젝트엔 DB 조회 전용 독립 서비스 파일 선례 없음, 앞서 확정).
+- 계산은 시작일 이전/종료일 이전 각각 최근 거래일 종가 1건씩만 조회하면 충분 (구간 전체 정렬 불필요, 앞서 확정).
+- 순수 계산 함수 `excess_return_vs_benchmark()`는 이미 `app/utils/fmp_valuation.py`에 구현·커밋 완료 — 화면에서는 이 함수를 호출만 하면 됨.
+
+### 다음 세션 시작 시 먼저 할 일
+1. `app/app.py` 확인 — 기존 탭/라우팅 구조에 새 화면을 어떻게 끼워 넣을지 파악
+2. 다른 화면 모듈(`portfolio.py` 등) 하나를 참고용으로 열어서 Shiny UI/server 함수 구조, `@reactive.calc` 패턴 실측 확인 후 동일 스타일로 시작
+
+---
+
+1. 화면에서 보여줄 항목 최종 목록 확정 ✅ 완료 (위 "확정된 UI 구조" 참고)
+2. 화면(UI) 구현 ← **다음 세션 시작점**
+3. (세션 마무리 시) `AIContext/stock_analasys.md` 커밋

@@ -1,0 +1,277 @@
+/* 가치평가(투자검토) 화면 — 뼈대 단계 스타일. 레이아웃/색상은 화면 확정 단계에서 조정 예정. */
+
+/* ── 탭 전체 높이/스크롤 구조 ──────────────────────────────────────────────
+   #tab-valuation으로 범위를 한정해서 다른 탭(asset/history/settings)에는
+   영향을 주지 않는다. 70px은 app.py가 하단 고정 탭바(60px, base.css) 자리를
+   비워두려고 이미 지정해둔 값과 동일하다 (임의값 아님).
+   목적: 지표 개수와 무관하게 테이블 영역이 "남는 세로 공간"을 정확히 채우게 해서
+   테이블 하단과 하단 탭바 사이에 빈 공간이 뜨지 않도록 한다. */
+#tab-valuation {
+    height: calc(100vh - 70px);
+    overflow: hidden;
+}
+
+#tab-valuation .page-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+#tab-valuation .page-inner {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+#tab-valuation .val-ndx-months-row {
+    flex-shrink: 0;
+}
+
+#tab-valuation #val-table-view,
+#tab-valuation #val-table-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+#tab-valuation #val-detail-view {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.val-ndx-months-row {
+    margin-bottom: 14px;
+}
+
+.val-ndx-months-row input[type="number"] {
+    max-width: 100px;
+}
+
+/* ── 테이블 (지표=행 / 종목=열, 틀고정) ──────────────────────────────────── */
+
+.valuation-table-wrap {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.valuation-table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.valuation-table th,
+.valuation-table td {
+    padding: 8px 10px;
+    text-align: right;
+    border-bottom: 1px solid #222222;
+}
+
+/* 헤더 행(종목명) 고정 */
+.valuation-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background-color: #0a0a0a;
+    color: #ffffff;
+    font-weight: 500;
+    border-bottom: 1px solid #333333;
+}
+
+/* 첫 번째 열(지표명) 고정 */
+.valuation-table td.val-metric-label {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    text-align: left;
+    min-width: 168px;
+    max-width: 168px;
+    white-space: normal;
+    background-color: #0a0a0a;
+    color: #cccccc;
+    cursor: pointer;
+    border-right: 1px solid #222222;
+}
+
+.valuation-table td.val-metric-label:active {
+    background-color: #1a1a1a;
+}
+
+.val-metric-label-line {
+    font-size: 12px;
+    color: #dddddd;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.val-metric-weight {
+    margin-left: 4px;
+    font-size: 10px;
+    font-weight: 400;
+    color: #666666;
+}
+
+/* 모서리 셀(지표 라벨): 위/왼쪽 둘 다 고정, 최상위 z-index */
+.valuation-table th.val-corner {
+    position: sticky;
+    top: 0;
+    left: 0;
+    z-index: 3;
+    text-align: left;
+    min-width: 168px;
+    max-width: 168px;
+    background-color: #0a0a0a;
+    border-right: 1px solid #222222;
+}
+
+.valuation-table th.val-symbol-col {
+    cursor: pointer;
+    min-width: 92px;
+}
+
+.valuation-table th.val-symbol-col:active {
+    background-color: #1a1a1a;
+}
+
+.val-th-symbol {
+    font-weight: 600;
+    font-size: 13px;
+    color: #ffffff;
+}
+
+.val-th-composite {
+    margin-top: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #4fc3f7;
+}
+
+/* ── 종목 상세뷰 ──────────────────────────────────────────────────────────── */
+
+.val-back-btn {
+    background: none;
+    border: none;
+    color: #4fc3f7;
+    font-size: 14px;
+    padding: 8px 0;
+    margin-bottom: 8px;
+}
+
+.val-detail-header {
+    margin-bottom: 12px;
+}
+
+.val-detail-symbol {
+    font-size: 22px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.val-detail-name {
+    font-size: 12px;
+    color: #888888;
+}
+
+.val-detail-composite {
+    margin-top: 4px;
+    font-size: 14px;
+    color: #4fc3f7;
+}
+
+.val-axis-grid,
+.val-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px 16px;
+    margin-bottom: 12px;
+}
+
+.val-axis-item,
+.val-metric-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    padding: 6px 0;
+    border-bottom: 1px solid #1a1a1a;
+}
+
+.val-axis-item span,
+.val-metric-item span {
+    color: #999999;
+}
+
+.val-section-heading {
+    font-size: 12px;
+    color: #888888;
+    margin: 16px 0 8px;
+}
+
+.val-ndx-result {
+    font-size: 16px;
+    font-weight: 600;
+    padding: 10px;
+    background-color: #111111;
+    border-radius: 6px;
+}
+
+.val-positive {
+    color: #4caf50;
+}
+
+.val-negative {
+    color: #ef5350;
+}
+
+/* ── 지표 설명 팝업 ───────────────────────────────────────────────────────── */
+
+.val-info-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.val-info-modal-box {
+    position: relative;
+    background-color: #161616;
+    border-radius: 10px;
+    padding: 20px;
+    max-width: 320px;
+    width: 85%;
+}
+
+.val-info-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    background: none;
+    border: none;
+    color: #888888;
+    font-size: 16px;
+}
+
+.val-info-modal-box h4 {
+    margin: 0 0 10px;
+    color: #ffffff;
+    font-size: 16px;
+}
+
+.val-info-modal-box p {
+    margin: 0;
+    color: #cccccc;
+    font-size: 13px;
+    line-height: 1.5;
+}
