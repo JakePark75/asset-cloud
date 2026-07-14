@@ -76,28 +76,42 @@ def _fetch_keywords() -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# 키워드 패턴 빌드 (단어 단위, 대소문자 무시)
+# 키워드 매칭 (언어별 전략 분리)
+#
+# en 키워드: (?<![A-Za-z0-9])kw(?![A-Za-z0-9]) 커스텀 경계 매칭.
+#            Python \b는 한글 음절도 \w로 취급하므로, 영어 키워드 바로 뒤에
+#            한글 조사가 붙는 매우 흔한 패턴("Hynix가", "TSMC는", "AI반도체")
+#            에서 \b...\b는 경계로 인정하지 않아 매칭에 실패한다.
+#            "영문/숫자가 아닌 문자(한글 포함)"를 경계로 명시적으로 취급하면
+#            해당 케이스가 해결되면서도, 기존 오탐 방지("chip"이 "chipotle"
+#            안에서 안 걸리는 것, "TSMC"가 "ATSMCX" 안에서 안 걸리는 것)는
+#            그대로 유지된다.
+# ko 키워드: 단순 포함(in) 검사 (한국어는 조사/접미사가 명사 뒤에 바로
+#            붙는 교착어라, 형태소 분석 없이는 정규식 경계로 해결 불가하므로
+#            포함 검사가 유일하게 실용적인 방법)
 # ---------------------------------------------------------------------------
-def _build_pattern(keywords: list[str]) -> re.Pattern | None:
-    """주어진 키워드 목록으로 단어 단위 매칭 패턴 생성."""
-    if not keywords:
-        return None
-    escaped = [re.escape(kw) for kw in keywords if kw.strip()]
-    if not escaped:
-        return None
-    pattern = r"\b(?:" + "|".join(escaped) + r")\b"
-    return re.compile(pattern, re.IGNORECASE)
+def _find_matched_keywords(title: str, keywords: list[tuple[str, str]]) -> list[str]:
+    """title에서 매칭된 키워드 목록 반환 (중복 제거, 순서 유지).
 
-
-def _find_matched_keywords(title: str, keywords: list[str]) -> list[str]:
-    """title에서 매칭된 키워드 목록 반환 (중복 제거, 순서 유지)."""
+    keywords: (keyword, lang) 튜플 목록. lang은 키워드 자체의 언어이며,
+              소스 언어와는 별개로 각 키워드마다 매칭 전략을 결정한다.
+    """
     matched = []
     seen = set()
-    for kw in keywords:
-        if not kw.strip():
+    for kw, kw_lang in keywords:
+        if not kw.strip() or kw in seen:
             continue
-        pat = re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE)
-        if pat.search(title) and kw not in seen:
+
+        if kw_lang == "ko":
+            is_match = kw in title
+        else:
+            pat = re.compile(
+                r"(?<![A-Za-z0-9])" + re.escape(kw) + r"(?![A-Za-z0-9])",
+                re.IGNORECASE,
+            )
+            is_match = bool(pat.search(title))
+
+        if is_match:
             matched.append(kw)
             seen.add(kw)
     return matched
@@ -165,9 +179,10 @@ def _fetch_and_cache() -> None:
         print(f"[news_fetcher] DB 조회 실패: {e}", flush=True)
         return
 
-    # 언어별 키워드 분리
-    en_keywords = [kw for kw, lang in keyword_rows if lang == "en"]
-    ko_keywords = [kw for kw, lang in keyword_rows if lang == "ko"]
+    # 언어별 키워드 분리 (keyword, lang) 튜플 유지 — _find_matched_keywords에서
+    # 키워드별 매칭 전략(en=\b, ko=포함검사) 결정에 lang 정보가 필요함
+    en_keywords = [(kw, lang) for kw, lang in keyword_rows if lang == "en"]
+    ko_keywords = [(kw, lang) for kw, lang in keyword_rows if lang == "ko"]
     all_keywords = en_keywords + ko_keywords  # ko 소스용
 
     if not keyword_rows:
@@ -176,23 +191,17 @@ def _fetch_and_cache() -> None:
         publish_news_feed_updated()
         return
 
-    # 소스 lang별 패턴 빌드
-    en_pattern = _build_pattern(en_keywords)
-    ko_pattern = _build_pattern(all_keywords)  # ko 소스는 en+ko 모두
-
     matched_items = []
     seen_titles: set[str] = set()  # 중복 제목 추적
 
     for source_name, source_url, source_lang in sources:
-        # 이 소스에 적용할 패턴과 키워드 목록 결정
+        # 이 소스에 적용할 키워드 목록 결정
         if source_lang == "ko":
-            pattern = ko_pattern
             applicable_keywords = all_keywords
         else:
-            pattern = en_pattern
             applicable_keywords = en_keywords
 
-        if pattern is None:
+        if not applicable_keywords:
             continue
 
         try:
