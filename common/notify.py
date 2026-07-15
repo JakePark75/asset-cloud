@@ -49,7 +49,7 @@ def notify_telegram_alert(message: str) -> None:
     """
     now_kst = datetime.datetime.now(KST)
     timestamp = now_kst.strftime("%Y-%m-%d %H:%M:%S")
-    full_message = f"[{timestamp} KST] {message}"
+    full_message = f"[{timestamp} KST]\n\n{message}"
 
     try:
         token, chat_id = _load_telegram_config()

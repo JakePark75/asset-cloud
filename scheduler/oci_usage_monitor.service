@@ -1,0 +1,11 @@
+[Unit]
+Description=OCI Free Tier Usage Monitor (weekly check -> Telegram)
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/asset-cloud/scheduler
+ExecStart=/usr/bin/python3 /home/ubuntu/asset-cloud/scheduler/oci_usage_monitor.py
+StandardOutput=journal
+StandardError=journal
