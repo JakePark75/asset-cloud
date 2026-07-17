@@ -1,5 +1,3 @@
-import re
-
 import yfinance as yf
 from shiny import ui, module, reactive
 
@@ -263,44 +261,73 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         if not ticker:
             return
 
-        is_kr = bool(re.search(r'\d', ticker)) and '.' not in ticker
-
-        def _fetch(t):
+        def _fetch_yf(t):
+            """
+            yfinance 최종 폴백. 국내(KR) 종목은 KIS가 전담하므로, 이 함수에 도달한
+            시점엔 이미 "국내가 아니거나 KIS가 못 찾은 것"이 확정된 상태다.
+            그래서 .KS/.KQ 접미사를 붙여 국내로 재시도하지 않고, 티커를 있는
+            그대로만 조회한다 (숫자 포함 해외 티커, 예: DRM3, BULZ2 등을
+            국내로 오판하는 문제 방지).
+            """
             try:
                 info = yf.Ticker(t).info
                 name = info.get("longName") or info.get("shortName") or ""
-                return name, info.get("exchange", ""), info.get("quoteType", "")
+                exchange, qtype = info.get("exchange", ""), info.get("quoteType", "")
             except Exception:
-                return "", "", ""
+                name, exchange, qtype = "", "", ""
 
-        if is_kr:
-            name, exchange, qtype = _fetch(ticker + ".KS")
-            if not name:
-                name, exchange, qtype = _fetch(ticker + ".KQ")
+            exchange_map = {
+                "KSC": "KR", "KOE": "KR",
+                "NMS": "NAS", "NGM": "NAS", "NCM": "NAS",
+                "NYQ": "NYS",
+                "PCX": "ARC",
+                "ASE": "AMS",
+                "NIM": "INDEX",
+            }
+            if qtype == "CRYPTOCURRENCY":
+                market = "CRYPTO"
+            elif qtype == "INDEX":
+                market = "INDEX"
+            else:
+                market = exchange_map.get(exchange, "")
+            return name, market
+
+        from common.kis_lookup import lookup_domestic, lookup_overseas
+
+        name     = ""
+        market   = ""
+        leverage = None
+
+        if "=" in ticker or "^" in ticker:
+            # 환율/지수/원자재/암호화폐 등 (주식·ETF·ETN이 아님) → yf 직행
+            name, market = _fetch_yf(ticker)
+        elif len(ticker) < 6:
+            # 국내 종목코드는 6~7자리이므로, 6자리 미만은 국내일 수 없음 → 해외 KIS 직행
+            result = lookup_overseas(ticker)
+            if result:
+                name, market, leverage = result["name"], result["market"], result["leverage"]
+            else:
+                name, market = _fetch_yf(ticker)
         else:
-            name, exchange, qtype = _fetch(ticker)
+            # 국내 KIS 시도(입력값 그대로 PDNO 전달) → 실패 시 해외 KIS → 실패 시 yf
+            result = lookup_domestic(ticker)
+            if not result:
+                result = lookup_overseas(ticker)
+            if result:
+                name, market, leverage = result["name"], result["market"], result["leverage"]
+            else:
+                name, market = _fetch_yf(ticker)
 
-        exchange_map = {
-            "KSC": "KR", "KOE": "KR",
-            "NMS": "NAS", "NGM": "NAS", "NCM": "NAS",
-            "NYQ": "NYS",
-            "PCX": "ARC",
-            "ASE": "AMS",
-            "NIM": "INDEX",
-        }
-        if qtype == "CRYPTOCURRENCY":
-            market = "CRYPTO"
-        elif qtype == "INDEX":
-            market = "INDEX"
-        else:
-            market = exchange_map.get(exchange, "")
-
-        channel = "ac_ticker_lookup_result" if source == "add" else "ac_ticker_lookup_result_edit"
-        await session.send_custom_message(channel, {
+        out_payload = {
             "ticker": ticker,
             "name":   name,
             "market": market,
-        })
+        }
+        if leverage is not None:
+            out_payload["leverage"] = leverage
+
+        channel = "ac_ticker_lookup_result" if source == "add" else "ac_ticker_lookup_result_edit"
+        await session.send_custom_message(channel, out_payload)
 
     # ── 계좌 추가 ─────────────────────────────────────────────────────────────
 

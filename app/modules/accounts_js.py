@@ -261,14 +261,10 @@ def accounts_js(market_currency_map_js: str) -> str:
     Shiny.setInputValue(window._acNs + '-lookup_ticker', { ticker: ticker, source: 'edit' }, {priority: 'event'});
   };
 
-  // ── 종목명으로 레버리지 배수 추론 ────────────────────────────────────────
-  function _inferLeverage(name) {
-    if (!name) return null;
-    if (/3X|3x|UltraPro/i.test(name)) return '3';
-    if (/2X|2x|Ultra/i.test(name))    return '2';
-    return null;
-  }
-
+  // ── 티커 조회 결과 반영 ───────────────────────────────────────────────
+  // 레버리지는 서버(KIS 응답)가 명확히 판단 가능한 경우(1/2/3배)에만 m.leverage로 전달됨.
+  // 그 외(비정수 배수, yf 폴백 등)에는 leverage 필드 자체가 없으므로 select 값을
+  // 건드리지 않고 사용자가 직접 고르도록 둔다.
   Shiny.addCustomMessageHandler('ac_ticker_lookup_result', function(m) {
     var btn = document.getElementById('ac-new-pos-lookup-btn');
     if (btn) { btn.textContent = '🔍'; btn.disabled = false; }
@@ -279,10 +275,9 @@ def accounts_js(market_currency_map_js: str) -> str:
         var marketEl = document.getElementById('ac-new-pos-market');
         if (marketEl) marketEl.value = m.market;
       }
-      var lev = _inferLeverage(m.name);
-      if (lev) {
+      if (m.leverage != null) {
         var levEl = document.getElementById('ac-new-pos-leverage');
-        if (levEl) levEl.value = lev;
+        if (levEl) levEl.value = String(m.leverage);
       }
       // 조회 후 시장이 바뀌었을 수 있으므로 preview 갱신
       acUpdateAddPreview();
@@ -301,10 +296,9 @@ def accounts_js(market_currency_map_js: str) -> str:
         var marketEl = document.getElementById('ac-edit-pos-market');
         if (marketEl) marketEl.value = m.market;
       }
-      var lev = _inferLeverage(m.name);
-      if (lev) {
+      if (m.leverage != null) {
         var levEl = document.getElementById('ac-edit-pos-leverage');
-        if (levEl) levEl.value = lev;
+        if (levEl) levEl.value = String(m.leverage);
       }
     } else {
       alert('종목명을 찾지 못했습니다: ' + m.ticker);
