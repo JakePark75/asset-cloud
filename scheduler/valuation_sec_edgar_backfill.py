@@ -188,6 +188,33 @@ v9 변경 사항 (35차 세션, AV 3순위 폴백 대상 필드 결측 자동 �
   missing_fields_full_log.json에 스냅샷으로 저장(매번 덮어쓰기, 수동 전체 재검토용).
 - 이 로그들은 감지 전용이며 DB에 UPDATE를 하지 않음. 실제 값 채우기(AV 폴백 실행)는
   기존과 동일하게 별도 수동 절차 유지.
+
+---
+
+v10 변경 사항 (이번 세션, missing_fields_new_log.json 결측 재조사로 발견된 구현 범위 누락 수정):
+
+배경 (실측 확인): GOOGL/TSLA FY2026 Q2(2026-06-30) 분기의 capex, operating_cash_flow가
+결측으로 알림됨. sec_xbrl_facts_raw 확인 결과 원천 데이터 부재가 아니라, Q1 discrete와
+H1 YTD(반기 누계)가 이미 존재해 산술적으로 역산 가능한 상태였음. 원인은
+collect_concept_with_q4()가 `for period_end, annual_info in annual.items():` 구조로
+annual(10-K)이 존재하는 회계연도만 역산을 수행하기 때문 - FY2026 10-K가 아직 SEC에
+미제출이라 이 회계연도 자체가 annual 딕셔너리에 없어 역산 루프에 들어가지 않았음.
+의도된 설계 제약이 아니라 구현 범위 누락으로 판단(docstring 어디에도 "10-K 대기가
+의도"라는 근거 없음).
+
+- MID_QUARTER_YTD_DERIVE_FIELDS = {"capex", "operating_cash_flow"} 신규 - 이 두 concept에만
+  적용(revenue/eps_diluted/net_income/operating_income은 discrete로 직접 공시되어 불필요).
+- collect_concept_with_q4()에 annual 루프 이후 실행되는 신규 블록 추가: annual entry
+  없이도 각 raw entry 자신의 period_start(entry["start"])로 회계연도를 그룹핑해,
+  discrete Q1 + 반기 YTD로 Q2를, 그 뒤 9개월 YTD로 Q3를 역산. 이미 채워진 슬롯은
+  건드리지 않아, 10-K가 나중에 등장하면 annual 로직이 자동으로 우선권을 가짐(별도
+  flag 불필요 - 매 실행마다 raw부터 재계산하는 구조 덕분).
+- 새로 채운 값은 fp="derived_ytd_no10k"로 표시(tag_used에 |derived_ytd_no10k 노출),
+  기존 annual 기반 "derived_ytd"와 구분됨. Q4는 이 블록에서 다루지 않음(10-K 없이는
+  연간 총액을 알 수 없어 원리상 역산 불가).
+- 결측 알림(missing_fields_new_log)은 별도 수정 불필요: 값이 실제로 채워지면 NULL이
+  아니게 되어 기존 알림 조건에 자연히 걸리지 않음. Q1 discrete조차 없는 등 여전히
+  못 채우는 진짜 결측은 그대로 알림 유지.
 """
 
 import json
@@ -268,6 +295,12 @@ ANNUAL_MIN_DAYS, ANNUAL_MAX_DAYS = 350, 380
 
 # 날짜 기반 Q4/YTD 역산 시, 연속된 슬롯 사이 간격이 "약 한 분기(~90일)"인지 검증하는 허용 범위
 QUARTER_GAP_MIN_DAYS, QUARTER_GAP_MAX_DAYS = 75, 105
+
+# v10 (이번 세션 신규): 10-K 없이도 discrete(Q1) + 반기/9개월 YTD 쌍만으로 중간 분기를
+# 역산하는 대상 concept. revenue/eps_diluted/net_income/operating_income은 10-Q에서
+# discrete로 직접 공시되어 이 역산 자체가 불필요하므로 제외 - capex/operating_cash_flow
+# 두 concept으로만 범위를 좁혀 무관한 필드에 대한 사이드이펙트를 원천 배제한다.
+MID_QUARTER_YTD_DERIVE_FIELDS = {"capex", "operating_cash_flow"}
 
 # 분할 이력: (분할 실행일, 비율[분할 후 1주가 분할 전 몇 주인지])
 # 웹검색으로 사실 확인 완료 (2026-07-01 세션). 날짜는 조정거래 시작일(split-adjusted trading date) 기준.
@@ -678,6 +711,20 @@ def collect_concept_with_q4(conn, tag, symbol, field, pick_mode):
       Q4 역산 뺄셈 자체가 왜곡되기 때문에, 뺄셈 이전에 정규화를 마쳐야 한다.
     - split_adjustment_log에 적용 내역, eps_restatement_override_log에 전환 내역 기록 (검증용)
 
+    field가 capex/operating_cash_flow인 경우 (v10, 이번 세션 신규):
+    - 위 annual 기반 역산은 10-K가 존재하는 회계연도만 처리하므로, 아직 10-K가 없는
+      진행 중인 회계연도는 discrete(Q1)+YTD(반기/9개월) 쌍이 이미 있어도 중간 분기
+      (Q2/Q3)가 채워지지 않는 구조적 공백이 있었다 (annual.items() 순회 자체가 그
+      회계연도를 건드리지 않기 때문). GOOGL/TSLA 2026 Q2(FY2026 10-K 미제출)에서
+      실측 확인.
+    - annual 루프 이후에 실행해, 이미 채워진 슬롯은 건드리지 않는다. 10-K가 나중에
+      나오면 다음 실행에서 annual 루프가 먼저 그 회계연도를 정확히 채우고, 이 블록은
+      `if x in result: continue`로 자동 스킵되므로 별도 우선순위 flag가 불필요하다.
+    - 새로 채운 값은 fp="derived_ytd_no10k"로 표시해 annual 기반 "derived_ytd"와
+      구분한다 (tag_used에 |derived_ytd_no10k로 노출).
+    - Q4는 이 블록에서 다루지 않는다 (10-K 없이는 연간 총액 자체를 알 수 없어 원리상
+      역산 불가 - 기존 annual 기반 로직이 10-K 등장 시 처리).
+
     반환: { end_date: {"val", "filed", "accn", "fy", "fp"} }
     """
     entries = fetch_concept_from_raw(conn, symbol, tag, field)
@@ -799,6 +846,81 @@ def collect_concept_with_q4(conn, tag, symbol, field, pick_mode):
                 "fp": "Q4(derived)",
             }
             derived_q4_count += 1
+
+    # v10 (이번 세션 신규): 10-K 없이도 discrete(Q1) + 반기/9개월 YTD 쌍만으로
+    # 중간 분기(Q2/Q3)를 역산한다. 위 annual 기반 루프가 아직 못 채운 자리만
+    # 채우도록 반드시 그 뒤에 실행한다. 회계연도 그룹핑은 annual entry 없이,
+    # 각 raw entry 자신의 period_start(entry["start"])로 한다.
+    if field in MID_QUARTER_YTD_DERIVE_FIELDS:
+        by_start = defaultdict(lambda: {"q": {}, "s": {}, "n": {}})
+        for d, info in quarterly.items():
+            by_start[info["start"]]["q"][d] = info
+        for d, info in semiannual.items():
+            by_start[info["start"]]["s"][d] = info
+        for d, info in ninemonth.items():
+            by_start[info["start"]]["n"][d] = info
+
+        for fy_start, buckets in sorted(by_start.items()):
+            q_map, s_map, n_map = buckets["q"], buckets["s"], buckets["n"]
+
+            q1_candidates = sorted(
+                d for d in q_map
+                if QUARTER_GAP_MIN_DAYS <= (d - fy_start).days <= QUARTER_GAP_MAX_DAYS
+            )
+            if not q1_candidates:
+                continue
+            q1_end = q1_candidates[0]
+            running_cum = q_map[q1_end]["val"]
+
+            # Q2: discrete로 이미 있으면 그 값을 경계로 쓰고, 없으면 반기 YTD에서 역산
+            q2_end = None
+            later_q = sorted(d for d in q_map if d > q1_end)
+            if later_q and QUARTER_GAP_MIN_DAYS <= (later_q[0] - q1_end).days <= QUARTER_GAP_MAX_DAYS:
+                q2_end = later_q[0]
+                running_cum += q_map[q2_end]["val"]
+            else:
+                for s_end, s_info in sorted(s_map.items()):
+                    if s_end in result:
+                        continue  # 이미 채워진 슬롯(annual 로직 등)은 건드리지 않음
+                    gap = (s_end - q1_end).days
+                    if not (QUARTER_GAP_MIN_DAYS <= gap <= QUARTER_GAP_MAX_DAYS):
+                        continue
+                    derived_val = s_info["val"] - running_cum
+                    result[s_end] = {
+                        "val": derived_val,
+                        "filed": s_info["filed"],
+                        "accn": s_info["accn"],
+                        "fy": None,
+                        "fp": "derived_ytd_no10k",
+                    }
+                    derived_ytd_count += 1
+                    running_cum = s_info["val"]
+                    q2_end = s_end
+                    break
+
+            if q2_end is None:
+                continue  # Q2 경계를 못 정하면 Q3 역산 불가
+
+            # Q3: discrete로 이미 있으면 이 블록이 할 일 없음, 없으면 9개월 YTD에서 역산
+            later_q2 = sorted(d for d in q_map if d > q2_end)
+            if later_q2 and QUARTER_GAP_MIN_DAYS <= (later_q2[0] - q2_end).days <= QUARTER_GAP_MAX_DAYS:
+                continue
+            for n_end, n_info in sorted(n_map.items()):
+                if n_end in result:
+                    continue
+                gap = (n_end - q2_end).days
+                if not (QUARTER_GAP_MIN_DAYS <= gap <= QUARTER_GAP_MAX_DAYS):
+                    continue
+                derived_val = n_info["val"] - running_cum
+                result[n_end] = {
+                    "val": derived_val,
+                    "filed": n_info["filed"],
+                    "accn": n_info["accn"],
+                    "fy": None,
+                    "fp": "derived_ytd_no10k",
+                }
+                derived_ytd_count += 1
+                break
 
     if derived_ytd_count:
         log.info(f"[{symbol}/{field}] YTD 누계에서 역산한 분기 {derived_ytd_count}건 추가")
@@ -1043,6 +1165,8 @@ def collect_symbol(conn, symbol: str):
                     suffix = "|derived_q4"
                 elif info.get("fp") == "derived_ytd":
                     suffix = "|derived_ytd"
+                elif info.get("fp") == "derived_ytd_no10k":
+                    suffix = "|derived_ytd_no10k"
                 # v6: 실제 나눗셈에 쓰인 기준(info["filed"])과 동일한 기준으로 판정해야
                 # "split_adj" 표시 여부가 실제 적용 여부와 항상 일치함 (collect_concept_with_q4
                 # 참조, period_end 기준 쓰면 표시만 어긋날 수 있음)
