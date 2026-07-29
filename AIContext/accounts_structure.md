@@ -9,6 +9,7 @@
 - `app/modules/accounts_helpers.py` — `_build_account_card_skeleton`, `_build_account_card_values`, `_build_position_row_skeleton`, `_build_position_row_values`
 - `app/modules/accounts_js.py` — `accounts_js()` 전체 화면 JS 주입
 - `app/modules/accounts_modals.py` — `modal_edit_position_html`, `modal_edit_position_js`
+- `common/kis_lookup.py` — `resolve_ticker_info()` (티커 조회 공통 오케스트레이션 — settings.py와 공유), `lookup_domestic`, `lookup_overseas`
 - `app/db.py` — `get_db()`, `get_usd_krw()`, `get_market_map()`, `get_market_label()`, `get_market_currency()`
 - `app/modules/components.py` — `fmt_krw`, `fmt_usd`, `fmt_pct`, `fmt_pnl`, `fmt_change`
 - `app/price_signal.py` — `price_signal`, `daily_insert_signal`
@@ -24,7 +25,7 @@
 - 계좌별 총평가액, 손익, 현금 표시
 - 종목별 현재가, 등락률, 평단가, 평가액, 손익, 시장 상태 배지 표시
 - 종목/현금 추가·수정·삭제, 계좌 추가·삭제, 매수·매도 처리
-- 티커 자동조회 (yfinance) — 종목명·시장 자동 채움, 레버리지 배수 추론
+- 티커 자동조회 (`common/kis_lookup.py`의 `resolve_ticker_info()` 공통함수) — KIS 국내/해외 조회 → 실패 시 yfinance 폴백 순으로 종목명·시장 자동 채움, 레버리지 배수 추론 (KIS는 구조화된 필드, yfinance 폴백은 longName 텍스트 패턴("3X" 등) 기반)
 - `render.ui` 없음 — 커스텀 메시지로 DOM 직접 패치
 
 ---
@@ -93,7 +94,6 @@
 | `acOpenEditCashModal(el)` | 현금 수정 모달 열기 — `data-*`에서 초기값 채움 |
 | `acTriggerEditCashSave()` | 현금 수정 저장 — `btn_confirm_edit_cash` 발송 |
 | `acTriggerCashDelete()` | 현금 삭제 확인 후 `confirm_delete_cash` 발송 |
-| `_inferLeverage(name)` | 종목명으로 레버리지 추론 (3X/UltraPro→3, 2X/Ultra→2) |
 | `_fmtNum(val, cur)` / `_getCashAmount(cur)` | preview 포맷/현금 조회 — `modal_edit_position_js()`에서 정의 |
 
 ### `_applyOneCard(c)` 패치 DOM id
@@ -169,7 +169,7 @@
 | 핸들러 | 트리거 | 동작 |
 |--------|--------|------|
 | `_handle_card_click` | `card_clicked` | `open_account` 세팅. `acc_id=0`이면 아코디언 상태 초기화 |
-| `_lookup_ticker` | `lookup_ticker` | yfinance로 티커 자동조회. KR 종목은 `.KS` → `.KQ` 순 시도. `source` 에 따라 채널 분기 |
+| `_lookup_ticker` | `lookup_ticker` | `common.kis_lookup.resolve_ticker_info()` 호출 — KIS 국내/해외 조회 → 실패 시 yfinance 폴백. `.KS`/`.KQ` 등 접미사 재시도는 하지 않음(숫자 포함 해외 티커를 국내로 오판하는 문제 방지). `source`에 따라 채널 분기 |
 | `_add_account` | `btn_confirm_add` | accounts 테이블 INSERT |
 | `_delete_account` | `confirm_delete_account` | `open_account` 기준 accounts 테이블 DELETE |
 | `_add_position` | `btn_confirm_add_position` | tickers 없으면 INSERT, positions INSERT |
@@ -194,3 +194,4 @@
 - `_edit_position`은 tickers 메타 변경이므로 `_notify_ticker_changed()` 추가 발행
 - 매수(`_buy`) / 매도(`_sell`) 처리는 `accounts_DAL.py`의 `execute_buy` / `execute_sell`에 위임 — `usd_markets` 집합을 `get_market_map()`에서 추출해 전달
 - `NUM` 마켓(지수 등)은 현금 개념 없음 — 종목 추가 preview 박스 숨김 처리 및 현금 초과 경고 스킵
+- 티커 조회 로직(KIS 국내/해외 분기, yfinance 폴백, exchange_map)은 원래 `accounts.py` 안에 인라인으로 있었으나, `settings.py`에도 동일 기능이 필요해지면서 `common/kis_lookup.py`의 `resolve_ticker_info()`로 공통화됨 (2026-07). `accounts.py`는 이 함수를 호출만 하고, 분류 규칙 자체는 더 이상 이 파일에 없음

@@ -16,6 +16,21 @@
 - `interval`: 업데이트 주기 (분) — `0`이면 웹소켓 모드, `1` 이상이면 REST 폴링 모드
 - `data_go_kr_key`: 한국 공휴일 조회 API 키
 - `finnhub_api_key`: 미국 공휴일 조회 API 키 (Finnhub)
+- `market_map`: 마켓 코드 → `{currency, label, market_time}` 매핑. `market_time`은 `"KR"` / `"US"` / `"24h"` 세 종류만 존재하며, REST/WS 공통 코드가 이 값으로 분기한다.
+
+### 현재 market_map 구성 (2026-07 기준)
+
+| market_time | 소속 마켓 | 처리 방식 |
+|---|---|---|
+| `KR` | KR | KIS 국내 API/웹소켓, 평일 09:00~15:30(+안전마진) 개장 판단 |
+| `US` | NAS, NYS, AMS | KIS 해외 API/웹소켓, 뉴욕 시간 기준 pre/open/after 판단 |
+| `24h` | FX, INDEX, CRYPTO, COM, ETC | Yahoo Finance REST 폴링, 항상 "open" 취급 (실제 휴장 여부 무관하게 매 사이클 조회) |
+
+> **설계 원리**: `market_time == "24h"`인 카테고리는 REST(`update_worker`)와 WS(`yahoo_poll_task`)에서 이미 범용 처리되므로, 새 24h 카테고리를 추가할 때는 **파이썬 코드 수정 없이 config.json의 market_map 항목만 추가**하면 된다.
+
+> **ARC 제거 이력**: 과거 `market_map`에 `ARC`(NYSE Arca, market_time=`US`)가 있었으나, KIS API가 Arca 조회를 지원하지 않아 실질적으로 동작하지 않았다. 실사용 종목이 없음을 DB로 확인 후 제거했다 (`price_updater_ws.py`의 `US_MARKET_PREFIX`에서도 함께 제거).
+
+> **ETC 추가 이력**: KIS가 지원하지 않는 해외 종목(런던증권거래소 등)을 다루기 위해 `ETC`(해외기타(Yahoo), market_time=`24h`, currency=USD)를 추가했다. 개념적으로 "KIS 미지원 → Yahoo 24h 폴링" 전체를 아우르는 버킷이며, NYSE Arca(PCX) 종목도 여기 포함시키기로 함 (`app/modules/accounts.py`/`common/kis_lookup.py`의 `exchange_map`에서 `PCX`/`LSE` → `ETC` 매핑).
 
 ---
 
@@ -118,9 +133,9 @@ run_update_cycle(force=False)
 
 ```
 update_worker(row)
-  ├─ market == "KR"             → get_kr_price()
-  ├─ market in NAS/NYS/AMS/ARC → get_us_price()
-  ├─ market in FX/INDEX/CRYPTO → get_yahoo_price()
+  ├─ market == "KR"          → get_kr_price()
+  ├─ market in NAS/NYS/AMS   → get_us_price()
+  ├─ market in FX/INDEX/CRYPTO/COM/ETC → get_yahoo_price()
   ├─ price == 0 이면 Redis 업데이트 건너뜀
   └─ update_price_cache()
 ```
@@ -140,7 +155,7 @@ KR final close
 
 #### get_us_price(ticker, excd)
 - KIS API 미국주식 현재가 조회 (HHDFS00000300)
-- excd: NAS / NYS / AMS / ARC
+- excd: NAS / NYS / AMS
 - last 없으면 base(전일종가)로 fallback
 - 반환: (price, change_pct)
 
@@ -155,13 +170,13 @@ KR final close
 
 ### 개요
 - KR/US 종목: KIS 웹소켓 (H0STCNT0 / HDFSCNT0) push 수신
-- FX/INDEX/CRYPTO: Yahoo Finance REST 폴링 (별도 asyncio task, 10초 주기)
+- FX/INDEX/CRYPTO/COM/ETC: Yahoo Finance REST 폴링 (별도 asyncio task, 10초 주기)
 - asyncio 기반 (asyncio.gather로 태스크 병렬 실행)
 
 ### 상수
 ```
 WS_URL = "ws://ops.koreainvestment.com:21000"
-US_MARKET_PREFIX = {"NAS": "DNAS", "NYS": "DNYS", "AMS": "DAMS", "ARC": "DARC"}
+US_MARKET_PREFIX = {"NAS": "DNAS", "NYS": "DNYS", "AMS": "DAMS"}
 KR_IDX_PRICE = 2, KR_IDX_CHANGE_PCT = 5      # H0STCNT0 필드 인덱스
 US_IDX_PRICE = 11, US_IDX_CHANGE_PCT = 14    # HDFSCNT0 필드 인덱스
 YAHOO_POLL_INTERVAL = 10                      # Yahoo 폴링 주기 (초)
@@ -201,7 +216,7 @@ kis_ws_task(approval_key, kr_tickers, us_rows)
 ```
 yahoo_poll_task(yahoo_rows)
   └─ while True:
-       FX/INDEX/CRYPTO 종목별 get_yahoo_price() → update_price_cache()
+       FX/INDEX/CRYPTO/COM/ETC 종목별 get_yahoo_price() → update_price_cache()
        _notify()
        await asyncio.sleep(10)
 ```
@@ -228,7 +243,7 @@ subscription_refresh_task(approval_key_holder)
 - DB tickers 전체 조회 후 get_market_status()에 따라 분류
 - KR: open → kr_tickers
 - US: open/pre/after → us_rows
-- FX/INDEX/CRYPTO: 항상 → yahoo_rows
+- FX/INDEX/CRYPTO/COM/ETC: 항상 → yahoo_rows
 
 #### parse_kr(raw) → (ticker, price, change_pct) | None
 - H0STCNT0 수신 데이터(`^` 구분) 파싱
@@ -266,7 +281,7 @@ flowchart TD
   B -- 1 이상 --> D[REST 폴링 모드]
 
   C --> E[KR/US: 시장상태에 따라 구독]
-  C --> F[FX/INDEX/CRYPTO: Yahoo 10초 폴링]
+  C --> F[FX/INDEX/CRYPTO/COM/ETC: Yahoo 10초 폴링]
   C --> G[구독 데이터 수신 시 Redis prices 갱신]
   C --> H[5분마다 구독 대상 재검사]
   H --> I{대상 변경?}
