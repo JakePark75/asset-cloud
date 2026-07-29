@@ -33,6 +33,12 @@ def _build_account_card_skeleton(acc, ns_str):
         f'      </div>'
         f'    </div>'
         f'  </div>'
+        f'  <div style="height:2px; background:rgba(255,255,255,0.08); border-radius:2px; '
+        f'margin-top:8px; overflow:hidden;">'
+        f'    <div id="ac-card-cashbar-{a_id}" '
+        f'style="height:100%; width:0%; background:#4caf50; transition:width .3s;" '
+        f'data-pct=""></div>'
+        f'  </div>'
         f'  <div class="subtab-accordion" id="ac-acc-{a_id}" style="display:none;"></div>'
         f'</div>'
     )
@@ -44,12 +50,16 @@ def _build_account_card_values(acc):
     pnl = total - prev_total
     pnl_pct = (pnl / prev_total * 100) if prev_total > 0 else 0
     pnl_text, pnl_class = fmt_pnl(pnl, pnl_pct)
+    # 정수 % 단위로 반올림 — 바(bar)의 실제 표시 폭 단위(1%)와 맞춰서,
+    # 하위 소수점 변동으로 인한 불필요한 DOM patch를 원천 차단
+    cash_pct = round(cash / total * 100) if total > 0 else 0
     return {
         "id":        a_id,
         "total":     fmt_krw(total),
         "pnl_text":  pnl_text,
         "pnl_class": pnl_class,
         "cash":      fmt_krw(cash),
+        "cash_pct":  cash_pct,
     }
 
 

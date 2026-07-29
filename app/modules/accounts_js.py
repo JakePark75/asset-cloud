@@ -65,6 +65,15 @@ def accounts_js(market_currency_map_js: str) -> str:
     if (pnlEl) { pnlEl.textContent = c.pnl_text; pnlEl.className = c.pnl_class; }
     var cashEl = document.getElementById('ac-card-cash-' + c.id);
     if (cashEl) cashEl.textContent = c.cash;
+    if (c.cash_pct != null) {
+      var barEl = document.getElementById('ac-card-cashbar-' + c.id);
+      // 이전에 적용한 % 값과 다를 때만 width를 건드림 (가격 tick마다 오는
+      // pnl/total 갱신 신호에 얹혀 매번 DOM write가 발생하지 않도록 방지)
+      if (barEl && barEl.dataset.pct !== String(c.cash_pct)) {
+        barEl.style.width = c.cash_pct + '%';
+        barEl.dataset.pct = String(c.cash_pct);
+      }
+    }
   }
 
   // ── ac_acc_init: 아코디언 내용 통째 교체 ──────────────────────────────
