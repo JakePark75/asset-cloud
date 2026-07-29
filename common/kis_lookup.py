@@ -30,11 +30,13 @@ KIS(한국투자증권) 국내/해외 종목 기본정보 조회.
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
 import requests
 import urllib3
+import yfinance as yf
 
 from common.kis_auth import get_kis_access_token, KISAuthError
 
@@ -161,3 +163,109 @@ def lookup_overseas(symbol: str) -> Optional[dict]:
             return {"name": name, "market": market_code, "leverage": leverage}
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# yfinance 최종 폴백 (KIS 국내/해외 조회로 못 찾은 경우)
+# ---------------------------------------------------------------------------
+
+# Yahoo Finance exchange 코드 -> 내부 market 코드 (config.json market_map과 일치)
+_YF_EXCHANGE_MAP = {
+    "KSC": "KR", "KOE": "KR",
+    "NMS": "NAS", "NGM": "NAS", "NCM": "NAS",
+    "NYQ": "NYS",
+    "PCX": "ETC",  # NYSE Arca — KIS 미지원으로 Yahoo 24h 폴링(ETC) 편입
+    "ASE": "AMS",
+    "NIM": "INDEX",
+    "LSE": "ETC",  # 런던증권거래소 — KIS 미지원으로 Yahoo 24h 폴링(ETC) 편입
+}
+
+
+# longName/shortName 안의 "3X", "-2x" 같은 배수 표기 패턴.
+# 앞뒤로 문자/숫자가 이어지면(예: "X30", "3XL") 오탐이므로 단어 경계를 강제한다.
+_LEVERAGE_NAME_PATTERN = re.compile(r'(?<![A-Za-z0-9])-?([1-3])[xX](?![A-Za-z0-9])')
+
+
+def _resolve_leverage_from_name(name: str) -> Optional[int]:
+    """
+    yfinance 폴백 전용 — KIS처럼 구조화된 배수 필드가 없으므로 longName/shortName
+    텍스트에서 "3X"/"-2x" 같은 명확한 배수 표기를 찾아 1~3배를 추론한다.
+    "Ultra"/"UltraPro"처럼 숫자 없이 배수를 암시하는 표현은 추론하지 않고,
+    서로 다른 배수가 여러 번 매치되어 애매한 경우도 None으로 둔다
+    (KIS 모듈과 동일한 정책: 확실하지 않으면 자동세팅하지 않고 사용자가 직접 선택).
+    """
+    if not name:
+        return None
+    matches = {int(m) for m in _LEVERAGE_NAME_PATTERN.findall(name)}
+    if len(matches) == 1:
+        return matches.pop()
+    return None
+
+
+def _fetch_yf(ticker: str) -> tuple:
+    """
+    yfinance 최종 폴백. 국내(KR) 종목은 KIS가 전담하므로, 이 함수에 도달한
+    시점엔 이미 "국내가 아니거나 KIS가 못 찾은 것"이 확정된 상태다.
+    그래서 .KS/.KQ 접미사를 붙여 국내로 재시도하지 않고, 티커를 있는
+    그대로만 조회한다 (숫자 포함 해외 티커, 예: DRM3, BULZ2 등을
+    국내로 오판하는 문제 방지).
+    반환: (name, market, leverage) — 못 찾으면 ("", "", None)
+    """
+    try:
+        info = yf.Ticker(ticker).info
+        name = info.get("longName") or info.get("shortName") or ""
+        exchange, qtype = info.get("exchange", ""), info.get("quoteType", "")
+    except Exception:
+        name, exchange, qtype = "", "", ""
+
+    if qtype == "CRYPTOCURRENCY":
+        market = "CRYPTO"
+    elif qtype == "INDEX":
+        market = "INDEX"
+    else:
+        market = _YF_EXCHANGE_MAP.get(exchange, "")
+
+    leverage = _resolve_leverage_from_name(name)
+    return name, market, leverage
+
+
+def resolve_ticker_info(ticker: str) -> dict:
+    """
+    티커 하나로 종목명/시장/레버리지를 조회하는 공통 오케스트레이션 함수.
+    (accounts.py, settings.py 등 UI 모듈에서 공통으로 사용)
+
+    분류 규칙 (accounts.py에 있던 로직을 그대로 이전):
+      1. "="/"^" 포함 (환율·지수·원자재·암호화폐 등, 주식·ETF·ETN이 아님) → yfinance 직행
+      2. 티커 길이 < 6 (국내 종목코드는 6~7자리이므로 국내일 수 없음) → 해외 KIS 직행, 실패 시 yfinance
+      3. 그 외 → 국내 KIS 시도 → 실패 시 해외 KIS → 실패 시 yfinance
+
+    반환: {"name": str, "market": str, "leverage": int|None}
+      - 못 찾으면 name="", market="", leverage=None
+      - leverage는 KIS가 명확히 판단 가능한 경우(구조화된 필드, 1~3배 정수)이거나,
+        yfinance 폴백에서 longName 텍스트에 "3X"/"-2x" 같은 명확한 배수 표기가
+        있는 경우에만 int. 그 외(애매한 경우)에는 None
+        (호출자는 None이면 UI 값을 건드리지 않고 사용자가 직접 선택하도록 둔다)
+    """
+    ticker = ticker.strip().upper()
+    name     = ""
+    market   = ""
+    leverage = None
+
+    if "=" in ticker or "^" in ticker:
+        name, market, leverage = _fetch_yf(ticker)
+    elif len(ticker) < 6:
+        result = lookup_overseas(ticker)
+        if result:
+            name, market, leverage = result["name"], result["market"], result["leverage"]
+        else:
+            name, market, leverage = _fetch_yf(ticker)
+    else:
+        result = lookup_domestic(ticker)
+        if not result:
+            result = lookup_overseas(ticker)
+        if result:
+            name, market, leverage = result["name"], result["market"], result["leverage"]
+        else:
+            name, market, leverage = _fetch_yf(ticker)
+
+    return {"name": name, "market": market, "leverage": leverage}

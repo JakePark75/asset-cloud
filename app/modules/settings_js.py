@@ -55,6 +55,38 @@ def settings_js() -> str:
     Shiny.setInputValue('settings-auto_hidden', '1');
   });
 
+  // ── 티커 자동조회 ──────────────────────────────────────────
+  window.stLookupTicker = function() {
+    var tickerEl = document.getElementById('st-new-ticker');
+    var ticker = tickerEl ? tickerEl.value.trim() : '';
+    if (!ticker) return;
+    var btn = document.getElementById('st-new-ticker-lookup-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    Shiny.setInputValue('settings-lookup_ticker', { ticker: ticker }, {priority: 'event'});
+  };
+
+  // 레버리지는 서버(KIS 응답)가 명확히 판단 가능한 경우(1/2/3배)에만 m.leverage로 전달됨.
+  // 그 외(비정수 배수, yf 폴백 등)에는 leverage 필드 자체가 없으므로 select 값을
+  // 건드리지 않고 사용자가 직접 고르도록 둔다. (accounts_js.py와 동일한 정책)
+  Shiny.addCustomMessageHandler('st_ticker_lookup_result', function(m) {
+    var btn = document.getElementById('st-new-ticker-lookup-btn');
+    if (btn) { btn.textContent = '🔍'; btn.disabled = false; }
+    if (m.name) {
+      var nameEl = document.getElementById('st-new-ticker-name');
+      if (nameEl) nameEl.value = m.name;
+      if (m.market) {
+        var marketEl = document.getElementById('st-new-ticker-market');
+        if (marketEl) marketEl.value = m.market;
+      }
+      if (m.leverage != null) {
+        var levEl = document.getElementById('st-new-ticker-leverage');
+        if (levEl) levEl.value = String(m.leverage);
+      }
+    } else {
+      alert('종목명을 찾지 못했습니다: ' + m.ticker);
+    }
+  });
+
   // ── 티커 추가 모달 ────────────────────────────────────────
   window.stShowModal = function() {
     document.getElementById('st-modal-overlay').style.display = '';

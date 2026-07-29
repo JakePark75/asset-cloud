@@ -54,7 +54,6 @@ US_MARKET_PREFIX = {
     "NAS": "DNAS",
     "NYS": "DNYS",
     "AMS": "DAMS",
-    "ARC": "DARC",  # NYSE Arca — prefix 미검증, 동작 확인 필요
 }
 
 # H0STCNT0 수신 필드 인덱스

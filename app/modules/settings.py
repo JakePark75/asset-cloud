@@ -34,10 +34,11 @@ def _notify_ticker_changed():
 
 _MARKET_ORDER = {
     "KR": 0,
-    "NAS": 1, "NYS": 1, "AMS": 1, "ARC": 1,
+    "NAS": 1, "NYS": 1, "AMS": 1,
     "CRYPTO": 2,
     "COM": 3,
-    "FX": 4, "INDEX": 4,
+    "ETC": 4,
+    "FX": 5, "INDEX": 5,
 }
 
 def _ticker_to_id(ticker: str) -> str:
@@ -220,7 +221,15 @@ def settings_ui():
                 ),
                 ui.div(
                     ui.tags.label("티커"),
-                    ui.tags.input(id="st-new-ticker", type="text", placeholder="예) USDKRW=X", class_="form-control"),
+                    ui.div(
+                        ui.tags.input(id="st-new-ticker", type="text", placeholder="예) USDKRW=X",
+                                      class_="form-control", style="flex:1;",
+                                      oninput="this.value=this.value.toUpperCase();"),
+                        ui.tags.button("🔍", id="st-new-ticker-lookup-btn",
+                                       style="margin-left:6px; padding:0; font-size:18px; background:none; border:none; outline:none; cursor:pointer; line-height:1; -webkit-appearance:none;",
+                                       onclick="stLookupTicker();"),
+                        style="display:flex; align-items:center;",
+                    ),
                 ),
                 ui.div(
                     ui.tags.label("종목명"),
@@ -375,6 +384,28 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             cur.close()
         refresh.set(refresh() + 1)
         _notify_ticker_changed()
+
+    # ── 티커 자동조회 ─────────────────────────────────────────────────────────
+    @reactive.effect
+    @reactive.event(input.lookup_ticker)
+    async def _lookup_ticker():
+        payload = input.lookup_ticker()
+        ticker  = str(payload.get("ticker", "")).strip().upper()
+        if not ticker:
+            return
+
+        from common.kis_lookup import resolve_ticker_info
+        result = resolve_ticker_info(ticker)
+
+        out_payload = {
+            "ticker": ticker,
+            "name":   result["name"],
+            "market": result["market"],
+        }
+        if result["leverage"] is not None:
+            out_payload["leverage"] = result["leverage"]
+
+        await session.send_custom_message("st_ticker_lookup_result", out_payload)
 
     # ── 티커 추가 ─────────────────────────────────────────────────────────────
     @reactive.effect
