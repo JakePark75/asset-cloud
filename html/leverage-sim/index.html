@@ -25,9 +25,18 @@
     .controls-grid { grid-template-columns: 1fr 1fr; }
   }
   label { font-size: 13px; color: #555; display: block; margin-bottom: 4px; }
+  .sublabel { font-size: 11px; color: #999; margin-bottom: 4px; margin-top: -2px; }
   .row { display: flex; align-items: center; gap: 8px; }
   input[type=range] { flex: 1; }
-  .out { font-size: 14px; font-weight: 600; min-width: 44px; text-align: right; }
+  input[type=number].direct {
+    width: 64px;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 13px;
+    text-align: right;
+  }
+  .out { font-size: 13px; color: #888; min-width: 20px; }
   .lev-buttons { display: flex; gap: 8px; }
   button {
     border: 1px solid #ccc;
@@ -61,6 +70,7 @@
   .dot { width: 10px; height: 10px; border-radius: 2px; }
   .chart-wrap { position: relative; width: 100%; height: 300px; background: #fff; border-radius: 10px; border: 1px solid #e5e5e0; padding: 8px; }
   .note { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.6; }
+  .ref-hint { font-size: 11px; color: #999; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -72,7 +82,8 @@
     <label>지수 하락률 (N%)</label>
     <div class="row">
       <input type="range" id="nDrop" min="5" max="50" value="20" step="1"/>
-      <span class="out" id="nDropOut">20%</span>
+      <input type="number" class="direct" id="nDropNum" min="5" max="50" step="1" value="20"/>
+      <span class="out">%</span>
     </div>
   </div>
   <div>
@@ -85,36 +96,43 @@
   <div>
     <label>하락 기간 (거래일)</label>
     <div class="row">
-      <input type="range" id="d1" min="1" max="60" value="10" step="1"/>
-      <span class="out" id="d1Out">10</span>
+      <input type="range" id="d1" min="1" max="240" value="10" step="1"/>
+      <input type="number" class="direct" id="d1Num" min="1" max="240" step="1" value="10"/>
+      <span class="out">일</span>
     </div>
   </div>
   <div>
     <label>회복 기간 (거래일)</label>
     <div class="row">
-      <input type="range" id="d2" min="1" max="60" value="20" step="1"/>
-      <span class="out" id="d2Out">20</span>
+      <input type="range" id="d2" min="1" max="240" value="20" step="1"/>
+      <input type="number" class="direct" id="d2Num" min="1" max="240" step="1" value="20"/>
+      <span class="out">일</span>
     </div>
   </div>
   <div>
-    <label>일일 변동성 (출렁임)</label>
+    <label>일일 변동폭 (하루 등락폭 체감치)</label>
+    <div class="sublabel">지수가 보통 하루에 위아래로 몇 % 움직이나요?</div>
     <div class="row">
-      <input type="range" id="sigma" min="0" max="4" value="1.5" step="0.1"/>
-      <span class="out" id="sigmaOut">1.5%</span>
+      <input type="range" id="sigma" min="0" max="8" value="1.2" step="0.1"/>
+      <input type="number" class="direct" id="sigmaNum" min="0" max="8" step="0.1" value="1.2"/>
+      <span class="out">%</span>
     </div>
+    <div class="ref-hint">참고: 평상시 코스피 ~0.8~1.2% · 나스닥 ~1.2~1.5% · 급락장 ~3%+</div>
   </div>
   <div>
     <label>연 운용보수</label>
     <div class="row">
       <input type="range" id="fee" min="0" max="2" value="0.9" step="0.1"/>
-      <span class="out" id="feeOut">0.9%</span>
+      <input type="number" class="direct" id="feeNum" min="0" max="2" step="0.1" value="0.9"/>
+      <span class="out">%</span>
     </div>
   </div>
   <div>
     <label>연 조달비용 (스프레드)</label>
     <div class="row">
       <input type="range" id="borrow" min="0" max="8" value="4" step="0.1"/>
-      <span class="out" id="borrowOut">4%</span>
+      <input type="number" class="direct" id="borrowNum" min="0" max="8" step="0.1" value="4"/>
+      <span class="out">%</span>
     </div>
   </div>
   <div style="display:flex; align-items:flex-end;">
@@ -147,7 +165,9 @@
 
 <p class="note">
   지수가 N% 하락했다가 원래 가격(100)으로 완전히 회복돼도, 레버리지 상품은 매일 리밸런싱하는 구조 때문에 100% 회복되지 않을 수 있습니다.
-  특히 "일일 변동성"을 높이면 (지수는 그대로 회복되는데도) 레버리지 상품의 손실이 커지는 걸 볼 수 있습니다. 이게 변동성 손실(volatility drag)입니다.
+  특히 "일일 변동폭"을 높이면 (지수는 그대로 회복되는데도) 레버리지 상품의 손실이 커지는 걸 볼 수 있습니다. 이게 변동성 손실(volatility drag)입니다.
+  <br><br>
+  ※ "일일 변동폭"은 사용자가 체감하기 쉬운 "하루 등락률 절대값의 평균" 기준으로 입력받고, 내부적으로 통계 계산에 필요한 표준편차로 환산해서 사용합니다.
 </p>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -156,15 +176,21 @@ let leverage = 2;
 let noiseSeed = null;
 let chart = null;
 
+// range input과 direct number input을 서로 동기화
+const pairs = [
+  {range:'nDrop', num:'nDropNum'},
+  {range:'d1', num:'d1Num'},
+  {range:'d2', num:'d2Num'},
+  {range:'sigma', num:'sigmaNum'},
+  {range:'fee', num:'feeNum'},
+  {range:'borrow', num:'borrowNum'},
+];
+
 function els(id){ return document.getElementById(id); }
 
+function clamp(v, min, max){ return Math.min(max, Math.max(min, v)); }
+
 function updateLabels(){
-  els('nDropOut').textContent = els('nDrop').value + '%';
-  els('d1Out').textContent = els('d1').value;
-  els('d2Out').textContent = els('d2').value;
-  els('sigmaOut').textContent = parseFloat(els('sigma').value).toFixed(1) + '%';
-  els('feeOut').textContent = parseFloat(els('fee').value).toFixed(1) + '%';
-  els('borrowOut').textContent = parseFloat(els('borrow').value).toFixed(1) + '%';
   els('lev2').classList.toggle('active', leverage===2);
   els('lev3').classList.toggle('active', leverage===3);
 }
@@ -186,7 +212,12 @@ function simulate(){
   const N = parseFloat(els('nDrop').value)/100;
   const D1 = parseInt(els('d1').value);
   const D2 = parseInt(els('d2').value);
-  const sigma = parseFloat(els('sigma').value)/100;
+
+  // 사용자는 "하루 등락폭 체감치(평균절대편차, MAD)"를 입력한다.
+  // 정규분포를 가정하면 MAD = sigma * sqrt(2/pi) 이므로, sigma = MAD / sqrt(2/pi)
+  const madInput = parseFloat(els('sigma').value)/100;
+  const sigma = madInput / Math.sqrt(2/Math.PI);
+
   const annualFee = parseFloat(els('fee').value)/100;
   const annualBorrow = parseFloat(els('borrow').value)/100;
   const dailyFee = annualFee/252;
@@ -246,12 +277,42 @@ function simulate(){
   });
 }
 
-els('nDrop').addEventListener('input', ()=>{updateLabels(); simulate();});
-els('d1').addEventListener('input', ()=>{updateLabels(); simulate();});
-els('d2').addEventListener('input', ()=>{updateLabels(); simulate();});
-els('sigma').addEventListener('input', ()=>{updateLabels(); noiseSeed=null; simulate();});
-els('fee').addEventListener('input', ()=>{updateLabels(); simulate();});
-els('borrow').addEventListener('input', ()=>{updateLabels(); simulate();});
+function wirePair(rangeId, numId, opts){
+  const rangeEl = els(rangeId);
+  const numEl = els(numId);
+  const min = parseFloat(rangeEl.min);
+  const max = parseFloat(rangeEl.max);
+
+  rangeEl.addEventListener('input', ()=>{
+    numEl.value = rangeEl.value;
+    updateLabels();
+    if(opts && opts.resetNoise) noiseSeed = null;
+    simulate();
+  });
+
+  numEl.addEventListener('input', ()=>{
+    let v = parseFloat(numEl.value);
+    if(isNaN(v)) return;
+    v = clamp(v, min, max);
+    rangeEl.value = v;
+    updateLabels();
+    if(opts && opts.resetNoise) noiseSeed = null;
+    simulate();
+  });
+
+  numEl.addEventListener('blur', ()=>{
+    // 입력이 끝나면 범위를 벗어난 값은 표시도 보정
+    numEl.value = rangeEl.value;
+  });
+}
+
+wirePair('nDrop', 'nDropNum');
+wirePair('d1', 'd1Num');
+wirePair('d2', 'd2Num');
+wirePair('sigma', 'sigmaNum', {resetNoise:true});
+wirePair('fee', 'feeNum');
+wirePair('borrow', 'borrowNum');
+
 els('lev2').addEventListener('click', ()=>{leverage=2; updateLabels(); simulate();});
 els('lev3').addEventListener('click', ()=>{leverage=3; updateLabels(); simulate();});
 els('reroll').addEventListener('click', ()=>{noiseSeed=null; simulate();});
