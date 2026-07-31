@@ -286,6 +286,81 @@ def get_yahoo_price(ticker):
         return 0.0, 0.0, datetime.now(timezone.utc)
 
 # ---------------------------------------------------------------------------
+# Upbit 실시간 원/달러 환율 (USDKRW=X 전용, USDT-KRW로 근사)
+# ---------------------------------------------------------------------------
+def get_upbit_krw_price():
+    try:
+        url = "https://api.upbit.com/v1/ticker?markets=KRW-USDT"
+        res = requests.get(url, timeout=10).json()
+
+        if not res or not isinstance(res, list):
+            log.warning("⚠️ [USDKRW=X] Upbit 응답이 비어있습니다.")
+            return 0.0, 0.0, datetime.now(timezone.utc)
+
+        item = res[0]
+        price      = float(item.get("trade_price", 0))
+        change_pct = round(float(item.get("signed_change_rate", 0)) * 100, 2)
+
+        # trade_timestamp는 ms 단위 UTC epoch
+        ts_ms = item.get("trade_timestamp", 0)
+        data_time = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+
+        return price, change_pct, data_time
+
+    except Exception as e:
+        log.error(f"❌ [USDKRW=X] Upbit 시세 파싱 중 예외 발생: {e}")
+        return 0.0, 0.0, datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Upbit 실시간 크립토 시세 (CRYPTO 마켓 공통)
+# 티커는 항상 Yahoo 포맷(BASE-QUOTE, 예: BTC-KRW)을 기준으로 받아
+# 내부에서 Upbit 포맷(QUOTE-BASE, 예: KRW-BTC)으로 변환한다.
+# ---------------------------------------------------------------------------
+def get_upbit_crypto_price(ticker):
+    try:
+        base, quote = ticker.split("-")
+        upbit_market = f"{quote}-{base}"
+
+        url = f"https://api.upbit.com/v1/ticker?markets={upbit_market}"
+        res = requests.get(url, timeout=10).json()
+
+        if not res or not isinstance(res, list):
+            log.warning(f"⚠️ [{ticker}] Upbit 응답이 비어있습니다. (market={upbit_market})")
+            return 0.0, 0.0, datetime.now(timezone.utc)
+
+        item = res[0]
+        price      = float(item.get("trade_price", 0))
+        change_pct = round(float(item.get("signed_change_rate", 0)) * 100, 2)
+
+        # trade_timestamp는 ms 단위 UTC epoch
+        ts_ms = item.get("trade_timestamp", 0)
+        data_time = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+
+        return price, change_pct, data_time
+
+    except Exception as e:
+        log.error(f"❌ [{ticker}] Upbit 크립토 시세 파싱 중 예외 발생: {e}")
+        return 0.0, 0.0, datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# 실시간 크립토 소스 선택
+#   "upbit" — Upbit 실시간 (기본값)
+#   "yahoo" — 기존 Yahoo Finance (Upbit 장애 시 폴백용)
+# ---------------------------------------------------------------------------
+CRYPTO_SOURCE = "upbit"
+
+
+# ---------------------------------------------------------------------------
+# 실시간 환율(FX 마켓) 소스 선택
+#   "upbit" — Upbit KRW-USDT 실시간 (기본값)
+#   "yahoo" — 기존 Yahoo Finance (Upbit 장애 시 폴백용)
+# ---------------------------------------------------------------------------
+FX_SOURCE = "yahoo"
+
+
+# ---------------------------------------------------------------------------
 # Redis 시세 업데이트
 # ---------------------------------------------------------------------------
 def update_price_cache(ticker, price, change_pct, data_time=None):

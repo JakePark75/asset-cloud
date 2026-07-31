@@ -65,7 +65,12 @@ def update_worker(row):
         elif market_time == "US":
             price, change_pct = get_us_price(ticker, market)
         elif market_time == "24h":
-            price, change_pct, data_time = get_yahoo_price(ticker)
+            if ticker == "USDKRW=X" and common.FX_SOURCE == "upbit":
+                price, change_pct, data_time = common.get_upbit_krw_price()
+            elif market == "CRYPTO" and common.CRYPTO_SOURCE == "upbit":
+                price, change_pct, data_time = common.get_upbit_crypto_price(ticker)
+            else:
+                price, change_pct, data_time = get_yahoo_price(ticker)
         else:
             log.warning(f"[{ticker}] 알 수 없는 market_time: {market_time}")
             return

@@ -68,6 +68,9 @@ US_IDX_CHANGE_PCT = 14
 # Yahoo 폴링 주기 (초)
 YAHOO_POLL_INTERVAL = 10
 
+# Upbit 폴링 주기 (초) — FX(USDKRW=X)/CRYPTO 전용, Yahoo와 별개로 빠르게 설정 가능
+UPBIT_POLL_INTERVAL = 10
+
 # 웹소켓 재연결 대기 (초)
 WS_RECONNECT_DELAY = 10
 
@@ -179,10 +182,11 @@ def _us_tr_key_to_ticker(tr_key: str, us_ticker_set: set) -> str | None:
 def get_subscribe_targets():
     """
     DB에서 전체 tickers 조회 후 시장 상태에 따라 분류.
-    반환: (kr_tickers, us_rows, yahoo_rows)
+    반환: (kr_tickers, us_rows, yahoo_rows, upbit_rows)
       kr_tickers : ['005930', ...]
       us_rows    : [{'ticker': 'TQQQ', 'market': 'NAS'}, ...]
-      yahoo_rows : [{'ticker': 'USDKRW=X', 'market': 'FX'}, ...]
+      yahoo_rows : [{'ticker': '^NDX', 'market': 'INDEX'}, ...]   (Yahoo REST 폴링 대상)
+      upbit_rows : [{'ticker': 'USDKRW=X', 'market': 'FX'}, ...]  (Upbit REST 폴링 대상)
     """
     try:
         conn = get_db_conn()
@@ -192,14 +196,16 @@ def get_subscribe_targets():
         conn.close()
     except Exception as e:
         log.error(f"tickers 조회 실패: {e}")
-        return [], [], []
+        return [], [], [], []
 
     kr_tickers = []
     us_rows    = []
     yahoo_rows = []
+    upbit_rows = []
 
     for r in rows:
         market = r["market"]
+        ticker = r["ticker"]
         status = get_market_status(market)
 
         market_info = common.config.get("market_map", {}).get(market, {})
@@ -207,21 +213,26 @@ def get_subscribe_targets():
 
         if market_time == "KR":
             if status == "open":
-                kr_tickers.append(r["ticker"])
+                kr_tickers.append(ticker)
         elif market_time == "US":
             if status in ("open", "pre", "after"):
                 us_rows.append(r)
         else:  # 24h
-            yahoo_rows.append(r)
+            is_upbit_fx     = (ticker == "USDKRW=X" and common.FX_SOURCE == "upbit")
+            is_upbit_crypto = (market == "CRYPTO" and common.CRYPTO_SOURCE == "upbit")
+            if is_upbit_fx or is_upbit_crypto:
+                upbit_rows.append(r)
+            else:
+                yahoo_rows.append(r)
 
-    return kr_tickers, us_rows, yahoo_rows
+    return kr_tickers, us_rows, yahoo_rows, upbit_rows
 
 
 # ---------------------------------------------------------------------------
 # Yahoo 폴링 태스크 (asyncio)
 # ---------------------------------------------------------------------------
 async def yahoo_poll_task(yahoo_rows: list):
-    """FX/INDEX/CRYPTO 종목을 주기적으로 Yahoo REST로 폴링."""
+    """INDEX/COM/ETC 등 순수 Yahoo 대상 종목을 주기적으로 Yahoo REST로 폴링."""
     if not yahoo_rows:
         return
 
@@ -243,6 +254,36 @@ async def yahoo_poll_task(yahoo_rows: list):
         #  여기서 별도로 "최근에 WS가 알림 보냈는지" 따질 필요 없음)
         _notify()
         await asyncio.sleep(YAHOO_POLL_INTERVAL)
+
+
+# ---------------------------------------------------------------------------
+# Upbit 폴링 태스크 (asyncio) — FX(USDKRW=X)/CRYPTO 전용
+# ---------------------------------------------------------------------------
+async def upbit_poll_task(upbit_rows: list):
+    """FX(USDKRW=X)/CRYPTO 종목을 주기적으로 Upbit REST로 폴링. Yahoo 루프와 독립적인 주기 사용."""
+    if not upbit_rows:
+        return
+
+    while True:
+        for r in upbit_rows:
+            ticker = r["ticker"]
+            market = r["market"]
+            try:
+                if ticker == "USDKRW=X":
+                    price, change_pct, data_time = common.get_upbit_krw_price()
+                else:  # market == "CRYPTO"
+                    price, change_pct, data_time = common.get_upbit_crypto_price(ticker)
+
+                if price == 0:
+                    log.warning(f"[{ticker}] Upbit 가격 0 — 건너뜀")
+                    continue
+                update_price_cache(ticker, price, change_pct, data_time)
+                log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
+            except Exception as e:
+                log.error(f"[{ticker}] Upbit 폴링 실패: {e}")
+
+        _notify()
+        await asyncio.sleep(UPBIT_POLL_INTERVAL)
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +458,7 @@ def _ticker_changed_listener(q: "queue.Queue"):
 # ---------------------------------------------------------------------------
 # 구독 갱신 감시 태스크 (이벤트 기반 — 5분 polling 대체)
 # ---------------------------------------------------------------------------
-async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set: set):
+async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set: set, prev_upbit_set: set):
     """
     ticker_changed 이벤트 수신 시에만 구독 대상을 재조회하고, 실제로 바뀐 경우에만
     웹소켓 재연결(프로세스 재시작)을 수행한다. sleep 기반 polling이 없다.
@@ -438,12 +479,13 @@ async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set
                 break
 
         holiday_cache.refresh_if_needed()
-        kr, us, yahoo = get_subscribe_targets()
+        kr, us, yahoo, upbit = get_subscribe_targets()
         kr_set    = set(kr)
         us_set    = {(r["ticker"], r["market"]) for r in us}
         yahoo_set = {(r["ticker"], r["market"]) for r in yahoo}
+        upbit_set = {(r["ticker"], r["market"]) for r in upbit}
 
-        if kr_set != prev_kr_set or us_set != prev_us_set or yahoo_set != prev_yahoo_set:
+        if kr_set != prev_kr_set or us_set != prev_us_set or yahoo_set != prev_yahoo_set or upbit_set != prev_upbit_set:
             log.info("ticker_changed 이벤트 — 구독 대상 변경 감지, 웹소켓 재연결 필요 (프로세스 재시작으로 처리)")
             # 현재는 프로세스 재시작으로 처리 (systemd Restart=always 활용)
             # 추후 동적 구독/해제 로직으로 개선 가능
@@ -453,6 +495,7 @@ async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set
         prev_kr_set    = kr_set
         prev_us_set    = us_set
         prev_yahoo_set = yahoo_set
+        prev_upbit_set = upbit_set
 
 
 # ---------------------------------------------------------------------------
@@ -540,10 +583,13 @@ def main():
     holiday_cache.refresh_if_needed()
 
     # 구독 대상 조회
-    kr_tickers, us_rows, yahoo_rows = get_subscribe_targets()
-    log.info(f"구독 대상 — KR: {len(kr_tickers)}개, US: {len(us_rows)}개, Yahoo: {len(yahoo_rows)}개")
+    kr_tickers, us_rows, yahoo_rows, upbit_rows = get_subscribe_targets()
+    log.info(
+        f"구독 대상 — KR: {len(kr_tickers)}개, US: {len(us_rows)}개, "
+        f"Yahoo: {len(yahoo_rows)}개, Upbit: {len(upbit_rows)}개"
+    )
 
-    if not kr_tickers and not us_rows and not yahoo_rows:
+    if not kr_tickers and not us_rows and not yahoo_rows and not upbit_rows:
         log.warning("현재 구독 대상 없음. 5분 후 재시작.")
         time.sleep(300)
         import os, sys
@@ -563,11 +609,17 @@ def main():
                 yahoo_poll_task(yahoo_rows)
             ))
 
+        if upbit_rows:
+            tasks.append(asyncio.create_task(
+                upbit_poll_task(upbit_rows)
+            ))
+
         tasks.append(asyncio.create_task(
             ticker_watcher_task(
                 set(kr_tickers),
                 {(r["ticker"], r["market"]) for r in us_rows},
                 {(r["ticker"], r["market"]) for r in yahoo_rows},
+                {(r["ticker"], r["market"]) for r in upbit_rows},
             )
         ))
 
