@@ -21,6 +21,7 @@ import asyncio
 import json
 import time
 import threading
+import queue
 from datetime import datetime, date
 
 import websockets
@@ -369,36 +370,89 @@ async def kr_final_close_task():
 
 
 # ---------------------------------------------------------------------------
-# 구독 갱신 감시 태스크
+# 공휴일 캐시 갱신 태스크
 # ---------------------------------------------------------------------------
-async def subscription_refresh_task():
+async def holiday_cache_refresh_task():
     """
-    매시간 장 상태를 재확인하고 구독 대상이 바뀌면 ws 태스크를 재시작한다.
-    (approval_key는 더 이상 이 태스크가 들고 있지 않음 — kis_ws_task가 재연결마다
-    kis_auth에서 직접 조회하므로 여기서 전달/보관할 필요가 없어짐)
+    holiday_cache.refresh_if_needed()를 주기적으로 호출한다.
+    refresh_if_needed() 내부에 08:00 KST 이후 하루 1회 가드가 있어 실제 외부 API 호출은
+    하루 1번뿐이므로, 여기서는 그 가드를 통과시키기 위한 트리거 역할만 한다.
+    요일/공휴일 판단(should_run_kr_final_close 등)과 무관하게 항상 동작해야 하므로
+    별도 task로 분리한다.
     """
-    # 초기 상태 저장
-    prev_kr, prev_us, prev_yahoo = get_subscribe_targets()
-    prev_kr_set  = set(prev_kr)
-    prev_us_set  = {(r["ticker"], r["market"]) for r in prev_us}
+    while True:
+        await asyncio.sleep(3600)
+        holiday_cache.refresh_if_needed()
+
+
+# ---------------------------------------------------------------------------
+# ticker_changed 이벤트 리스너 (별도 스레드)
+# ---------------------------------------------------------------------------
+def _ticker_changed_listener(q: "queue.Queue"):
+    """
+    별도 OS 스레드에서 Redis `ticker_changed` 채널을 blocking pubsub.listen()으로 구독한다.
+
+    settings.py의 _notify_ticker_changed() → publish_ticker_changed()가 티커 추가/삭제/변경
+    직후 이 채널에 신호를 발행한다. 여기서는 polling 없이 메시지가 올 때까지 순수 대기하다가,
+    수신 즉시 스레드 안전한 표준 queue.Queue에 넣어 메인 asyncio 루프(ticker_watcher_task)로
+    전달한다. queue.Queue.put()/get()은 그 자체로 스레드 안전하므로 별도 락이 필요 없다.
+
+    Redis 연결이 끊기면 예외 발생 시 5초 후 재구독을 시도한다 (짧은 순단 대비).
+    """
+    import redis as _redis
+    while True:
+        try:
+            r = _redis.Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
+            pubsub = r.pubsub()
+            pubsub.subscribe("ticker_changed")
+            log.info("[ticker_watcher] ticker_changed 채널 구독 시작")
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    q.put(1)
+        except Exception as e:
+            log.error(f"[ticker_watcher] Redis 구독 오류: {e} — 5초 후 재연결")
+            time.sleep(5)
+
+
+# ---------------------------------------------------------------------------
+# 구독 갱신 감시 태스크 (이벤트 기반 — 5분 polling 대체)
+# ---------------------------------------------------------------------------
+async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set: set):
+    """
+    ticker_changed 이벤트 수신 시에만 구독 대상을 재조회하고, 실제로 바뀐 경우에만
+    웹소켓 재연결(프로세스 재시작)을 수행한다. sleep 기반 polling이 없다.
+
+    prev_*_set: main()에서 최초 get_subscribe_targets() 결과로 시드한 현재 상태.
+    """
+    q: "queue.Queue" = queue.Queue()
+    threading.Thread(target=_ticker_changed_listener, args=(q,), daemon=True).start()
 
     while True:
-        await asyncio.sleep(300)  # 5분마다 체크
+        await asyncio.to_thread(q.get)  # 이벤트 올 때까지 블로킹 대기 (polling 아님)
+
+        # 짧은 시간 내 여러 changed 이벤트가 몰려도 한 번만 처리
+        while not q.empty():
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                break
 
         holiday_cache.refresh_if_needed()
         kr, us, yahoo = get_subscribe_targets()
-        kr_set  = set(kr)
-        us_set  = {(r["ticker"], r["market"]) for r in us}
+        kr_set    = set(kr)
+        us_set    = {(r["ticker"], r["market"]) for r in us}
+        yahoo_set = {(r["ticker"], r["market"]) for r in yahoo}
 
-        if kr_set != prev_kr_set or us_set != prev_us_set:
-            log.info("구독 대상 변경 감지 — 웹소켓 재연결 필요 (프로세스 재시작으로 처리)")
+        if kr_set != prev_kr_set or us_set != prev_us_set or yahoo_set != prev_yahoo_set:
+            log.info("ticker_changed 이벤트 — 구독 대상 변경 감지, 웹소켓 재연결 필요 (프로세스 재시작으로 처리)")
             # 현재는 프로세스 재시작으로 처리 (systemd Restart=always 활용)
             # 추후 동적 구독/해제 로직으로 개선 가능
             import os, sys
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-        prev_kr_set = kr_set
-        prev_us_set = us_set
+        prev_kr_set    = kr_set
+        prev_us_set    = us_set
+        prev_yahoo_set = yahoo_set
 
 
 # ---------------------------------------------------------------------------
@@ -462,11 +516,19 @@ def main():
             ))
 
         tasks.append(asyncio.create_task(
-            subscription_refresh_task()
+            ticker_watcher_task(
+                set(kr_tickers),
+                {(r["ticker"], r["market"]) for r in us_rows},
+                {(r["ticker"], r["market"]) for r in yahoo_rows},
+            )
         ))
 
         tasks.append(asyncio.create_task(
             kr_final_close_task()
+        ))
+
+        tasks.append(asyncio.create_task(
+            holiday_cache_refresh_task()
         ))
 
         await asyncio.gather(*tasks)
