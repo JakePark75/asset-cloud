@@ -71,6 +71,33 @@
   .chart-wrap { position: relative; width: 100%; height: 300px; background: #fff; border-radius: 10px; border: 1px solid #e5e5e0; padding: 8px; }
   .note { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.6; }
   .ref-hint { font-size: 11px; color: #999; margin-top: 4px; }
+
+  .section-title { font-size: 15px; font-weight: 700; margin: 28px 0 4px; }
+  .section-desc { font-size: 12px; color: #888; margin-bottom: 14px; }
+  .avg-card {
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid #e5e5e0;
+    padding: 16px;
+  }
+  .avg-inputs {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  @media (min-width: 520px) {
+    .avg-inputs { grid-template-columns: 1fr 1fr; }
+  }
+  .avg-result {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    padding-top: 14px;
+    border-top: 1px solid #eee;
+  }
+  .avg-result .stat-card { border: none; background: #f7f7f5; padding: 10px; }
+  .avg-result .stat-value { font-size: 18px; }
 </style>
 </head>
 <body>
@@ -169,6 +196,45 @@
   <br><br>
   ※ "일일 변동폭"은 사용자가 체감하기 쉬운 "하루 등락률 절대값의 평균" 기준으로 입력받고, 내부적으로 통계 계산에 필요한 표준편차로 환산해서 사용합니다.
 </p>
+
+<div class="section-title">🧮 물타기(추가매수) 계산기</div>
+<div class="section-desc">현재 시세로 비중을 추가 매수했을 때, 평단이 어떻게 바뀌고 수익률이 얼마나 회복되는지 계산합니다.</div>
+<div class="avg-card">
+  <div class="avg-inputs">
+    <div>
+      <label>현재 수익률</label>
+      <div class="row">
+        <input type="range" id="avgRet" min="-90" max="50" value="-20" step="1"/>
+        <input type="number" class="direct" id="avgRetNum" min="-90" max="50" step="1" value="-20"/>
+        <span class="out">%</span>
+      </div>
+    </div>
+    <div>
+      <label>비중 추가</label>
+      <div class="sublabel">현재 평가금액 대비 추가로 얼마를 더 넣나요?</div>
+      <div class="row">
+        <input type="range" id="avgAdd" min="0" max="300" value="50" step="1"/>
+        <input type="number" class="direct" id="avgAddNum" min="0" max="300" step="1" value="50"/>
+        <span class="out">%</span>
+      </div>
+    </div>
+  </div>
+  <div class="avg-result">
+    <div class="stat-card">
+      <div class="stat-label">현재 수익률</div>
+      <div class="stat-value" id="avgCurrentOut">-20.0%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">비중추가</div>
+      <div class="stat-value" id="avgAddOut">+50%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">예상 수익률</div>
+      <div class="stat-value" id="avgExpectedOut">-</div>
+    </div>
+  </div>
+  <div class="ref-hint" id="avgExplain"></div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
@@ -313,12 +379,63 @@ wirePair('sigma', 'sigmaNum', {resetNoise:true});
 wirePair('fee', 'feeNum');
 wirePair('borrow', 'borrowNum');
 
+// ---- 물타기(추가매수) 계산기 ----
+// 전제: 추가 매수는 "지금 이 순간의 시세"로 이루어진다.
+// 기존 투자원금 C, 현재 수익률 r 이면 현재 평가금액 V = C*(1+r)
+// "비중추가"는 현재 평가금액(V) 기준 비율 w 로 정의: 추가매수금액 A = V*w = C*(1+r)*w
+// 새 총원금 = C + A = C*(1 + (1+r)*w)
+// 새 총평가금액 = V + A = C*(1+r)*(1+w)  (새로 산 만큼은 매수 직후 본전이므로)
+// 새 수익률 = (새평가액-새원금)/새원금 = C*r / [C*(1+(1+r)*w)] = r / (1 + (1+r)*w)
+function calcAveraging(){
+  const r = parseFloat(els('avgRet').value)/100;      // 현재 수익률 (예: -0.20)
+  const w = parseFloat(els('avgAdd').value)/100;       // 비중 추가 비율, 현재 평가액 기준 (예: 0.50)
+
+  const newReturn = r / (1 + (1+r)*w);
+
+  els('avgCurrentOut').textContent = (r*100>=0?'+':'') + (r*100).toFixed(1) + '%';
+  els('avgAddOut').textContent = '+' + (w*100).toFixed(0) + '%';
+
+  const expEl = els('avgExpectedOut');
+  expEl.textContent = (newReturn*100>=0?'+':'') + (newReturn*100).toFixed(1) + '%';
+  expEl.className = 'stat-value ' + (newReturn<0 ? 'red' : 'green');
+  els('avgCurrentOut').className = 'stat-value ' + (r<0 ? 'red' : 'green');
+
+  const beforeAbs = Math.abs(r*100).toFixed(1);
+  const afterAbs = Math.abs(newReturn*100).toFixed(1);
+  els('avgExplain').textContent =
+    `현재 평가금액 대비 ${(w*100).toFixed(0)}%를 현재가로 추가 매수하면, 손익률의 절대값이 ${beforeAbs}% → ${afterAbs}%로 희석됩니다 (평단만 낮아질 뿐, 반등 없이는 손실 자체가 사라지진 않습니다).`;
+}
+
+wirePair2('avgRet', 'avgRetNum', calcAveraging);
+wirePair2('avgAdd', 'avgAddNum', calcAveraging);
+
+function wirePair2(rangeId, numId, onChange){
+  const rangeEl = els(rangeId);
+  const numEl = els(numId);
+  const min = parseFloat(rangeEl.min);
+  const max = parseFloat(rangeEl.max);
+
+  rangeEl.addEventListener('input', ()=>{
+    numEl.value = rangeEl.value;
+    onChange();
+  });
+  numEl.addEventListener('input', ()=>{
+    let v = parseFloat(numEl.value);
+    if(isNaN(v)) return;
+    v = clamp(v, min, max);
+    rangeEl.value = v;
+    onChange();
+  });
+  numEl.addEventListener('blur', ()=>{ numEl.value = rangeEl.value; });
+}
+
 els('lev2').addEventListener('click', ()=>{leverage=2; updateLabels(); simulate();});
 els('lev3').addEventListener('click', ()=>{leverage=3; updateLabels(); simulate();});
 els('reroll').addEventListener('click', ()=>{noiseSeed=null; simulate();});
 
 updateLabels();
 simulate();
+calcAveraging();
 </script>
 
 </body>
