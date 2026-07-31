@@ -456,6 +456,54 @@ async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set
 
 
 # ---------------------------------------------------------------------------
+# 시장 상태 변경 감시 태스크 (DB/Redis 접근 없이 순수 계산만 수행)
+# ---------------------------------------------------------------------------
+MARKET_STATUS_POLL_INTERVAL = 10  # 초
+
+
+async def market_status_watcher_task(kr_tickers: list, us_rows: list):
+    """
+    현재 구독 중인 market 코드(KR, NAS, NYS, AMS 등)의 상태(open/pre/after/closed)만
+    주기적으로 재계산해서 변경 여부를 감시한다.
+
+    get_market_status()는 순수 함수(DB/Redis 접근 없음)이므로, 이 태스크는 평상시
+    DB/Redis를 전혀 건드리지 않는다. 상태가 실제로 바뀐 경우에만 프로세스를 재시작하고,
+    재시작된 프로세스의 main()이 get_subscribe_targets()로 DB를 다시 조회해 구독 목록을
+    새로 계산한다.
+
+    ticker_watcher_task(종목 추가/삭제/변경 감시)와는 완전히 독립적으로 동작하며 서로의
+    상태를 참조하지 않는다. 두 태스크 모두 변경 감지 시 os.execv()로 프로세스 이미지
+    자체를 교체하므로, asyncio 싱글스레드 특성상 두 execv가 동시에 실행될 수 없어
+    충돌 가능성이 없다.
+    """
+    markets = set()
+    if kr_tickers:
+        markets.add("KR")
+    for r in us_rows:
+        markets.add(r["market"])
+
+    if not markets:
+        return
+
+    prev_status = {m: get_market_status(m) for m in markets}
+
+    while True:
+        await asyncio.sleep(MARKET_STATUS_POLL_INTERVAL)
+
+        curr_status = {m: get_market_status(m) for m in markets}
+
+        if curr_status != prev_status:
+            log.info(
+                f"[market_status_watcher] 시장상태 변경 감지 {prev_status} → {curr_status} "
+                "— 웹소켓 재연결 필요 (프로세스 재시작으로 처리)"
+            )
+            import os, sys
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        prev_status = curr_status
+
+
+# ---------------------------------------------------------------------------
 # 테스트 태스크
 # ---------------------------------------------------------------------------
 async def test_fx_toggle_task():
@@ -521,6 +569,10 @@ def main():
                 {(r["ticker"], r["market"]) for r in us_rows},
                 {(r["ticker"], r["market"]) for r in yahoo_rows},
             )
+        ))
+
+        tasks.append(asyncio.create_task(
+            market_status_watcher_task(kr_tickers, us_rows)
         ))
 
         tasks.append(asyncio.create_task(
