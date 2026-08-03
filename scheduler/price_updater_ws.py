@@ -8,14 +8,16 @@ config.json 의 realtime_quote = true 일 때 동작.
   - 주간거래(KST 10:00~18:00): US 웹소켓 구독 안 함 (closed 처리)
 
 [테스트 모드]
-  TEST_MODE = 0  정상 운영
-  TEST_MODE = 1  1초마다 USDKRW=X 를 1원씩 토글 후 신호 발행 (DOM patch 테스트)
+    TEST_FX_OFFSET_MODE = 0  정상 운영
+        TEST_FX_OFFSET_MODE = 1  실제 조회는 그대로 두고, USDKRW=X만 실조회값 기준 ±1원 오프셋
+                                후 신호 발행 (DOM patch 테스트)
 """
 
 # ---------------------------------------------------------------------------
 # 테스트 모드
 # ---------------------------------------------------------------------------
-TEST_MODE = 0  # 0: 정상, 1: USDKRW=X 1원 토글
+TEST_FX_OFFSET_MODE = 0  # 0: 정상, 1: USDKRW=X 실조회값 기준 ±1원 오프셋
+TEST_FX_OFFSET = 1.0
 
 import asyncio
 import json
@@ -163,6 +165,29 @@ def _notify():
     except Exception as e:
         log.error(f"신호 발행 실패: {e}")
 
+
+def _apply_test_fx_offset(ticker: str, price: float, change_pct: float) -> tuple[float, float]:
+    """
+    TEST_FX_OFFSET_MODE=1일 때만 USDKRW=X를 실제 조회값 기준으로 +/- 1원 흔든다.
+    다른 종목은 그대로 반환한다.
+    """
+    if TEST_FX_OFFSET_MODE != 1 or ticker != "USDKRW=X" or price == 0:
+        return price, change_pct
+
+    direction = 1 if int(time.time()) % 2 == 0 else -1
+    adjusted_price = price + (TEST_FX_OFFSET * direction)
+
+    try:
+        prev_close = price / (1 + (change_pct / 100.0)) if change_pct else price
+        if prev_close:
+            adjusted_change_pct = round((adjusted_price - prev_close) / prev_close * 100, 2)
+        else:
+            adjusted_change_pct = change_pct
+    except Exception:
+        adjusted_change_pct = change_pct
+
+    return adjusted_price, adjusted_change_pct
+
 # ---------------------------------------------------------------------------
 # US tr_key → DB ticker 역매핑 테이블
 # (prefix 4자리 제거)
@@ -244,6 +269,7 @@ async def yahoo_poll_task(yahoo_rows: list):
                 if price == 0:
                     log.warning(f"[{ticker}] Yahoo 가격 0 — 건너뜀")
                     continue
+                price, change_pct = _apply_test_fx_offset(ticker, price, change_pct)
                 update_price_cache(ticker, price, change_pct, data_time)
                 log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
             except Exception as e:
@@ -277,6 +303,7 @@ async def upbit_poll_task(upbit_rows: list):
                 if price == 0:
                     log.warning(f"[{ticker}] Upbit 가격 0 — 건너뜀")
                     continue
+                price, change_pct = _apply_test_fx_offset(ticker, price, change_pct)
                 update_price_cache(ticker, price, change_pct, data_time)
                 log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
             except Exception as e:
@@ -547,36 +574,13 @@ async def market_status_watcher_task(kr_tickers: list, us_rows: list):
 
 
 # ---------------------------------------------------------------------------
-# 테스트 태스크
-# ---------------------------------------------------------------------------
-async def test_fx_toggle_task():
-    """TEST_MODE=1: 1초마다 USDKRW=X 를 1원씩 토글."""
-    from common.redis_store import recalc_today_row, publish_price_updated, get_all_prices
-    toggle = False
-    while True:
-        prices = get_all_prices()
-        fx = prices.get("USDKRW=X")
-        base = float(fx["price"]) if fx else 1300.0
-        chg  = float(fx["change_pct"]) if fx else 0.0
-        new_price = base + (1.0 if toggle else -1.0)
-        toggle = not toggle
-        update_price_cache("USDKRW=X", new_price, chg)
-        log.info(f"[TEST] USDKRW=X → {new_price:.2f}")
-        recalc_today_row()
-        publish_price_updated()
-        await asyncio.sleep(2)
-
-
-# ---------------------------------------------------------------------------
 # 메인
 # ---------------------------------------------------------------------------
 def main():
     load_config()
 
-    if TEST_MODE == 1:
-        log.info("price_updater_ws (TEST_MODE=1) 시작 — USDKRW=X 1원 토글")
-        asyncio.run(test_fx_toggle_task())
-        return
+    if TEST_FX_OFFSET_MODE == 1:
+        log.info("price_updater_ws (TEST_FX_OFFSET_MODE=1) 시작 — 기존 시세조회 유지, USDKRW=X만 실조회값 기준 ±1원 오프셋")
 
     log.info("price_updater (웹소켓 모드) 시작")
 
