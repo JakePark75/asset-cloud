@@ -541,51 +541,73 @@ async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set
 
 
 # ---------------------------------------------------------------------------
-# 시장 상태 변경 감시 태스크 (DB/Redis 접근 없이 순수 계산만 수행)
+# 시장 상태 변경 감시 태스크
+# (태스크 시작 시 1회만 DB 조회, 이후 폴링 루프는 DB/Redis 접근 없이 순수 계산만 수행)
 # ---------------------------------------------------------------------------
 MARKET_STATUS_POLL_INTERVAL = 10  # 초
 
 
-async def market_status_watcher_task(kr_tickers: list, us_rows: list):
+async def market_status_watcher_task():
     """
-    현재 구독 중인 market 코드(KR, NAS, NYS, AMS 등)의 상태(open/pre/after/closed)만
-    주기적으로 재계산해서 변경 여부를 감시한다.
+    감시 대상 market 목록을 "그 순간 구독 중이던 마켓"이 아니라, DB tickers 테이블에
+    실제로 존재하는 마켓(상태 무관)을 기준으로 정한다. 이렇게 해야 재시작 시점에
+    KR/US가 전부 휴장 중이어서 markets가 비는 바람에 태스크 자체가 죽고, 이후 장이
+    열려도 재시작 트리거가 영구히 사라지는 문제를 막을 수 있다.
 
-    get_market_status()는 순수 함수(DB/Redis 접근 없음)이므로, 이 태스크는 평상시
-    DB/Redis를 전혀 건드리지 않는다. 상태가 실제로 바뀐 경우에만 프로세스를 재시작하고,
-    재시작된 프로세스의 main()이 get_subscribe_targets()로 DB를 다시 조회해 구독 목록을
-    새로 계산한다.
+    DB 조회는 태스크 시작 시 1회만 수행한다. 이후 10초 폴링 루프 안에서는
+    get_market_status()(순수 함수, DB/Redis 접근 없음)만 호출한다.
+
+    DB 조회 실패 시 별도 방어 로직을 두지 않는다. 예외가 그대로 전파되면
+    asyncio.gather() 전체가 종료되어 프로세스가 크래시하고, systemd
+    (Restart=on-failure, RestartSec=10)가 재시작하면서 main()이
+    get_subscribe_targets()로 구독 목록을 다시 계산한다.
+
+    상태 비교는 원시 상태값(open/pre/after/closed)이 아니라 "closed 여부"만으로
+    정규화해서 비교한다. US 종목은 pre/open/after 전체가 동일 tr_key로 구독되므로,
+    pre→open, open→after 같은 활성 상태 간 전환은 재구독이 필요 없다. "closed ↔
+    활성" 전환일 때만 재시작한다.
 
     ticker_watcher_task(종목 추가/삭제/변경 감시)와는 완전히 독립적으로 동작하며 서로의
     상태를 참조하지 않는다. 두 태스크 모두 변경 감지 시 os.execv()로 프로세스 이미지
     자체를 교체하므로, asyncio 싱글스레드 특성상 두 execv가 동시에 실행될 수 없어
     충돌 가능성이 없다.
     """
-    markets = set()
-    if kr_tickers:
-        markets.add("KR")
-    for r in us_rows:
-        markets.add(r["market"])
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT market FROM tickers")
+            existing_markets = {r[0] for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+    markets = {
+        m for m in existing_markets
+        if common.config.get("market_map", {}).get(m, {}).get("market_time") in ("KR", "US")
+    }
 
     if not markets:
         return
 
-    prev_status = {m: get_market_status(m) for m in markets}
+    def _active_snapshot() -> dict:
+        # "closed 여부"만으로 정규화 — True(활성) / False(closed)
+        return {m: (get_market_status(m) != "closed") for m in markets}
+
+    prev_active = _active_snapshot()
 
     while True:
         await asyncio.sleep(MARKET_STATUS_POLL_INTERVAL)
 
-        curr_status = {m: get_market_status(m) for m in markets}
+        curr_active = _active_snapshot()
 
-        if curr_status != prev_status:
+        if curr_active != prev_active:
             log.info(
-                f"[market_status_watcher] 시장상태 변경 감지 {prev_status} → {curr_status} "
+                f"[market_status_watcher] 시장상태(활성/휴장) 변경 감지 {prev_active} → {curr_active} "
                 "— 웹소켓 재연결 필요 (프로세스 재시작으로 처리)"
             )
             import os, sys
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-        prev_status = curr_status
+        prev_active = curr_active
 
 
 # ---------------------------------------------------------------------------
@@ -643,7 +665,7 @@ def main():
         ))
 
         tasks.append(asyncio.create_task(
-            market_status_watcher_task(kr_tickers, us_rows)
+            market_status_watcher_task()
         ))
 
         tasks.append(asyncio.create_task(
