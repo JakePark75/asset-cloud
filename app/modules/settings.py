@@ -1,4 +1,5 @@
 from shiny import ui, module, reactive
+from shiny.types import SilentException
 from app.db import get_db, get_config, save_config, get_market_currency, get_market_map
 from app.modules.components import fmt_change
 from app.price_signal import price_signal, ticker_signal
@@ -328,6 +329,9 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
 
         current_tickers = [r[0] for r in rows]
         structure_changed = (current_tickers != _last_tickers)
+        print(f"[SETTINGS_DEBUG] === cycle start === "
+              f"structure_changed={structure_changed} current_tickers={current_tickers} "
+              f"_last_tickers={_last_tickers}")
 
         # structure_changed: 전체 필요 / tick: 자동 숨김 시 is_manual만
         def _build_ticker_values(include_auto: bool):
@@ -351,6 +355,8 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 for ticker, name, market, leverage, is_manual in rows
             )
             ticker_values = _build_ticker_values(include_auto=True)
+            print(f"[SETTINGS_DEBUG] structure_changed branch: sending st_init, "
+                  f"ticker_values_keys={list(ticker_values.keys())}")
             await session.send_custom_message("st_init", {
                 "interval":         cfg.get("interval", 1),
                 "ticker_list_html": ticker_list_html,
@@ -361,9 +367,16 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 },
             })
         else:
-            auto_hidden = (input.auto_hidden() or '1') == '1'
+            try:
+                auto_hidden_val = input.auto_hidden()
+            except SilentException:
+                auto_hidden_val = None
+            auto_hidden = (auto_hidden_val or '1') == '1'
             ticker_values = _build_ticker_values(include_auto=not auto_hidden)
             dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
+            print(f"[SETTINGS_DEBUG] else branch: auto_hidden={auto_hidden} "
+                  f"ticker_values_keys={list(ticker_values.keys())} "
+                  f"dyn_diff={dyn_diff} sta_diff={sta_diff}")
             if dyn_diff:
                 await session.send_custom_message("st_tick", dyn_diff)
             if sta_diff:

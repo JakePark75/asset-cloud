@@ -5,7 +5,11 @@ def settings_js() -> str:
     return """
 (function() {
 
+  var _stDynamicCache = {}; // ticker id -> {price, chg, chg_css} 마지막 값 캐시 (부분 diff 병합용)
+
   Shiny.addCustomMessageHandler('st_init', function(m) {
+    _stDynamicCache = {};
+
     var toggle = document.getElementById('st-realtime-toggle');
     if (toggle) toggle.checked = (m.interval === 0);
 
@@ -148,22 +152,30 @@ def settings_js() -> str:
     }
   }
 
-  // st_tick용: dynamic 필드만 (수신된 필드만 존재)
+  // st_tick용: dynamic 필드만 (수신된 필드만 존재) — 부분 필드를 캐시에 병합해서 렌더링.
+  // diff_display_split이 변경된 필드만 보내므로(price만 오거나 chg만 오는 경우 있음),
+  // 수신 필드만으로 innerHTML을 다시 쓰면 안 온 필드가 사라진다. 마지막 값을 캐시해두고 병합한다.
   function _applyOneTickerDynamic(t) {
     var row = document.getElementById('st-row-' + t.id);
     if (row && row.dataset.auto && row.style.display === 'none') return;
 
-    if (t.price != null || t.chg != null || t.chg_css != null) {
-      var chgEl = document.getElementById('st-change-' + t.id);
-      if (chgEl) {
-        if (t.chg) {
-          chgEl.innerHTML =
-            (t.price ? '<span class="' + t.chg_css + '" style="margin-right:4px;">' + t.price + '</span>' : '') +
-            '<span class="' + t.chg_css + '">' + t.chg + '</span>';
-        } else {
-          chgEl.innerHTML = '';
-        }
-      }
+    if (t.price == null && t.chg == null && t.chg_css == null) return;
+
+    var cache = _stDynamicCache[t.id] || {};
+    if (t.price != null)   cache.price   = t.price;
+    if (t.chg != null)     cache.chg     = t.chg;
+    if (t.chg_css != null) cache.chg_css = t.chg_css;
+    _stDynamicCache[t.id] = cache;
+
+    var chgEl = document.getElementById('st-change-' + t.id);
+    if (!chgEl) return;
+
+    if (cache.chg) {
+      chgEl.innerHTML =
+        (cache.price ? '<span class="' + cache.chg_css + '" style="margin-right:4px;">' + cache.price + '</span>' : '') +
+        '<span class="' + cache.chg_css + '">' + cache.chg + '</span>';
+    } else {
+      chgEl.innerHTML = '';
     }
   }
 
