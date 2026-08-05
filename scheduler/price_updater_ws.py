@@ -71,7 +71,7 @@ US_IDX_CHANGE_PCT = 14
 YAHOO_POLL_INTERVAL = 10
 
 # Upbit 폴링 주기 (초) — FX(USDKRW=X)/CRYPTO 전용, Yahoo와 별개로 빠르게 설정 가능
-UPBIT_POLL_INTERVAL = 10
+UPBIT_POLL_INTERVAL = 1
 
 # 웹소켓 재연결 대기 (초)
 WS_RECONNECT_DELAY = 10
