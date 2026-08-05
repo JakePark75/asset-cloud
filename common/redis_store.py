@@ -351,7 +351,7 @@ def recalc_today_row() -> None:
     _t0 = datetime.datetime.now(KST)
 
     if not _recalc_lock.acquire(blocking=False):
-        print(f"[DEBUG-RECALC] {_t0} SKIP (lock busy)")
+        # print(f"[DEBUG-RECALC] {_t0} SKIP (lock busy)")
         return  # 이미 계산 중
 
     try:
@@ -384,14 +384,14 @@ def recalc_today_row() -> None:
         # 4. positions (is_watch=false 계좌만) — Redis 캐시 우선, 미스 시 DB로 채운 뒤 사용
         position_rows = get_position_cache()
         if position_rows is None:
-            print(f"[DEBUG-RECALC] {_t0} position_cache miss — DB로 채움")
+            # print(f"[DEBUG-RECALC] {_t0} position_cache miss — DB로 채움")
             refresh_position_cache()
             position_rows = get_position_cache() or []
 
         # 5. 전일 (total_asset, twr_asset) — Redis 캐시 우선, 미스 시 DB로 채운 뒤 사용
         prev = get_daily_summary_cache()
         if prev is None:
-            print(f"[DEBUG-RECALC] {_t0} daily_summary_cache miss — DB로 채움")
+            # print(f"[DEBUG-RECALC] {_t0} daily_summary_cache miss — DB로 채움")
             refresh_daily_summary_cache()
             prev = get_daily_summary_cache()  # 그래도 None이면 실제로 이력이 없는 것(최초 실행)
 
@@ -450,8 +450,8 @@ def recalc_today_row() -> None:
         if r:
             r.set("today_row", json.dumps(today_row))
 
-        print(f"[DEBUG-RECALC] {_t0} DONE total_asset={total_asset} "
-              f"elapsed={(datetime.datetime.now(KST) - _t0).total_seconds():.3f}s")
+        # print(f"[DEBUG-RECALC] {_t0} DONE total_asset={total_asset} "
+        #       f"elapsed={(datetime.datetime.now(KST) - _t0).total_seconds():.3f}s")
 
     except Exception as e:
         print(f"[DEBUG-RECALC] {_t0} FAILED: {e}")
