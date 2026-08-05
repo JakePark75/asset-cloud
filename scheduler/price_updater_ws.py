@@ -146,7 +146,7 @@ def _save_price(ticker: str, price: float, change_pct: float):
         return
     try:
         update_price_cache(ticker, price, change_pct, None)
-        log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
+        log.debug(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
     except Exception as e:
         log.error(f"[{ticker}] 저장 실패: {e}")
 
@@ -161,7 +161,7 @@ def _notify():
         from common.redis_store import recalc_today_row, publish_price_updated
         recalc_today_row()
         publish_price_updated()
-        log.info("price_updated 신호 발행 (Redis)")
+        log.debug("price_updated 신호 발행 (Redis)")
     except Exception as e:
         log.error(f"신호 발행 실패: {e}")
 
@@ -271,7 +271,7 @@ async def yahoo_poll_task(yahoo_rows: list):
                     continue
                 price, change_pct = _apply_test_fx_offset(ticker, price, change_pct)
                 update_price_cache(ticker, price, change_pct, data_time)
-                log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
+                log.debug(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
             except Exception as e:
                 log.error(f"[{ticker}] Yahoo 폴링 실패: {e}")
 
@@ -305,7 +305,7 @@ async def upbit_poll_task(upbit_rows: list):
                     continue
                 price, change_pct = _apply_test_fx_offset(ticker, price, change_pct)
                 update_price_cache(ticker, price, change_pct, data_time)
-                log.info(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
+                log.debug(f"[{ticker}] {price:,.4f} ({change_pct:+.2f}%)")
             except Exception as e:
                 log.error(f"[{ticker}] Upbit 폴링 실패: {e}")
 
@@ -386,7 +386,7 @@ async def kis_ws_task(kr_tickers: list, us_rows: list):
 
                     elif tr_id == "HDFSCNT0":
 
-                        log.info(f"HDFSCNT0 RAW={data_str}")
+                        log.debug(f"HDFSCNT0 RAW={data_str}")
 
                         result = parse_us(data_str)
                         if result:
@@ -408,7 +408,7 @@ async def kis_ws_task(kr_tickers: list, us_rows: list):
                                     formatted_time = kor_time
                                 
                                 # ⭐ 실시간 KST 로그 출력
-                                log.info(f"[US] {db_ticker} 현재가: {price} ({change_pct}%) | 체결시각(KST): {formatted_time}")
+                                log.debug(f"[US] {db_ticker} 현재가: {price} ({change_pct}%) | 체결시각(KST): {formatted_time}")
                             else:
                                 log.warning(f"[US] 매핑 실패: {symb}")
 
@@ -514,6 +514,21 @@ async def ticker_watcher_task(prev_kr_set: set, prev_us_set: set, prev_yahoo_set
 
         if kr_set != prev_kr_set or us_set != prev_us_set or yahoo_set != prev_yahoo_set or upbit_set != prev_upbit_set:
             log.info("ticker_changed 이벤트 — 구독 대상 변경 감지, 웹소켓 재연결 필요 (프로세스 재시작으로 처리)")
+
+            # 어떤 마켓에서 무엇이 추가/삭제됐는지 diff 로그 (구독 타이밍 디버깅용)
+            for label, prev, curr in (
+                ("KR", prev_kr_set, kr_set),
+                ("US", prev_us_set, us_set),
+                ("Yahoo", prev_yahoo_set, yahoo_set),
+                ("Upbit", prev_upbit_set, upbit_set),
+            ):
+                added   = curr - prev
+                removed = prev - curr
+                if added:
+                    log.info(f"[{label}] 구독 추가: {sorted(added)}")
+                if removed:
+                    log.info(f"[{label}] 구독 제거: {sorted(removed)}")
+
             # 현재는 프로세스 재시작으로 처리 (systemd Restart=always 활용)
             # 추후 동적 구독/해제 로직으로 개선 가능
             import os, sys

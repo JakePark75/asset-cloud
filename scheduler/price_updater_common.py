@@ -52,10 +52,31 @@ FX_SOURCE = "upbit"
 
 
 # ---------------------------------------------------------------------------
+# 고빈도 로그 on/off
+# ---------------------------------------------------------------------------
+# True로 바꾸면 틱 단위로 발생하는 고빈도 로그(시세 원본/개별 저장/신호발행 등)까지
+# 전부 출력된다. False(기본)면 해당 로그는 DEBUG 레벨로 남고, 아래 logging.basicConfig()의
+# level=INFO보다 낮은 레벨이라 로거 단계에서 걸러져 콘솔/로그파일 어디에도 기록되지 않는다.
+# (구독 대상/개별 구독/연결 상태/WS 서버 응답/에러·경고 등은 이 값과 무관하게 항상 출력됨)
+VERBOSE_PRICE_LOG = False
+
+# ---------------------------------------------------------------------------
 # 로깅
 # ---------------------------------------------------------------------------
+# 서버 시스템 타임존이 UTC(Etc/UTC)이므로, logging.Formatter.converter를 교체해
+# 로그 표시 시각만 KST로 변환한다. 서버 시스템 시간/DB/다른 서비스에는 영향 없음.
+# (logging.Formatter.converter는 클래스 속성이라 이 프로세스 내 모든 로거에 적용됨)
+_KST = pytz.timezone("Asia/Seoul")
+
+
+def _kst_time_converter(*args):
+    return datetime.now(_KST).timetuple()
+
+
+logging.Formatter.converter = _kst_time_converter
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if VERBOSE_PRICE_LOG else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         RotatingFileHandler(LOG_FILE, maxBytes=1*1024*1024, backupCount=3, encoding="utf-8"),
