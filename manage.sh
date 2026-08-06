@@ -89,7 +89,7 @@ show_service_menu() {
         local svc="${SERVICES[$((svc_choice-1))]}"
         if [ "$action" = "log" ]; then
             echo "--- $svc 로그 (Ctrl+C로 종료) ---"
-            sudo journalctl -u $svc -f
+            sudo journalctl -u $svc -n100 -f
         else
             sudo systemctl $action $svc
             echo ""
