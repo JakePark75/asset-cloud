@@ -28,12 +28,18 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 LOG_FILE    = os.path.join(BASE_DIR, "price_updater.log")
 
 # ---------------------------------------------------------------------------
-# 시장 마감/시간외종가 개시 후 안전마진 (분)
-#  - KR  조회중단: 15:30 + 이 값
-#  - KR  종가확정 1회 조회: 15:40 + 이 값
-#  - US  pre/after 경계에도 동일 적용
+# 시장 상태(open/pre/after) 판정 안전마진 (분)
+#  - KR/US open/pre/after 경계에 적용
+#  - 2026-08-07: 구독 결정에 더 이상 안 쓰이고 UI 표시용으로만 남아 0으로 낮춤.
+#    나중에 다시 필요해지면 이 값만 올리면 됨(수식은 그대로 유지).
 # ---------------------------------------------------------------------------
-MARKET_CLOSE_BUFFER_MIN = 5
+MARKET_CLOSE_BUFFER_MIN = 0
+
+# ---------------------------------------------------------------------------
+# KR 종가 확정 1회 조회 안전마진 (분) — 15:40(시간외종가매매 개시) + 이 값
+#  - market status 버퍼와 용도가 달라 2026-08-07부터 별도 상수로 분리.
+# ---------------------------------------------------------------------------
+KR_FINAL_CLOSE_BUFFER_MIN = 5
 
 # ---------------------------------------------------------------------------
 # 실시간 크립토 소스 선택
@@ -418,7 +424,7 @@ def get_kr_price(ticker):
 # KR 종가 1회성 확정 조회
 #
 # 정책:
-#   - 15:40(시간외종가매매 개시) + MARKET_CLOSE_BUFFER_MIN 이후,
+#   - 15:40(시간외종가매매 개시) + KR_FINAL_CLOSE_BUFFER_MIN 이후,
 #     하루 1회만 KR 전 종목의 현재가(inquire-price)를 조회해 그날의 종가로 기록.
 #   - 이 시각엔 시간외종가매매가 "당일 종가"로만 체결되므로 이 값이 곧 종가.
 #   - WS/REST 어느 쪽이 떠 있어도 동일하게 호출 가능 (전역 플래그로 1일 1회 보장).
@@ -444,7 +450,7 @@ def should_run_kr_final_close() -> bool:
             return False
 
         now_min    = now_local.hour * 60 + now_local.minute
-        target_min = 15 * 60 + 40 + MARKET_CLOSE_BUFFER_MIN
+        target_min = 15 * 60 + 40 + KR_FINAL_CLOSE_BUFFER_MIN
         if now_min < target_min:
             return False
 
