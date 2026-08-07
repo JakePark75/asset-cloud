@@ -68,17 +68,27 @@ def asset_ui():
     var el = document.getElementById(id); if (el) el.innerHTML = val;
   }
 
+  // hero_text는 diff_display(depth=2)로 필드 단위 부분 갱신됨: 텍스트(usd_text/delta_text)와
+  // 색상값(usd_chg_val/delta_val)이 서로 다른 시점에 독립적으로 전송될 수 있음.
+  // settings_js.py(_stDynamicCache)와 동일하게, 색상값은 캐시에 병합해두고 항상 캐시된
+  // 최신값으로 className을 렌더링해야 "텍스트만 갱신되고 색은 과거 값에 고착"되는 걸 막을 수 있다.
+  var _heroCache = {}; // delta_val, usd_chg_val 마지막 값 캐시 (부분 diff 병합용)
+
   Shiny.addCustomMessageHandler('asset_hero_update', function(m) {
     if (m.hero_text) {
       if (m.hero_text.total_asset != null) setText('asset-hero-amount', m.hero_text.total_asset);
+
       var dEl = document.getElementById('asset-hero-delta-text');
       if (dEl) {
         if (m.hero_text.delta_text != null) dEl.textContent = m.hero_text.delta_text;
-        if (m.hero_text.delta_val  != null) dEl.className = 'db-hero-delta ' + pnlClass(m.hero_text.delta_val);
+        if (m.hero_text.delta_val != null) _heroCache.delta_val = m.hero_text.delta_val;
+        if (_heroCache.delta_val != null) dEl.className = 'db-hero-delta ' + pnlClass(_heroCache.delta_val);
       }
+
       if (m.hero_text.usd_text != null) setText('asset-hero-usd-text', m.hero_text.usd_text);
       var uEl = document.getElementById('asset-hero-usd-text');
-      if (uEl && m.hero_text.usd_chg_val != null) uEl.className = pnlClass(m.hero_text.usd_chg_val);
+      if (m.hero_text.usd_chg_val != null) _heroCache.usd_chg_val = m.hero_text.usd_chg_val;
+      if (uEl && _heroCache.usd_chg_val != null) uEl.className = pnlClass(_heroCache.usd_chg_val);
     }
     if (m.hero_chart_svg !== undefined) {
       setHTML('asset-hero-chart-inner', m.hero_chart_svg);
