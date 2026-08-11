@@ -33,10 +33,19 @@ config.json 의 realtime_quote = true 일 때 동작.
 """
 
 # ---------------------------------------------------------------------------
-# 테스트 모드
+# 옵션 상수
 # ---------------------------------------------------------------------------
 TEST_FX_OFFSET_MODE = 0  # 0: 정상, 1: USDKRW=X 실조회값 기준 ±1원 오프셋
 TEST_FX_OFFSET = 1.0
+
+# KR 종가 1회성 확정 조회(REST) 사용 여부.
+# 2026-08-12 기준: WS 캐시값과 REST 확정값 비교 로그 2거래일 연속 전 종목 일치 확인,
+# 그리고 최종 종가는 매일 오전 Yahoo 재조회로 다시 덮어써지므로 이 REST 조회가 없어도
+# 최악의 경우 몇 시간 정도 오차가 다음날 아침 자동 정정되는 수준 — 제거해도 되는 상태.
+# 다만 만약을 대비해 코드는 남겨두고 이 상수로 켜고 끌 수 있게 함. False로 바꾸면
+# kr_final_close_task()가 매 루프 아무 것도 안 하고 그냥 sleep만 반복한다.
+# 변경 시 서비스 재시작 필요(다른 상수들과 동일).
+KR_FINAL_CLOSE_ENABLED = False
 
 import asyncio
 import json
@@ -462,7 +471,17 @@ async def kis_ws_task(shared: SharedState):
                 f"KIS 웹소켓 연결 시도: {WS_URL} (KR {len(kr_tickers)}개, US {len(us_rows)}개)"
             )
 
-            async with websockets.connect(WS_URL, ping_interval=None) as ws:
+            # [2026-08-07 실험] ping_interval=None(프로토콜 레벨 keepalive 비활성화)이던 것을
+            # 되돌림. KIS 텍스트 "PINGPONG"(애플리케이션 레벨, 아래 497행대에서 별도 처리)과는
+            # 다른 계층(WS 표준 ping/pong 프레임, opcode 0x9/0xA)이라 서로 간섭 없음
+            # (websockets 공식 문서 확인). 20초마다 소켓에 트래픽이 흐르게 해서, 데이터가
+            # 안 흐르는 구간에 "no close frame received or sent"로 재연결되던 문제
+            # (약 100~103초 간격, 매우 규칙적)가 NAT/방화벽 등의 idle timeout 때문일 가능성을
+            # 테스트한다. 효과 없으면 원인이 다른 곳(예: KIS 서버 측 정책)에 있다는 뜻이므로
+            # ping_interval=None으로 되돌리고 다른 가설을 봐야 한다.
+            async with websockets.connect(
+                WS_URL, ping_interval=20, ping_timeout=20
+            ) as ws:
                 log.info("KIS 웹소켓 연결됨")
 
                 shared.us_ticker_set = {r["ticker"] for r in us_rows}
@@ -580,6 +599,8 @@ async def kis_ws_task(shared: SharedState):
 async def kr_final_close_task():
     while True:
         await asyncio.sleep(60)
+        if not KR_FINAL_CLOSE_ENABLED:
+            continue
         if should_run_kr_final_close():
             run_kr_final_close_update()
 

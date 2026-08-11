@@ -475,12 +475,34 @@ def run_kr_final_close_update():
 
     log.info(f"KR 종가 확정 조회 시작 — {len(tickers)}개")
 
+    from common.redis_store import get_price
+
     def _worker(ticker):
         try:
+            # 덮어쓰기 전 캐시값 = WS가 마지막으로 남긴 값 (비교용, 실패해도 종가 조회 자체는 진행)
+            try:
+                prev = get_price(ticker)
+            except Exception as e:
+                log.warning(f"[{ticker}] WS 캐시값 조회 실패(비교 건너뜀): {e}")
+                prev = None
+
             price, change_pct = get_kr_price(ticker)
             if price == 0:
                 log.warning(f"[{ticker}] KR 종가 가격 0 — 건너뜀")
                 return
+
+            if prev is not None and prev.get("price") is not None:
+                diff = price - prev["price"]
+                if abs(diff) > 0.0001:
+                    log.warning(
+                        f"[{ticker}] WS 캐시값과 REST 확정 종가 불일치: "
+                        f"WS={prev['price']:,.4f} REST={price:,.4f} diff={diff:+.4f}"
+                    )
+                else:
+                    log.info(f"[{ticker}] WS 캐시값과 REST 확정 종가 일치: {price:,.4f}")
+            else:
+                log.info(f"[{ticker}] WS 캐시값 없음(비교 불가) — REST 종가만 기록: {price:,.4f}")
+
             update_price_cache(ticker, price, change_pct, None)
             log.info(f"[{ticker}] KR 종가: {price:,.4f} ({change_pct:+.2f}%)")
         except Exception as e:
