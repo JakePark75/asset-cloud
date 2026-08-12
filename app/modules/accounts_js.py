@@ -314,6 +314,88 @@ def accounts_js(market_currency_map_js: str) -> str:
     }
   });
 
+  // ── 종목명 자동완성 (현재 계좌에 없는 기존 보유 종목 검색) ─────────────
+  // 티커/시장/레버리지는 tickers 테이블 기준 하나로 고정되어 있으므로,
+  // 검색 결과를 클릭하면 재조회 없이 그 값을 그대로 채운다.
+  var _nameSearchTimer = null;
+
+  window.acHandleNameInput = function() {
+    var nameEl      = document.getElementById('ac-new-pos-name');
+    var query       = nameEl ? nameEl.value.trim() : '';
+    var dropdownEl  = document.getElementById('ac-new-pos-name-dropdown');
+
+    if (_nameSearchTimer) clearTimeout(_nameSearchTimer);
+
+    if (!query) {
+      if (dropdownEl) { dropdownEl.innerHTML = ''; dropdownEl.style.display = 'none'; }
+      return;
+    }
+
+    _nameSearchTimer = setTimeout(function() {
+      Shiny.setInputValue(window._acNs + '-search_ticker_name', query, {priority: 'event'});
+    }, 300);
+  };
+
+  Shiny.addCustomMessageHandler('ac_ticker_name_search_result', function(m) {
+    var nameEl     = document.getElementById('ac-new-pos-name');
+    var dropdownEl = document.getElementById('ac-new-pos-name-dropdown');
+    if (!dropdownEl) return;
+
+    // 응답이 오는 사이 입력값이 바뀌었으면(레이스 컨디션) 무시
+    var curQuery = nameEl ? nameEl.value.trim() : '';
+    if (m.query !== curQuery) return;
+
+    if (!m.results || m.results.length === 0) {
+      dropdownEl.innerHTML = '';
+      dropdownEl.style.display = 'none';
+      return;
+    }
+
+    dropdownEl.innerHTML = m.results.map(function(r) {
+      var badge = (r.leverage && r.leverage > 1)
+        ? '<span class="lev-badge lev-x' + r.leverage + '">x' + r.leverage + '</span>'
+        : '';
+      var safeName = String(r.name).replace(/"/g, '&quot;');
+      return (
+        '<div class="ac-autocomplete-item" ' +
+        'data-ticker="' + r.ticker + '" ' +
+        'data-name="' + safeName + '" ' +
+        'data-market="' + r.market + '" ' +
+        'data-leverage="' + r.leverage + '" ' +
+        'onclick="acSelectAutocompleteTicker(this);">' +
+          '<span class="ac-autocomplete-name">' + r.name + '</span>' + badge +
+        '</div>'
+      );
+    }).join('');
+    dropdownEl.style.display = '';
+  });
+
+  window.acSelectAutocompleteTicker = function(el) {
+    var tickerEl   = document.getElementById('ac-new-pos-ticker');
+    var nameEl     = document.getElementById('ac-new-pos-name');
+    var marketEl   = document.getElementById('ac-new-pos-market');
+    var leverageEl = document.getElementById('ac-new-pos-leverage');
+    var dropdownEl = document.getElementById('ac-new-pos-name-dropdown');
+
+    if (tickerEl)   tickerEl.value   = el.getAttribute('data-ticker');
+    if (nameEl)     nameEl.value     = el.getAttribute('data-name');
+    if (marketEl)   marketEl.value   = el.getAttribute('data-market');
+    if (leverageEl) leverageEl.value = el.getAttribute('data-leverage');
+
+    if (dropdownEl) { dropdownEl.innerHTML = ''; dropdownEl.style.display = 'none'; }
+    acUpdateAddPreview();
+  };
+
+  // 드롭다운 바깥을 클릭하면 닫기
+  document.addEventListener('click', function(e) {
+    var dropdownEl = document.getElementById('ac-new-pos-name-dropdown');
+    var nameEl     = document.getElementById('ac-new-pos-name');
+    if (!dropdownEl || dropdownEl.style.display === 'none') return;
+    if (e.target === nameEl || dropdownEl.contains(e.target)) return;
+    dropdownEl.innerHTML = '';
+    dropdownEl.style.display = 'none';
+  });
+
   // ── 종목 추가 모달 — preview ───────────────────────────────────────────
   window.acUpdateAddPreview = function() {
     var marketEl = document.getElementById('ac-new-pos-market');

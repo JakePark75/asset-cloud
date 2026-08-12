@@ -354,6 +354,66 @@ body {
     display: none;
 }
 
+/* 종목명 자동완성 드롭다운 (종목 추가 모달) */
+.ac-autocomplete-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-sm);
+    z-index: 10;
+}
+
+.ac-autocomplete-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text);
+    border-bottom: 1px solid var(--border2);
+    position: relative;
+}
+
+.ac-autocomplete-item:nth-child(even) {
+    background: var(--surface);
+}
+
+.ac-autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.ac-autocomplete-item:hover,
+.ac-autocomplete-item:active {
+    background: var(--surface);
+    color: var(--text-bright);
+}
+
+/* lev-badge는 원래 종목 행(position: absolute 기준) 용으로 정의된 클래스라,
+   이 드롭다운 컨텍스트에서는 위치 기준을 static으로 강제 재정의해서
+   배지가 항목 밖으로 나가거나 서로 겹치지 않도록 함 */
+.ac-autocomplete-item .lev-badge {
+    position: static !important;
+    top: auto !important;
+    right: auto !important;
+    left: auto !important;
+    bottom: auto !important;
+    margin-left: 8px;
+    flex-shrink: 0;
+}
+
+.ac-autocomplete-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .subtab-accordion {
     background: #1a1a2e;          /* 배경색 — 기존 카드보다 살짝 다른 톤 */
     border-left: 3px solid #4a9eff;  /* 왼쪽 포인트 테두리 */    

@@ -7,6 +7,7 @@ from app.modules.accounts_DAL import (
     add_account, delete_account,
     add_position, edit_position, delete_position,
     add_cash, edit_cash, delete_cash,
+    search_tickers_by_name,
 )
 from app.modules.accounts_helpers import (
     _build_account_card_skeleton, _build_account_card_values,
@@ -273,6 +274,31 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
 
         channel = "ac_ticker_lookup_result" if source == "add" else "ac_ticker_lookup_result_edit"
         await session.send_custom_message(channel, out_payload)
+
+    # ── 종목명 자동완성 검색 (종목 추가 모달) ────────────────────────────────
+    # JS에서 이미 디바운스(300ms)를 걸어 보내므로, 타이핑마다가 아니라
+    # 입력이 멈췄을 때만 이 핸들러가 호출되고 DB 조회가 발생한다.
+
+    @reactive.effect
+    @reactive.event(input.search_ticker_name)
+    async def _search_ticker_name():
+        query = str(input.search_ticker_name() or "").strip()
+        acc_id = open_account()
+
+        if not query or acc_id is None:
+            await session.send_custom_message("ac_ticker_name_search_result", {
+                "query": query, "results": [],
+            })
+            return
+
+        rows = search_tickers_by_name(query, acc_id)
+        results = [
+            {"ticker": t, "name": n, "market": m, "leverage": lev}
+            for t, n, m, lev in rows
+        ]
+        await session.send_custom_message("ac_ticker_name_search_result", {
+            "query": query, "results": results,
+        })
 
     # ── 계좌 추가 ─────────────────────────────────────────────────────────────
 

@@ -268,6 +268,43 @@ def delete_account(account_id: int):
         cur.close()
 
 
+# ── 종목명 자동완성 검색 ─────────────────────────────────────────────────────
+
+def search_tickers_by_name(name_query: str, exclude_account_id: int, limit: int = 20):
+    """
+    tickers.name 부분일치(ILIKE) 검색.
+    exclude_account_id 계좌에 이미 보유중인 ticker는 결과에서 제외
+    (같은 계좌에 같은 종목을 중복으로 추가하는 걸 방지하기 위함).
+    반환: [(ticker, name, market, leverage), ...]
+    """
+    # ILIKE 특수문자(%, _, \) 이스케이프 — 사용자가 %나 _를 입력해도
+    # 와일드카드로 오동작하지 않도록 함
+    escaped = (
+        name_query
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    pattern = f"%{escaped}%"
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT ticker, name, market, leverage
+            FROM tickers
+            WHERE name ILIKE %s ESCAPE '\\'
+              AND ticker NOT IN (
+                  SELECT ticker FROM positions WHERE account_id = %s
+              )
+            ORDER BY name
+            LIMIT %s
+        """, (pattern, exclude_account_id, limit))
+        rows = cur.fetchall()
+        cur.close()
+
+    return rows
+
+
 # ── 종목 CRUD ─────────────────────────────────────────────────────────────────
 
 def add_position(account_id: int, ticker: str, name: str, market: str,
