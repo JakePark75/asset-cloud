@@ -387,6 +387,8 @@ def accounts_js(market_currency_map_js: str) -> str:
   };
 
   // 드롭다운 바깥을 클릭하면 닫기
+  // (capture 단계에서 감지 — 모달박스의 event.stopPropagation()이
+  //  버블링 단계에서 이벤트를 막기 전에 먼저 실행되도록 함)
   document.addEventListener('click', function(e) {
     var dropdownEl = document.getElementById('ac-new-pos-name-dropdown');
     var nameEl     = document.getElementById('ac-new-pos-name');
@@ -394,7 +396,7 @@ def accounts_js(market_currency_map_js: str) -> str:
     if (e.target === nameEl || dropdownEl.contains(e.target)) return;
     dropdownEl.innerHTML = '';
     dropdownEl.style.display = 'none';
-  });
+  }, true);
 
   // ── 종목 추가 모달 — preview ───────────────────────────────────────────
   window.acUpdateAddPreview = function() {
