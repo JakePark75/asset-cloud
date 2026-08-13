@@ -142,13 +142,34 @@ def asset_ui():
     var subNames = ['dashboard', 'portfolio', 'accounts'];
     var touchStartX = 0;
     var touchStartY = 0;
+    // 멀티터치(핀치줌 등) 감지 플래그. 한 번이라도 두 손가락 이상이 닿으면
+    // 모든 손가락이 화면에서 떨어질 때까지(touches.length === 0) 스와이프 판정을 하지 않는다.
+    var isMultiTouch = false;
 
     root.addEventListener('touchstart', function(e) {
+      if (e.touches.length > 1) {
+        isMultiTouch = true;
+        return;
+      }
+      isMultiTouch = false;
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
     }, { passive: true });
 
+    root.addEventListener('touchmove', function(e) {
+      // 한 손가락으로 시작한 뒤 두 번째 손가락이 나중에 닿는 경우까지 커버
+      if (e.touches.length > 1) {
+        isMultiTouch = true;
+      }
+    }, { passive: true });
+
     root.addEventListener('touchend', function(e) {
+      // 멀티터치 도중이거나, 아직 손가락이 남아있으면(핀치 중 한 손가락만 뗀 경우) 스와이프 무시
+      if (isMultiTouch) {
+        if (e.touches.length === 0) isMultiTouch = false; // 전부 떨어졌을 때만 리셋
+        return;
+      }
+
       var dx = e.changedTouches[0].clientX - touchStartX;
       var dy = e.changedTouches[0].clientY - touchStartY;
 
