@@ -36,6 +36,7 @@ CONFIG = get_config()
 _KR_CACHE: dict = {}
 _US_CACHE: dict = {}
 _YAHOO_CACHE: dict = {}
+_YAHOO_META_CACHE: dict = {}  # ticker -> regularMarketPrice (Yahoo 응답의 meta 필드, 실시간/최근 체결가)
 
 # KIS 토큰: common/kis_auth.py 로 통합 (Redis 캐시 + 락, 만료 관리 포함).
 # 기존에는 이 프로세스 전역 _TOKEN을 만료 체크 없이 계속 재사용했는데,
@@ -227,10 +228,17 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
                         
             cache_list.sort(key=lambda x: x[0])
             _YAHOO_CACHE[ticker] = cache_list
+
+            # meta.regularMarketPrice: Yahoo가 응답에 함께 실어주는 실시간/최근 체결가.
+            # 일봉(daily candle) 히스토리와 별개로, 조회 시점 기준 가장 최신 가격이다.
+            meta = result[0].get("meta", {}) if result else {}
+            regular_market_price = meta.get("regularMarketPrice")
+            _YAHOO_META_CACHE[ticker] = float(regular_market_price) if regular_market_price is not None else None
         except Exception as e:
             print(f"⚠️ [{ticker}] Yahoo 시세 조회 실패: {e}")
             fetch_failed = True
             _YAHOO_CACHE[ticker] = []
+            _YAHOO_META_CACHE[ticker] = None
 
         # API 호출 자체가 실패한 경우(네트워크/파싱 오류)만 예외로 전파한다.
         # 호출은 성공했지만 그 시점에 데이터가 없는 경우(상장 전 등)는 정상적인
@@ -243,27 +251,35 @@ def _get_yahoo_price(ticker: str, target_date: datetime.date) -> float:
     cache_list = _YAHOO_CACHE[ticker]
     target_str = target_date.strftime("%Y-%m-%d")
 
-    matched = []
-    for ts, c in cache_list:
-        dt_utc = dt_cls.fromtimestamp(ts, tz=timezone.utc)
-        dt_utc_str = dt_utc.strftime("%Y-%m-%d")
-        
-        if dt_utc_str <= target_str:
-            # 로그 출력을 위해 날짜와 시각 문자열을 모두 보관
-            dt_full_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
-            matched.append((dt_utc_str, dt_full_str, c))
+    # 1순위: target_date와 정확히 일치하는 종가 (일봉 히스토리 안에 있는 경우)
+    if cache_list:
+        dated_list = [
+            (dt_cls.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d"), c)
+            for ts, c in cache_list
+        ]
+        exact = [c for d, c in dated_list if d == target_str]
+        if exact:
+            price = exact[-1]
+            print(f"  [{ticker}] {target_str} 종가: {price:,.4f}")
+            return price
+    else:
+        dated_list = []
 
-    if matched:
-        matched_date_str = matched[-1][0]   # 실제 종가 기준일 (YYYY-MM-DD)
-        price = matched[-1][2]
+    # 2순위: 정확히 일치하는 일봉이 없으면 Yahoo가 응답에 함께 실어주는
+    # regularMarketPrice(조회 시점 기준 실시간/최근 체결가)를 사용한다.
+    meta_price = _YAHOO_META_CACHE.get(ticker)
+    if meta_price:
+        print(f"  [{ticker}] {target_str} 데이터 없음 → 실시간 현재가로 대체: {meta_price:,.4f}")
+        return meta_price
 
-        if matched_date_str == target_str:
-            print(f"  [{ticker}] {matched_date_str} 종가: {price:,.4f}")
-        else:
-            print(f"  [{ticker}] {target_str} 데이터 없음 → {matched_date_str} 종가로 대체: {price:,.4f}")
-
+    # 3순위: regularMarketPrice조차 없는 극단적인 경우에 한해
+    # cache_list(target_date-15일~+5일 창) 안에서 가장 최신 일봉값으로 대체한다.
+    if dated_list:
+        latest_date_str, price = dated_list[-1]
+        print(f"  [{ticker}] {target_str} 데이터 없음 → 최신 일봉값({latest_date_str})으로 대체: {price:,.4f}")
         return price
 
+    # 4순위: 위 셋 다 없는 경우 (상장 전이거나 완전히 매칭 실패)
     print(f"  [{ticker}] {target_str} 종가 없음 (상장 전이거나 매칭 실패)")
     return 0.0
 
@@ -304,10 +320,11 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
     """
     # 상시 실행 프로세스(daily_inserter)에서 호출 시 전날 캐시가 남아있으면
     # target_date 종가 대신 전날 종가로 계산되는 버그 방지 → 매 호출마다 초기화
-    global _KR_CACHE, _US_CACHE, _YAHOO_CACHE
+    global _KR_CACHE, _US_CACHE, _YAHOO_CACHE, _YAHOO_META_CACHE
     _KR_CACHE = {}
     _US_CACHE = {}
     _YAHOO_CACHE = {}
+    _YAHOO_META_CACHE = {}
 
     date_str = target_date.strftime("%Y%m%d")
     token = get_kis_access_token()
