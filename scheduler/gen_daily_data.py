@@ -12,9 +12,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from app.db import get_db
-# 원본 스냅샷 핵심 함수들과 캐시/토큰 관련 모듈 가져오기
-from app.utils.daily_snapshot import get_daily_snapshot, _get_token
-import app.utils.snap as snap 
+# 원본 스냅샷 핵심 함수 가져오기 (토큰 발급은 common.kis_auth 로 통합됨)
+from app.utils.daily_snapshot import get_daily_snapshot
+from common.kis_auth import get_kis_access_token
 
 def _update_account_prev_totals(account_totals: dict) -> None:
     """계좌별 전일 자산 업데이트 (원본 로직 유지)"""
@@ -79,10 +79,11 @@ def main():
         print("❌ 날짜 형식 오류.")
         sys.exit(1)
 
-    # 1. [성능] 초고속 조회를 위한 글로벌 캐시 범위 미리 설정
-    snap._GLOBAL_START_DATE_STR = start.strftime("%Y%m%d")
-    snap._GLOBAL_END_DATE_STR   = end.strftime("%Y%m%d")
-    _get_token()
+    # 1. KIS 토큰 발급 (Redis 캐시 + 락 포함, common/kis_auth.py)
+    #    ※ get_daily_snapshot()은 자체적으로 _KR_CACHE/_US_CACHE/_YAHOO_CACHE를
+    #      매 호출마다 초기화하므로, snap.py의 배치 범위 전역변수는 여기서
+    #      쓸 필요가 없다(과거 구조와 혼동되어 있던 죽은 코드였음).
+    get_kis_access_token()
 
     days = date_range(start, end)
     
