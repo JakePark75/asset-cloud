@@ -281,7 +281,10 @@ def _donut_svg(slices: list[dict]) -> str:
 def _build_donut_payload(positions: list[dict]) -> dict:
     """
     position_data() 결과를 받아 도넛 렌더링에 필요한 데이터를 반환.
-    svg_html + legend dict를 반환. legend는 {label: {color, pct, is_cash}} 구조.
+    svg_html + legend dict를 반환. legend는 {ticker: {name, color, pct, is_cash, leverage}} 구조.
+    key를 종목명이 아닌 티커(고정 ID)로 두는 이유: 종목명은 사용자가 언제든 바꿀 수 있는
+    값이라 diff의 key로 쓰면 이름 변경이 "기존 항목 수정"이 아니라 "삭제+신규 추가"로
+    보여 구조 변경 취급되어 버림. 티커는 불변이므로 이름 변경도 항상 필드 단위 diff로 잡힌다.
     """
     if not positions:
         return {}
@@ -335,26 +338,33 @@ def _build_donut_payload(positions: list[dict]) -> dict:
     slices = []
     for p in top8:
         if p["ticker"] == "CASH":
-            slices.append({"label": "현금", "value": p["eval_krw"], "color": "#111111"})
+            slices.append({"ticker": "CASH", "label": "현금", "value": p["eval_krw"], "color": "#111111", "leverage": 1})
             continue
         slices.append({
-            "label": p["name"] or p["ticker"],
-            "value": p["eval_krw"],
-            "color": _ticker_color(p["ticker"]),
+            "ticker":   p["ticker"],
+            "label":    p["name"] or p["ticker"],
+            "value":    p["eval_krw"],
+            "color":    _ticker_color(p["ticker"]),
+            "leverage": p.get("leverage", 1),
         })
 
     if other_eval > 0:
-        slices.append({"label": "기타", "value": other_eval, "color": "#3a3a3a"})
+        # "기타"도 top8 구성이 바뀔 때마다 매번 등장/소멸할 수 있는 항목이므로
+        # 고정 key(__OTHERS__)를 부여 — 종목 티커와 절대 충돌하지 않는 값
+        # leverage=1: 여러 종목이 섞인 합산 항목이라 특정 배수로 단정할 수 없음
+        slices.append({"ticker": "__OTHERS__", "label": "기타", "value": other_eval, "color": "#3a3a3a", "leverage": 1})
 
     svg_html = _donut_svg(slices)
 
     legend = {}
     for s in slices:
         pct = s["value"] / total * 100
-        legend[s["label"]] = {
-            "color":   s["color"],
-            "pct":     f"{pct:.1f}%",
-            "is_cash": s["label"] == "현금",
+        legend[s["ticker"]] = {
+            "name":     s["label"],
+            "color":    s["color"],
+            "pct":      f"{pct:.1f}%",
+            "is_cash":  s["ticker"] == "CASH",
+            "leverage": s["leverage"],
         }
 
     subtitle = f"상위 {min(8, len(items))}"
@@ -521,65 +531,6 @@ def _dashboard_ui_dom_patch():
       if (m.dd.rec_ndx_text != null) setText('db-rec-ndx', m.dd.rec_ndx_text);
     }
 
-    // ── 도넛 (텍스트) ─────────────────────────────────
-    if (m.donut_text) {
-      var legendEl = document.getElementById('db-donut-legend');
-      if (legendEl && m.donut_text.legend) {
-        var entries = Object.entries(m.donut_text.legend);
-        if (entries.length > 0) {
-          // 기존 행이 없으면(초기 또는 종목 구성 변경) 전체 재렌더
-          // 기존 행이 있으면 pct/color만 패치
-          var isInit = legendEl.children.length === 0;
-          if (isInit) {
-            var html = '';
-            for (var i = 0; i < entries.length; i++) {
-              var label = entries[i][0];
-              var it    = entries[i][1];
-              var dotCls = 'db-donut-legend-dot' + (it.is_cash ? ' cash' : '');
-              html += '<div class="db-donut-legend-row" data-label="' + label + '">'
-                    + '<span class="' + dotCls + '" style="background:' + it.color + '"></span>'
-                    + '<span class="db-donut-legend-name">' + label + '</span>'
-                    + '<span class="db-donut-legend-pct">' + it.pct + '</span>'
-                    + '</div>';
-            }
-            legendEl.innerHTML = html;
-          } else {
-            for (var i = 0; i < entries.length; i++) {
-              var label = entries[i][0];
-              var it    = entries[i][1];
-              var row = legendEl.querySelector('[data-label="' + label + '"]');
-              if (row) {
-                // 기존 행 패치
-                if (it.pct   !== undefined) row.querySelector('.db-donut-legend-pct').textContent = it.pct;
-                if (it.color !== undefined) row.querySelector('.db-donut-legend-dot').style.background = it.color;
-              } else {
-                // 신규 종목 — 전체 재렌더 (순서가 바뀔 수 있으므로)
-                var html = '';
-                var allEntries = Object.entries(m.donut_text.legend);
-                for (var j = 0; j < allEntries.length; j++) {
-                  var l2  = allEntries[j][0];
-                  var it2 = allEntries[j][1];
-                  var dotCls2 = 'db-donut-legend-dot' + (it2.is_cash ? ' cash' : '');
-                  html += '<div class="db-donut-legend-row" data-label="' + l2 + '">'
-                        + '<span class="' + dotCls2 + '" style="background:' + it2.color + '"></span>'
-                        + '<span class="db-donut-legend-name">' + l2 + '</span>'
-                        + '<span class="db-donut-legend-pct">' + it2.pct + '</span>'
-                        + '</div>';
-                }
-                legendEl.innerHTML = html;
-                break;
-              }
-            }
-          }
-        }
-      }
-      if (m.donut_text.subtitle !== undefined) setText('db-donut-title-sub', '(' + m.donut_text.subtitle + ')');
-    }
-    // ── 도넛 (SVG) ────────────────────────────────────
-    if (m.donut_svg !== undefined) {
-      setHTML('db-donut-svg-wrap', m.donut_svg);
-    }
-
     // ── 은퇴 시뮬레이션 ──────────────────────────────
     if (m.retirement) {
       if (m.retirement.subtitle      != null) setText('db-retirement-subtitle', m.retirement.subtitle);
@@ -587,6 +538,63 @@ def _dashboard_ui_dom_patch():
       if (m.retirement.sub_text      != null) setText('db-retirement-sub',      m.retirement.sub_text);
       if (m.retirement.compound_text != null) setText('db-retirement-compound', m.retirement.compound_text);
     }
+  });
+
+  // ── 도넛: 구조 변경(종목 진입/이탈) — 항상 legend 전체 재구성 ──────────
+  // leverage 강조색: 1배수는 기본 텍스트색 그대로, 2배수/3배수 이상만 눈에 띄게.
+  // exposure bar(x1/x2/x3)와 같은 CSS 변수를 재사용해 화면 전체 색상 의미를 통일.
+  function db_donut_name_color(leverage) {
+    if (leverage >= 3) return 'var(--db-red)';
+    if (leverage === 2) return 'var(--db-amber)';
+    return '';
+  }
+
+  Shiny.addCustomMessageHandler('donut_init', function(m) {
+    var legendEl = document.getElementById('db-donut-legend');
+    if (legendEl && m.legend) {
+      // m.legend는 배열(서버가 pct 내림차순으로 이미 정렬해서 보냄).
+      // dict(JS object)로 받으면 티커가 숫자 문자열이라 Object.entries()가
+      // 오름차순으로 강제 재정렬해버리므로, 순서 보존을 위해 배열로 받는다.
+      var html = '';
+      for (var i = 0; i < m.legend.length; i++) {
+        var it        = m.legend[i];
+        var dotCls    = 'db-donut-legend-dot' + (it.is_cash ? ' cash' : '');
+        var nameColor = db_donut_name_color(it.leverage);
+        var nameStyle = nameColor ? ' style="color:' + nameColor + '"' : '';
+        html += '<div class="db-donut-legend-row" data-ticker="' + it.ticker + '">'
+              + '<span class="' + dotCls + '" style="background:' + it.color + '"></span>'
+              + '<span class="db-donut-legend-name"' + nameStyle + '>' + it.name + '</span>'
+              + '<span class="db-donut-legend-pct">' + it.pct + '</span>'
+              + '</div>';
+      }
+      legendEl.innerHTML = html;
+    }
+    if (m.svg_html  !== undefined) setHTML('db-donut-svg-wrap', m.svg_html);
+    if (m.subtitle  !== undefined) setText('db-donut-title-sub', '(' + m.subtitle + ')');
+  });
+
+  // ── 도넛: 구조 변경 없을 때 — 실제로 바뀐 필드만 patch (오버헤드 최소화) ──
+  Shiny.addCustomMessageHandler('donut_tick', function(m) {
+    if (m.legend) {
+      var legendEl = document.getElementById('db-donut-legend');
+      if (legendEl) {
+        var entries = Object.entries(m.legend);
+        for (var i = 0; i < entries.length; i++) {
+          var ticker = entries[i][0];
+          var it     = entries[i][1];
+          var row = legendEl.querySelector('[data-ticker="' + ticker + '"]');
+          // row가 없으면(=구조가 바뀐 상황) 여기서는 아무것도 하지 않는다.
+          // 구조 변경은 반드시 donut_init으로만 처리되므로, 이 분기가 타면
+          // 서버-클라이언트 상태 불일치이지 정상 흐름이 아니다 — 조용히 무시.
+          if (!row) continue;
+          if (it.pct      !== undefined) row.querySelector('.db-donut-legend-pct').textContent = it.pct;
+          if (it.color    !== undefined) row.querySelector('.db-donut-legend-dot').style.background = it.color;
+          if (it.name     !== undefined) row.querySelector('.db-donut-legend-name').textContent = it.name;
+          if (it.leverage !== undefined) row.querySelector('.db-donut-legend-name').style.color = db_donut_name_color(it.leverage);
+        }
+      }
+    }
+    if (m.svg_html !== undefined) setHTML('db-donut-svg-wrap', m.svg_html);
   });
 })();
         """),
@@ -762,6 +770,16 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
     _initialized = False  # 일반 변수: data()/position_data()/_send_update() 자기-재트리거 방지
     _last_display: dict = {}
 
+    # ── 도넛 legend 전용 상태 (db_update의 _last_display와 분리) ──────────
+    # _last_donut_display: 필드 단위(depth=2) diff 기준이자, 구조(어떤 티커가 표시 중인가)
+    #                       판단 기준도 겸함 — diff_display가 매 호출마다 last를 current로
+    #                       완전히 덮어쓰므로(clear+update) 이 dict의 key 집합은 항상
+    #                       "직전에 실제로 보낸 legend의 key"와 정확히 일치한다.
+    #                       그래서 구조 추적용 리스트를 별도로 둘 필요가 없다.
+    # _last_donut_svg: SVG 문자열이 실제로 바뀔 때만 재전송하기 위한 비교 기준
+    _last_donut_display: dict = {}
+    _last_donut_svg: str = ""
+
     # ── DB 캐시 (asset_server에서 주입) ─────────────────────────────────────
     _db_summary_rows  = db_summary_rows
     _db_position_rows = db_position_rows
@@ -822,6 +840,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
     @reactive.effect
     async def _send_update():
             nonlocal _initialized
+            nonlocal _last_donut_display, _last_donut_svg
             tab = active_sub_tab if active_sub_tab is not None else active_tab
             if _initialized and tab and tab.get() != "dashboard":
                 return
@@ -899,15 +918,49 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
             }
 
             # ── 도넛 ─────────────────────────────────────────
+            # db_update(depth=3 diff_display)와 완전히 분리된 별도 메시지로 처리.
+            # 이유: legend는 "종목 구성"이 바뀔 수 있는 동적 목록이라 고정 필드 dict용
+            # diff_display 하나로는 항목 추가/삭제를 표현할 수 없음 (portfolio.py 등
+            # 다른 화면들이 쓰는 "structure_changed 감지 + 구조 변경 시 전체 재전송" 패턴을 그대로 적용).
             donut_data = _build_donut_payload(positions)
-            if donut_data:
-                donut = {
-                    "svg_html": donut_data["svg_html"],
-                    "legend":   donut_data["legend"],   # [{label, color, pct, is_cash}, ...]
-                    "subtitle": donut_data["subtitle"],
-                }
+            legend   = donut_data.get("legend", {})
+            svg_html = donut_data.get("svg_html", "")
+            subtitle = donut_data.get("subtitle", "–")
+
+            structure_changed = (list(legend.keys()) != list(_last_donut_display.keys()))
+
+            if structure_changed:
+                _last_donut_display.clear()
+                _last_donut_display.update(legend)
+                _last_donut_svg = svg_html
+                # legend를 dict(JS object)가 아닌 배열로 보냄: 종목 티커가 "005930"처럼
+                # 숫자로만 된 문자열이면 JS는 이를 "정수형 key"로 인식해 Object.entries()에서
+                # 삽입 순서를 무시하고 숫자 오름차순으로 강제 재정렬한다(ECMAScript 스펙).
+                # 그러면 서버가 pct 내림차순으로 정렬해 보낸 순서가 클라이언트에서 깨짐.
+                # 배열은 이런 key 재정렬 규칙의 대상이 아니므로 순서가 항상 보존된다.
+                legend_ordered = [
+                    {"ticker": t, **v} for t, v in legend.items()
+                ]
+                await session.send_custom_message("donut_init", {
+                    "svg_html": svg_html,
+                    "legend":   legend_ordered,
+                    "subtitle": subtitle,
+                })
             else:
-                donut = {"svg_html": "", "legend": {}, "subtitle": "–"}
+                # depth=2: 종목별 entry(name/color/pct/is_cash) 중 실제로 값이 바뀐
+                # 필드만 diff에 실림 (depth=1로 하면 pct 하나만 바뀌어도 color까지
+                # 매번 다시 그리게 되어 불필요한 DOM patch가 늘어남)
+                donut_diff = diff_display(legend, _last_donut_display, depth=2)
+                svg_changed = (svg_html != _last_donut_svg)
+                if svg_changed:
+                    _last_donut_svg = svg_html
+                if donut_diff or svg_changed:
+                    payload = {}
+                    if donut_diff:
+                        payload["legend"] = donut_diff
+                    if svg_changed:
+                        payload["svg_html"] = svg_html
+                    await session.send_custom_message("donut_tick", payload)
 
             # ── 은퇴 시뮬레이션 ──────────────────────────────
             ret_asset   = d["retirement_asset"]
@@ -924,16 +977,11 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
             }
 
             current = {
-                "exposure": exposure_payload,
-                "irr":      irr,
-                "alpha":    alpha,
-                "beta":     beta,
-                "dd":       dd,
-                "donut_text": {
-                    "legend":   donut["legend"],    # {label: {color, pct, is_cash}, ...}
-                    "subtitle": donut["subtitle"],
-                },
-                "donut_svg": donut["svg_html"],
+                "exposure":   exposure_payload,
+                "irr":        irr,
+                "alpha":      alpha,
+                "beta":       beta,
+                "dd":         dd,
                 "retirement": retirement,
             }
 
