@@ -626,10 +626,20 @@ async def kis_ws_task(shared: SharedState):
                         pass
 
         except websockets.exceptions.ConnectionClosed as e:
-            log.warning(f"KIS 웹소켓 연결 종료: {e} — {WS_RECONNECT_DELAY}초 후 재연결")
+            log.warning(
+                "KIS 웹소켓 연결 종료: "
+                f"type={type(e).__name__}, "
+                f"code={e.code}, "
+                f"reason={e.reason!r} "
+                f"— {WS_RECONNECT_DELAY}초 후 재연결"
+            )            
         except Exception as e:
-            log.error(f"KIS 웹소켓 오류: {e} — {WS_RECONNECT_DELAY}초 후 재연결")
-
+            log.error(
+                "KIS 웹소켓 오류: "
+                f"type={type(e).__name__}, "
+                f"error={e!r} "
+                f"— {WS_RECONNECT_DELAY}초 후 재연결"
+            )
         shared.ws = None
         shared.sub_queue = None
         await asyncio.sleep(WS_RECONNECT_DELAY)
