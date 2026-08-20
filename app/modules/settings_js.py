@@ -10,9 +10,6 @@ def settings_js() -> str:
   Shiny.addCustomMessageHandler('st_init', function(m) {
     _stDynamicCache = {};
 
-    var toggle = document.getElementById('st-realtime-toggle');
-    if (toggle) toggle.checked = (m.interval === 0);
-
     var listEl = document.getElementById('st-ticker-list');
     if (listEl) listEl.innerHTML = m.ticker_list_html || '<p style="color:#888; padding:8px 0;">등록된 티커가 없습니다.</p>';
 
@@ -106,6 +103,102 @@ def settings_js() -> str:
     var mkt = document.getElementById('st-new-ticker-market');
     if (mkt) mkt.selectedIndex = 0;
   };
+
+  // ── 서버 관리 ────────────────────────────────────────────
+  window.stShowServerModal = function() {
+    document.getElementById('st-server-list-view').style.display = '';
+    document.getElementById('st-server-log-view').style.display = 'none';
+    document.getElementById('st-server-modal-overlay').style.display = '';
+  };
+
+  window.stHideServerModal = function() {
+    document.getElementById('st-server-modal-overlay').style.display = 'none';
+    stBackToServiceList();
+    var box = document.getElementById('st-server-modal-box');
+    if (box) {
+      box.style.position = '';
+      box.style.left = '';
+      box.style.top = '';
+      box.style.margin = '';
+    }
+  };
+
+  window.stRestartService = function(svc) {
+    Shiny.setInputValue('settings-btn_restart_service', svc, {priority: 'event'});
+  };
+
+  window.stViewLog = function(svc) {
+    var logView = document.getElementById('st-server-log-view');
+    logView.dataset.service = svc;
+    document.getElementById('st-log-title').textContent = svc + ' 로그';
+    document.getElementById('st-log-content').textContent = '불러오는 중...';
+    document.getElementById('st-server-list-view').style.display = 'none';
+    logView.style.display = '';
+    Shiny.setInputValue('settings-btn_view_log', svc, {priority: 'event'});
+  };
+
+  window.stBackToServiceList = function() {
+    var logView = document.getElementById('st-server-log-view');
+    logView.dataset.service = '';
+    logView.style.display = 'none';
+    document.getElementById('st-server-list-view').style.display = '';
+    Shiny.setInputValue('settings-btn_close_log', Date.now(), {priority: 'event'});
+  };
+
+  // 서버관리 모달 드래그 이동 — 헤더(.modal-header-row)가 드래그 핸들.
+  // Pointer Events로 마우스/터치를 하나의 이벤트 체계로 처리(별도 mousedown/touchstart 분기 불필요).
+  // 최초 드래그 시작 시 base.css의 flex 중앙정렬(position 미지정)에서
+  // position:fixed + left/top(px) 고정 좌표로 전환한다. (다른 모달의 .modal-box는 영향 없음 — id로 한정)
+  var _stDragState = null; // {offsetX, offsetY, pointerId}
+
+  window.stStartDragServerModal = function(evt) {
+    var box = document.getElementById('st-server-modal-box');
+    if (!box) return;
+    var rect = box.getBoundingClientRect();
+    box.style.position = 'fixed';
+    box.style.left = rect.left + 'px';
+    box.style.top = rect.top + 'px';
+    box.style.margin = '0';
+
+    _stDragState = {
+      offsetX: evt.clientX - rect.left,
+      offsetY: evt.clientY - rect.top,
+      pointerId: evt.pointerId,
+    };
+    evt.target.setPointerCapture(evt.pointerId);
+  };
+
+  document.addEventListener('pointermove', function(evt) {
+    if (!_stDragState || evt.pointerId !== _stDragState.pointerId) return;
+    var box = document.getElementById('st-server-modal-box');
+    if (!box) return;
+    box.style.left = (evt.clientX - _stDragState.offsetX) + 'px';
+    box.style.top  = (evt.clientY - _stDragState.offsetY) + 'px';
+  });
+
+  document.addEventListener('pointerup', function(evt) {
+    if (!_stDragState || evt.pointerId !== _stDragState.pointerId) return;
+    _stDragState = null;
+  });
+
+  document.addEventListener('pointercancel', function(evt) {
+    if (!_stDragState || evt.pointerId !== _stDragState.pointerId) return;
+    _stDragState = null;
+  });
+
+  // 폴링 결과 반영 — 화면 전환 후 늦게 도착한 응답은 dataset.service 불일치로 무시됨.
+  // append=false(최초 오픈)는 통째로 교체, append=true(증분분)는 기존 내용 뒤에 이어붙임.
+  Shiny.addCustomMessageHandler('st_log_update', function(m) {
+    var logView = document.getElementById('st-server-log-view');
+    if (!logView || logView.dataset.service !== m.service) return;
+    var el = document.getElementById('st-log-content');
+    if (m.append) {
+      el.textContent += (el.textContent ? '\\n' : '') + m.log;
+    } else {
+      el.textContent = m.log;
+    }
+    el.scrollTop = el.scrollHeight;
+  });
 
   // st_init용: static+dynamic 전체 적용
   function _applyTickers(tickers) {

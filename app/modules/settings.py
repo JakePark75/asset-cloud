@@ -1,15 +1,50 @@
+import asyncio
+import subprocess
+
 from shiny import ui, module, reactive
 from shiny.types import SilentException
-from app.db import get_db, get_config, save_config, get_market_currency, get_market_map
+from app.db import get_db, get_market_currency, get_market_map
 from app.modules.components import fmt_change
 from app.price_signal import price_signal, ticker_signal
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display_split
 from common.redis_store import get_all_prices, publish_ticker_changed, refresh_position_cache
-import subprocess
 
 from app.modules.news import news_script_ui, news_ui_section, news_modals_ui, news_server_logic
 from app.modules.settings_js import settings_js
+
+# 서버관리 화면에서 재시작/로그조회를 허용하는 서비스 목록.
+# 화이트리스트 — 여기 없는 값은 재시작/로그조회 둘 다 무시한다.
+_MANAGED_SERVICES = ["myassets", "price_updater", "daily_inserter", "news_fetcher", "nginx"]
+
+
+def _fetch_service_log(svc: str, cursor: str | None = None) -> tuple[str, str | None]:
+    """journalctl 조회 (블로킹 호출 — asyncio.to_thread로 감싸서 사용).
+
+    cursor가 없으면 최근 100줄 전체(최초 오픈 시), 있으면 그 이후 신규분만 조회한다.
+    반환: (log_text, new_cursor). 새 로그가 없으면 log_text=""이고 cursor는 그대로 유지된다.
+    """
+    cmd = ["journalctl", "-u", svc, "--no-pager", "--show-cursor"]
+    if cursor:
+        cmd += ["--after-cursor", cursor]
+    else:
+        cmd += ["-n", "100"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        raw = result.stdout or result.stderr or ""
+    except Exception as e:
+        return f"로그 조회 실패: {e}", cursor
+
+    lines = raw.splitlines()
+    new_cursor = cursor
+    # --show-cursor는 항목들 뒤에 "-- cursor: ..." 줄을 추가로 붙여서 출력한다 — 실제 로그가 아니므로 분리해서 파싱
+    if lines and lines[-1].startswith("-- cursor: "):
+        new_cursor = lines[-1][len("-- cursor: "):]
+        lines = lines[:-1]
+    # 조회 결과가 0건이면 journalctl이 실제 로그 대신 이 상태 메시지를 출력한다 — 로그 내용이 아니므로 제외
+    if lines == ["-- No entries --"]:
+        lines = []
+    return "\n".join(lines), new_cursor
 
 
 def _notify_ticker_changed():
@@ -138,32 +173,6 @@ def settings_ui():
         news_script_ui(),
 
         ui.div(
-            # 시세조회 간격
-            ui.div(
-                ui.div(
-                    ui.p("시세조회 간격", style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin:0;"),
-                    ui.div(
-                        ui.tags.label(
-                            ui.tags.input(
-                                id="st-realtime-toggle",
-                                type="checkbox",
-                                style="display:none;",
-                                onchange=(
-                                    "Shiny.setInputValue('settings-btn_save_interval',"
-                                    " this.checked ? 0 : -1, {priority: 'event'});"
-                                ),
-                            ),
-                            ui.span(class_="toggle-track"),
-                            style="display:inline-flex; align-items:center; cursor:pointer;",
-                        ),
-                        ui.span("실시간", style="font-size:13px; color:#ccc; margin-left:8px;"),
-                        style="display:flex; align-items:center;",
-                    ),
-                    style="display:flex; justify-content:space-between; align-items:center;",
-                ),
-                style="padding: 20px 0; border-bottom: 1px solid #1e1e1e;",
-            ),
-
             # 티커 관리
             ui.div(
                 ui.p("티커 관리", style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin:0;"),
@@ -197,6 +206,15 @@ def settings_ui():
                     "📥 내보내기",
                     style="background:none; border:none; color:#888; font-size:14px; padding: 20px 0; cursor:pointer; width:100%; text-align:center;",
                     onclick="window.location.href='/api/export';",
+                ),
+            ),
+
+            # 서버 관리
+            ui.div(
+                ui.tags.button(
+                    "🖥️ 서버관리",
+                    style="background:none; border:none; color:#888; font-size:14px; padding: 20px 0; cursor:pointer; width:100%; text-align:center;",
+                    onclick="stShowServerModal();",
                 ),
             ),
 
@@ -275,6 +293,77 @@ def settings_ui():
     )
 
 
+# 서버관리 모달은 여기서 만들지만, settings_ui()의 리턴 트리에는 포함하지 않는다.
+# .tab-content(=settings_ui 전체)는 탭 전환 시 switchTab()이 display:none 처리하므로,
+# 이 자리에 있으면 다른 탭으로 이동하는 순간 로그를 보다가도 팝업이 같이 사라진다.
+# app.py에서 이 함수를 별도로 호출해 탭 바깥(screen-main 최상위)에 렌더링해야
+# 탭을 옮겨도 모달이 유지된다. Shiny.setInputValue('settings-...')는 DOM 위치와
+# 무관하게 동작하므로 이렇게 분리해도 settings_server의 입력 바인딩은 그대로 동작한다.
+def settings_server_modal_ui():
+    return ui.div(
+        ui.div(
+            # 서비스 목록 뷰
+            ui.div(
+                ui.div(
+                    ui.h4("서버 관리", class_="modal-title"),
+                    ui.span("✕", class_="modal-close-icon", onclick="stHideServerModal();"),
+                    class_="modal-header-row",
+                    style="cursor:move; touch-action:none;",
+                    onpointerdown="stStartDragServerModal(event);",
+                ),
+                ui.div(
+                    *[
+                        ui.div(
+                            ui.span(svc, style="font-size:14px; color:#ccc;"),
+                            ui.div(
+                                ui.tags.button(
+                                    "재시작", class_="btn-danger-sm",
+                                    onclick=f"stRestartService('{svc}');",
+                                ),
+                                ui.tags.button(
+                                    "로그", class_="btn-danger-sm", style="color:#00c073;",
+                                    onclick=f"stViewLog('{svc}');",
+                                ),
+                                style="display:flex; gap:6px;",
+                            ),
+                            style="display:flex; justify-content:space-between; align-items:center; "
+                                  "padding:10px 0; border-bottom:1px solid #1e1e1e;",
+                        )
+                        for svc in _MANAGED_SERVICES
+                    ],
+                ),
+                id="st-server-list-view",
+            ),
+            # 로그 뷰
+            ui.div(
+                ui.div(
+                    ui.span("←", class_="modal-close-icon", onclick="stBackToServiceList();"),
+                    ui.h4("", id="st-log-title", class_="modal-title", style="margin-left:8px;"),
+                    ui.span("✕", class_="modal-close-icon", onclick="stHideServerModal();"),
+                    class_="modal-header-row",
+                    style="cursor:move; touch-action:none;",
+                    onpointerdown="stStartDragServerModal(event);",
+                ),
+                ui.tags.pre(
+                    id="st-log-content",
+                    style="background:#111; color:#ccc; font-size:12px; padding:10px; "
+                          "height:320px; overflow-y:auto; overflow-x:auto; white-space:pre; "
+                          "border-radius:6px;",
+                ),
+                id="st-server-log-view",
+                style="display:none;",
+            ),
+            id="st-server-modal-box",
+            class_="modal-box",
+            style="pointer-events:auto;",
+            onclick="event.stopPropagation();",
+        ),
+        id="st-server-modal-overlay",
+        class_="modal-overlay",
+        style="display:none; pointer-events:none;",
+    )
+
+
 # ── Server ────────────────────────────────────────────────────────────────────
 
 @module.server
@@ -296,21 +385,6 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             cur.close()
         return rows
 
-    # ── 시세조회 간격 저장 ────────────────────────────────────────────────────
-    @reactive.effect
-    @reactive.event(input.btn_save_interval)
-    def _():
-        val = input.btn_save_interval()
-        if val is None:
-            return
-        config = get_config()
-        if val == 0:
-            config["interval"] = 0
-        else:
-            config["interval"] = config.get("default_interval", 1)
-        save_config(config)
-        subprocess.Popen(["sudo", "systemctl", "restart", "price_updater"])
-
     # ── 티커 목록 갱신 ───────────────────────────────────────────────────────
     @reactive.effect
     async def _send_update():
@@ -329,9 +403,9 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
 
         current_tickers = [r[0] for r in rows]
         structure_changed = (current_tickers != _last_tickers)
-        print(f"[SETTINGS_DEBUG] === cycle start === "
-              f"structure_changed={structure_changed} current_tickers={current_tickers} "
-              f"_last_tickers={_last_tickers}")
+        # print(f"[SETTINGS_DEBUG] === cycle start === "
+        #       f"structure_changed={structure_changed} current_tickers={current_tickers} "
+        #       f"_last_tickers={_last_tickers}")
 
         # structure_changed: 전체 필요 / tick: 자동 숨김 시 is_manual만
         def _build_ticker_values(include_auto: bool):
@@ -348,17 +422,15 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         if structure_changed:
             _last_tickers = current_tickers
             _last_display.clear()
-            cfg      = get_config()
             ns_str   = session.ns("_")[:-1]
             ticker_list_html = "".join(
                 _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str)
                 for ticker, name, market, leverage, is_manual in rows
             )
             ticker_values = _build_ticker_values(include_auto=True)
-            print(f"[SETTINGS_DEBUG] structure_changed branch: sending st_init, "
-                  f"ticker_values_keys={list(ticker_values.keys())}")
+            # print(f"[SETTINGS_DEBUG] structure_changed branch: sending st_init, "
+            #       f"ticker_values_keys={list(ticker_values.keys())}")
             await session.send_custom_message("st_init", {
-                "interval":         cfg.get("interval", 1),
                 "ticker_list_html": ticker_list_html,
                 # st_init: static+dynamic 병합해서 전송 (_applyOneTickerFull과 동일)
                 "tickers": {
@@ -374,9 +446,9 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             auto_hidden = (auto_hidden_val or '1') == '1'
             ticker_values = _build_ticker_values(include_auto=not auto_hidden)
             dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
-            print(f"[SETTINGS_DEBUG] else branch: auto_hidden={auto_hidden} "
-                  f"ticker_values_keys={list(ticker_values.keys())} "
-                  f"dyn_diff={dyn_diff} sta_diff={sta_diff}")
+            # print(f"[SETTINGS_DEBUG] else branch: auto_hidden={auto_hidden} "
+            #       f"ticker_values_keys={list(ticker_values.keys())} "
+            #       f"dyn_diff={dyn_diff} sta_diff={sta_diff}")
             if dyn_diff:
                 await session.send_custom_message("st_tick", dyn_diff)
             if sta_diff:
@@ -452,5 +524,51 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
 
         refresh.set(refresh() + 1)
         _notify_ticker_changed()
+
+    # ── 서버 관리: 재시작 ───────────────────────────────────────────────────
+    @reactive.effect
+    @reactive.event(input.btn_restart_service)
+    def _():
+        svc = input.btn_restart_service()
+        if svc not in _MANAGED_SERVICES:
+            return
+        subprocess.Popen(["sudo", "systemctl", "restart", svc])
+
+    # ── 서버 관리: 로그 조회 (2초 폴링, 커서 기반 증분) ─────────────────────
+    log_service = reactive.value(None)
+    _log_cursor: dict = {}
+
+    @reactive.effect
+    @reactive.event(input.btn_view_log)
+    def _():
+        svc = input.btn_view_log()
+        if svc in _MANAGED_SERVICES:
+            _log_cursor.pop(svc, None)  # 새로 열 때마다 최근 100줄부터 다시 시작
+            log_service.set(svc)
+
+    @reactive.effect
+    @reactive.event(input.btn_close_log)
+    def _():
+        log_service.set(None)
+
+    @reactive.effect
+    async def _poll_service_log():
+        svc = log_service.get()
+        if not svc:
+            return
+        reactive.invalidate_later(2)
+        cursor = _log_cursor.get(svc)
+        log_text, new_cursor = await asyncio.to_thread(_fetch_service_log, svc, cursor)
+        # 폴링 대기 중 다른 서비스로 전환되었거나 로그 화면을 닫았으면 늦게 온 응답은 버린다.
+        if log_service.get() != svc:
+            return
+        _log_cursor[svc] = new_cursor
+        if not log_text:
+            return  # 신규 로그 없음 — 의미 없는 패킷을 보내지 않는다
+        await session.send_custom_message("st_log_update", {
+            "service": svc,
+            "log": log_text,
+            "append": cursor is not None,  # 최초 오픈(cursor 없음)은 교체, 이후는 append
+        })
 
     news_server_logic(input, output, session, active_tab)

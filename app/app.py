@@ -8,7 +8,7 @@ from app.export_api import routes as export_routes
 from app.modules.asset import asset_ui, asset_server
 from app.modules.history import history_ui, history_server
 from app.modules.valuation import valuation_ui, valuation_server
-from app.modules.settings import settings_ui, settings_server
+from app.modules.settings import settings_ui, settings_server, settings_server_modal_ui
 from app.auth import verify_login, create_token, verify_token
 
 app_ui = ui.page_fluid(
@@ -62,6 +62,12 @@ app_ui = ui.page_fluid(
             ui.div(ui.HTML("⚙️<br><span>관리</span>"),      class_="tab-btn", onclick="switchTab('settings', this)"),
             class_="bottom-tabbar"
         ),
+        # ── 탭 바깥(최상위) 레이어 ────────────────────────────────────────
+        # switchTab()이 .tab-content 전체를 display:none 처리하기 때문에,
+        # 팝업이 tab-content의 자손이면 탭을 옮기는 순간 같이 숨겨진다.
+        # 서버관리 모달처럼 "다른 탭으로 이동해도 떠 있어야 하는" 팝업은
+        # 반드시 .tab-content 바깥(이 자리)에 렌더링해야 한다.
+        settings_server_modal_ui(),
         id="screen-main",
         style="display:none;"
     ),
