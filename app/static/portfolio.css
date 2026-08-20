@@ -165,6 +165,7 @@
 .status-after   { color: var(--amber);  background: rgba(245, 158, 11, 0.12); }
 .status-closing { color: var(--amber);  background: rgba(245, 158, 11, 0.12); }
 .status-closed  { color: #888;          background: rgba(136, 136, 136, 0.1); }
+.status-day     { color: var(--blue);   background: rgba(77, 159, 255, 0.12); }
 
 /*      */
 .force-update-btn {

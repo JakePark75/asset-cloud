@@ -211,6 +211,7 @@ def build_ticker_row_values(
             "pre":     ("●", "Pre",         "status-pre"),
             "after":   ("●", "After",       "status-after"),
             "closing": ("●", "Closing...",  "status-closing"),
+            "day":     ("●", "Day",         "status-day"),
         }
         status_dot, status_text, status_cls = dot_map.get(status, ("○", "Closed", "status-closed"))
 

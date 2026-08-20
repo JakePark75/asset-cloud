@@ -42,6 +42,18 @@ MARKET_CLOSE_BUFFER_MIN = 0
 KR_FINAL_CLOSE_BUFFER_MIN = 5
 
 # ---------------------------------------------------------------------------
+# 미국주간거래(Day Trading) 시세 조회 가능 시간대 (KST, 분 단위)
+#  - KIS 공식 API 문서 기준: 10:00~16:00
+#  - 뉴욕 현지시간 pre(04:00 ET)/open/after 구간과는 절대 겹치지 않음
+#    (04:00 ET는 KST 17:00 EDT/18:00 EST로, 항상 16:00 이후) — 확인됨.
+#  - 휴장 판단은 KST 날짜 기준 holiday_cache.is_us_holiday()를 그대로 사용.
+#    (미국주식 주간거래 휴장일은 그날 저녁 개장하는 미국 정규장 날짜와 동일하게
+#    매핑되므로, 별도 판단 로직 없이 기존 holiday_cache 재사용 — 2026-08-20)
+# ---------------------------------------------------------------------------
+US_DAY_TRADING_START_MIN = 10 * 60  # 10:00
+US_DAY_TRADING_END_MIN   = 16 * 60  # 16:00 (이 시각 미포함)
+
+# ---------------------------------------------------------------------------
 # 실시간 크립토 소스 선택
 #   "upbit" — Upbit 실시간 (기본값)
 #   "yahoo" — 기존 Yahoo Finance (Upbit 장애 시 폴백용)
@@ -229,8 +241,30 @@ holiday_cache = HolidayCache()
 
 
 # ---------------------------------------------------------------------------
+# 미국주간거래(Day Trading) 시간대 여부 판단
+#  - 뉴욕 현지시간 기준 판단(get_market_status 본체)과는 독립적으로, KST
+#    날짜/시각만으로 판단한다. NY 기준 요일/휴장 체크를 먼저 거치면 KST와
+#    NY 날짜가 다른 경계(예: KST 월요일 오전 = NY 일요일 밤)에서 주간거래가
+#    잘못 걸러지는 문제가 생기므로, get_market_status()의 NY 분기보다 먼저
+#    독립적으로 확인해야 한다.
+# ---------------------------------------------------------------------------
+def _is_us_day_trading_window() -> bool:
+    tz = pytz.timezone("Asia/Seoul")
+    now_local   = datetime.now(tz)
+    today_local = now_local.date()
+
+    if now_local.weekday() >= 5:
+        return False
+    if holiday_cache.is_us_holiday(today_local):
+        return False
+
+    now_min = now_local.hour * 60 + now_local.minute
+    return US_DAY_TRADING_START_MIN <= now_min < US_DAY_TRADING_END_MIN
+
+
+# ---------------------------------------------------------------------------
 # 시장 상태 판단
-# 반환값: "open" | "pre" | "after" | "closed"
+# 반환값: "open" | "pre" | "after" | "closed" | "day"(US 전용, 주간거래)
 # ---------------------------------------------------------------------------
 def get_market_status(market: str) -> str:
     _config = config if config else {}
@@ -264,6 +298,12 @@ def get_market_status(market: str) -> str:
         return "closed"
 
     if market_time == "US":
+        # 주간거래(KST 10:00~16:00) — NY 시간대 판단보다 먼저, 독립적으로 확인.
+        # 이 구간은 NY 기준으로는 항상 20:00~04:00(closed) 구간 안에 완전히
+        # 포함되므로(확인됨), 아래 NY 분기 결과와 절대 충돌하지 않는다.
+        if _is_us_day_trading_window():
+            return "day"
+
         tz = pytz.timezone("America/New_York")
         now_local   = datetime.now(tz)
         today_local = now_local.date()

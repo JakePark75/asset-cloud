@@ -5,11 +5,14 @@ config.json 의 realtime_quote = true 일 때 동작.
 구조:
   - KR/US 종목: KIS 웹소켓 (H0STCNT0 / HDFSCNT0) push 수신
   - FX/INDEX/CRYPTO: Yahoo Finance REST 폴링 (별도 asyncio task)
-  - 주간거래(KST 10:00~18:00): US 웹소켓 구독 안 함 (closed 처리) — 단, 이 파일에서는
-    "장 상태에 따라 구독 여부를 걸러내는" 로직을 이미 없앴으므로(아래 get_subscribe_targets
-    참고) 이 구간에도 US 종목은 구독된 채로 유지된다. KIS가 이 구간에 push를 보내지
-    않을 뿐, 구독 자체를 막지는 않는다(2026-08-07 실측: 휴장 상태에서도 구독 등록이
-    OPSP0000으로 정상 처리됨을 확인).
+  - 미국주간거래(KST 10:00~16:00): [2026-08-20 추가] 이 구간에는 US 종목의
+    HDFSCNT0 tr_key 접두어를 기존 D(DNAS/DNYS/DAMS)에서 R(RBAQ/RBAY/RBAA)로
+    전환해서 구독을 유지한다(추가구독이 아닌 "전환" — 41종목 세션 한도 보호,
+    make_us_tr_key/_switch_us_day_trading_prefix 참고). 전환은
+    market_status_watcher_task가 10초 폴링으로 경계 진입/이탈을 감지해서 수행.
+    포트폴리오 종목은 장 상태와 무관하게 항상 구독 대상이라는 기존 원칙(아래
+    get_subscribe_targets 참고)은 그대로 유지되며, 이 전환도 "구독 대상 여부"가
+    아니라 "같은 종목의 tr_key 접두어"만 바꾸는 것이다.
 
 [재시작 정책 — 2026-08-07 개편]
   os.execv()를 통한 프로세스 재시작은 아래 경우에만 발생한다:
@@ -23,8 +26,11 @@ config.json 의 realtime_quote = true 일 때 동작.
        갱신으로 처리.
     2) 장 상태(활성/휴장) 전환(market_status_watcher_task) — 포트폴리오에 있는 종목은
        장 상태와 무관하게 항상 구독 대상이므로 이 이벤트 자체가 구독에 영향을 주지
-       않음. 이 task는 이제 관찰용 로그만 남긴다(KIS가 장마감 중 idle 세션을 자연
-       종료하는지는 아직 미확인 — 이 로그로 추후 관찰).
+       않음. 활성/휴장 전환은 이제도 관찰용 로그만 남긴다(KIS가 장마감 중 idle 세션을
+       자연 종료하는지는 아직 미확인 — 이 로그로 추후 관찰).
+       단, [2026-08-20 추가] 같은 task 안에서 미국주간거래(KST 10:00/16:00) 진입·이탈은
+       예외로, 이 이벤트는 US 종목의 tr_key 접두어(D↔R) 전환을 실제로 트리거한다
+       (재시작이 아니라 개별 UNSUB/SUB — 아래 _switch_us_day_trading_prefix 참고).
 
 [테스트 모드]
     TEST_FX_OFFSET_MODE = 0  정상 운영
@@ -80,11 +86,27 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ---------------------------------------------------------------------------
 WS_URL = "ws://ops.koreainvestment.com:21000"
 
-# DB market → HDFSCNT0 tr_key prefix (야간/정규/애프터 무료시세)
+# DB market → HDFSCNT0 tr_key prefix (야간/정규/애프터 무료 지연체결가)
 US_MARKET_PREFIX = {
     "NAS": "DNAS",
     "NYS": "DNYS",
     "AMS": "DAMS",
+}
+
+# DB market → HDFSCNT0 tr_key prefix (미국주간거래, KST 10:00~16:00 전용)
+# tr_id는 D접두어와 동일하게 HDFSCNT0, tr_key 접두어만 R+거래소 코드로 다름
+# (KIS 공식 API 문서 기준: 나스닥 BAQ / 뉴욕 BAY / 아멕스 BAA)
+US_MARKET_DAY_PREFIX = {
+    "NAS": "RBAQ",
+    "NYS": "RBAY",
+    "AMS": "RBAA",
+}
+
+# tr_key 접두어(4자리) → market 역매핑 (D/R 전환 시 기존 구독의 market을
+# 별도 저장 없이 tr_key 자체에서 복원하기 위해 사용)
+_US_PREFIX_TO_MARKET = {
+    **{v: k for k, v in US_MARKET_PREFIX.items()},
+    **{v: k for k, v in US_MARKET_DAY_PREFIX.items()},
 }
 
 # H0STCNT0 수신 필드 인덱스
@@ -135,9 +157,26 @@ class SharedState:
 # ---------------------------------------------------------------------------
 # tr_key 생성
 # ---------------------------------------------------------------------------
-def make_us_tr_key(ticker: str, market: str) -> str:
-    prefix = US_MARKET_PREFIX.get(market, "DNAS")
+def make_us_tr_key(ticker: str, market: str, day_trading: bool = False) -> str:
+    """
+    day_trading=True면 주간거래(R접두어) tr_key를, False면 기존 무료
+    지연체결가(D접두어) tr_key를 생성한다.
+    """
+    table  = US_MARKET_DAY_PREFIX if day_trading else US_MARKET_PREFIX
+    prefix = table.get(market, "RBAQ" if day_trading else "DNAS")
     return f"{prefix}{ticker}"
+
+
+def _is_us_day_trading_now() -> bool:
+    """
+    현재 미국주간거래(KST 10:00~16:00) 시간대인지 여부.
+    get_market_status()는 US 마켓별로 호출해야 하지만, 주간거래 판단 자체는
+    NAS/NYS/AMS 어느 마켓으로 호출해도 동일한 결과가 나온다(순수 KST 시각/
+    날짜 기준 계산이라 거래소별 차이가 없음) — 그래서 "NAS" 고정으로 호출한다.
+    단, 이 가정은 market_map에 "NAS"가 market_time="US"로 정의되어 있다는
+    전제에 의존한다(현재 config.json 기준 항상 존재).
+    """
+    return get_market_status("NAS") == "day"
 
 
 # ---------------------------------------------------------------------------
@@ -484,9 +523,12 @@ async def kis_ws_task(shared: SharedState):
             ) as ws:
                 log.info("KIS 웹소켓 연결됨")
 
+                day_trading = _is_us_day_trading_now()
+
                 shared.us_ticker_set = {r["ticker"] for r in us_rows}
                 shared.tr_key_map = {
-                    make_us_tr_key(r["ticker"], r["market"]): r["ticker"] for r in us_rows
+                    make_us_tr_key(r["ticker"], r["market"], day_trading): r["ticker"]
+                    for r in us_rows
                 }
                 shared.sub_queue = asyncio.Queue()
                 shared.ws = ws
@@ -497,9 +539,9 @@ async def kis_ws_task(shared: SharedState):
                     log.info(f"[KR] 구독: {ticker}")
                     await asyncio.sleep(0.05)
 
-                # US 구독 (DB 최신 상태 기준 전체)
+                # US 구독 (DB 최신 상태 기준 전체, 현재 주간거래 여부에 맞는 접두어)
                 for r in us_rows:
-                    tr_key = make_us_tr_key(r["ticker"], r["market"])
+                    tr_key = make_us_tr_key(r["ticker"], r["market"], day_trading)
                     await ws.send(_sub_msg(approval_key, "HDFSCNT0", tr_key, True))
                     log.info(f"[US] 구독: {tr_key}")
                     await asyncio.sleep(0.05)
@@ -672,6 +714,53 @@ async def _request_subscribe(shared: SharedState, tr_id: str, tr_key: str, sub: 
 
 
 # ---------------------------------------------------------------------------
+# 미국주간거래(D↔R) 전환 — 이미 구독 중인 US 종목 전체의 tr_key 접두어를 바꾼다
+# ---------------------------------------------------------------------------
+async def _switch_us_day_trading_prefix(shared: SharedState, to_day: bool):
+    """
+    KST 10:00/16:00 경계에서 호출된다. US 종목 1개당 tr_key 1개만 유지하는
+    "전환" 방식(41종목 세션 한도 보호, 2026-08-20 설계 확정)이므로, 이미
+    구독 중인 종목 전체를 대상으로 기존 접두어를 UNSUB하고 새 접두어로 SUB한다.
+
+    처리 순서는 전체 UNSUB → 전체 SUB (하루 2번뿐인 저빈도 이벤트라, 전환
+    구간 동안 US 시세가 잠깐 비는 것을 감수하는 단순한 구조를 택함 — 종목별
+    UNSUB/SUB pair 처리 대신).
+
+    market은 별도로 저장해두지 않고, 기존 tr_key의 접두어 4자리를
+    _US_PREFIX_TO_MARKET으로 역매핑해서 복원한다.
+
+    [알려진 제약] 이 함수 실행 중(각 await 사이)에 ticker_watcher_task가
+    동시에 같은 shared.tr_key_map을 변경하면 경합이 생길 수 있다. 하루 2번,
+    수 초 내 끝나는 저빈도 이벤트라 실무적 위험은 낮다고 보고 별도 락 없이
+    진행하며, 문제가 실측되면 그때 락을 추가한다.
+    """
+    old_map = dict(shared.tr_key_map)  # {old_tr_key: ticker} 스냅샷
+    if not old_map:
+        log.info(f"[US] 주간거래 {'진입' if to_day else '종료'} — 구독 중인 US 종목 없음, 전환 생략")
+        return
+
+    # 1) 기존 접두어 전체 UNSUB
+    for old_tr_key in old_map:
+        await _request_subscribe(shared, "HDFSCNT0", old_tr_key, False)
+
+    # 2) 새 접두어로 전체 SUB (+ 역매핑 테이블 갱신)
+    new_map = {}
+    for old_tr_key, ticker in old_map.items():
+        market = _US_PREFIX_TO_MARKET.get(old_tr_key[:4])
+        if market is None:
+            log.warning(f"[US] 주간거래 전환 중 market 판별 실패, 건너뜀: {old_tr_key}")
+            continue
+        new_tr_key = make_us_tr_key(ticker, market, to_day)
+        await _request_subscribe(shared, "HDFSCNT0", new_tr_key, True)
+        new_map[new_tr_key] = ticker
+
+    shared.tr_key_map = new_map
+    log.info(
+        f"[US] 주간거래 {'진입(D→R)' if to_day else '종료(R→D)'} 전환 완료 — {len(new_map)}개 종목"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 구독 갱신 감시 태스크 (이벤트 기반 — 5분 polling 대체)
 # ---------------------------------------------------------------------------
 async def ticker_watcher_task(
@@ -729,15 +818,18 @@ async def ticker_watcher_task(
             log.info(f"[KR] 구독 제거: {sorted(kr_removed)}")
 
         # --- US: 개별 등록/해제 (+ 역매핑 테이블 갱신) ---
-        us_added   = us_set - prev_us_set
-        us_removed = prev_us_set - us_set
+        # 현재 주간거래 여부에 맞는 접두어를 써야, market_status_watcher_task가
+        # 관리하는 shared.tr_key_map의 접두어 상태와 어긋나지 않는다.
+        day_trading = _is_us_day_trading_now()
+        us_added    = us_set - prev_us_set
+        us_removed  = prev_us_set - us_set
         for ticker, market in us_added:
-            tr_key = make_us_tr_key(ticker, market)
+            tr_key = make_us_tr_key(ticker, market, day_trading)
             await _request_subscribe(shared, "HDFSCNT0", tr_key, True)
             shared.us_ticker_set.add(ticker)
             shared.tr_key_map[tr_key] = ticker
         for ticker, market in us_removed:
-            tr_key = make_us_tr_key(ticker, market)
+            tr_key = make_us_tr_key(ticker, market, day_trading)
             await _request_subscribe(shared, "HDFSCNT0", tr_key, False)
             shared.us_ticker_set.discard(ticker)
             shared.tr_key_map.pop(tr_key, None)
@@ -767,19 +859,27 @@ async def ticker_watcher_task(
 MARKET_STATUS_POLL_INTERVAL = 10  # 초
 
 
-async def market_status_watcher_task():
+async def market_status_watcher_task(shared: SharedState):
     """
-    [2026-08-07 변경] 이 task는 더 이상 구독 등록/해제나 재시작에 관여하지 않는다.
-    포트폴리오에 있는 종목은 장 상태와 무관하게 항상 구독 대상이기 때문에, "장 상태
-    전환"이라는 이벤트 자체가 이제 구독에 아무 영향을 주지 않는다.
+    [2026-08-07 변경] KR/US "활성/휴장" 전환 자체는 구독 등록/해제에 관여하지
+    않는다. 포트폴리오에 있는 종목은 장 상태와 무관하게 항상 구독 대상이기
+    때문이다. 이 부분은 오직 관찰용 로그만 남긴다: KIS가 장마감 중 idle
+    세션을 서버 측에서 자연 종료하는지(인계 문서 1.4, 공식 자료로 미확인)
+    여부를, 실제 운영 로그로 나중에 확인하기 위한 참고 자료 용도다.
 
-    이 task는 오직 관찰용 로그만 남긴다: KIS가 장마감 중 idle 세션을 서버 측에서
-    자연 종료하는지(인계 문서 1.4, 공식 자료로 미확인) 여부를, 실제 운영 로그로
-    나중에 확인하기 위한 참고 자료 용도다. 여기서 로그를 남긴 시점 이후
-    kis_ws_task 쪽에서 ConnectionClosed 로그가 뒤따라 찍히는지 대조해보면 된다.
+    [2026-08-20 변경] 단, 미국주간거래(KST 10:00/16:00) 진입·이탈은 예외다.
+    이건 "장 상태 전환"이 아니라 "같은 종목의 tr_key 접두어(D↔R)를 바꿔야
+    하는" 별도 이벤트라서, 이 task가 감지해서 _switch_us_day_trading_prefix()로
+    실제 구독 해제/재등록을 수행한다. 그래서 더 이상 "구독 변경에 관여하지
+    않는 task"가 아니다.
 
-    DB 조회는 태스크 시작 시 1회만 수행한다. 이후 10초 폴링 루프 안에서는
-    get_market_status()(순수 함수, DB/Redis 접근 없음)만 호출한다.
+    DB 조회는 태스크 시작 시 1회만 수행한다(활성/휴장 관찰용 markets 집합
+    산출에만 쓰임). 이후 10초 폴링 루프 안에서는 get_market_status()(순수
+    함수, DB/Redis 접근 없음)만 호출한다.
+
+    주간거래 전환 감지는 DB 스냅샷(markets)에 의존하지 않는다 — 포트폴리오에
+    US 종목이 나중에 추가되는 경우까지 놓치지 않기 위해, 항상
+    _is_us_day_trading_now()를 매 폴링마다 독립적으로 확인한다.
     """
     conn = get_db_conn()
     try:
@@ -794,27 +894,33 @@ async def market_status_watcher_task():
         if common.config.get("market_map", {}).get(m, {}).get("market_time") in ("KR", "US")
     }
 
-    if not markets:
-        return
-
     def _active_snapshot() -> dict:
-        # "closed 여부"만으로 정규화 — True(활성) / False(closed)
-        return {m: (get_market_status(m) != "closed") for m in markets}
+        # "closed 여부"만으로 정규화 — True(활성) / False(closed/day)
+        return {m: (get_market_status(m) not in ("closed", "day")) for m in markets}
 
-    prev_active = _active_snapshot()
+    prev_active = _active_snapshot() if markets else {}
+    prev_is_day = _is_us_day_trading_now()
 
     while True:
         await asyncio.sleep(MARKET_STATUS_POLL_INTERVAL)
 
-        curr_active = _active_snapshot()
+        if markets:
+            curr_active = _active_snapshot()
+            if curr_active != prev_active:
+                log.info(
+                    f"[market_status_watcher] 시장상태(활성/휴장) 변경 감지 "
+                    f"{prev_active} → {curr_active} (관찰용 로그 — 재시작/구독변경 없음)"
+                )
+            prev_active = curr_active
 
-        if curr_active != prev_active:
+        curr_is_day = _is_us_day_trading_now()
+        if curr_is_day != prev_is_day:
             log.info(
-                f"[market_status_watcher] 시장상태(활성/휴장) 변경 감지 "
-                f"{prev_active} → {curr_active} (관찰용 로그 — 재시작/구독변경 없음)"
+                f"[market_status_watcher] 미국주간거래 {'진입' if curr_is_day else '종료'} 감지 "
+                f"— US 종목 tr_key 전환 시작"
             )
-
-        prev_active = curr_active
+            await _switch_us_day_trading_prefix(shared, curr_is_day)
+        prev_is_day = curr_is_day
 
 
 # ---------------------------------------------------------------------------
@@ -858,7 +964,7 @@ def main():
                     {(r["ticker"], r["market"]) for r in upbit_rows},
                 )
             ),
-            asyncio.create_task(market_status_watcher_task()),
+            asyncio.create_task(market_status_watcher_task(shared)),
             asyncio.create_task(kr_final_close_task()),
             asyncio.create_task(holiday_cache_refresh_task()),
         ]
