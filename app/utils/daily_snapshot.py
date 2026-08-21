@@ -313,10 +313,17 @@ def _fetch_prev_summary(date: datetime.date) -> tuple | None:
 # ---------------------------------------------------------------------------
 # 공개 API
 # ---------------------------------------------------------------------------
-def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = False) -> dict:
+def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = False,
+                        cash_flow: int = 0) -> dict:
     """
     target_date 기준 가장 최근 종가로 daily_summary 1행분 데이터를 계산한다.
-    cash_flow / cash_flow_note 는 포함하지 않는다.
+    cash_flow_note 는 포함하지 않는다 (사용자 수동 입력).
+
+    cash_flow: target_date 하루 동안 발생한 입출금(+입금/-출금). twr_asset 계산에
+        직접 반영된다 (분자만 조정하는 공식 — history_DAL.save_cash_flow()와
+        동일한 컨벤션. 분모(prev_total)는 조정하지 않는다).
+        기본값 0은 cash_flow를 모르거나 없는 호출부(gen_daily_data.py, 백필 등)의
+        기존 동작을 그대로 보존한다.
     """
     # 상시 실행 프로세스(daily_inserter)에서 호출 시 전날 캐시가 남아있으면
     # target_date 종가 대신 전날 종가로 계산되는 버그 방지 → 매 호출마다 초기화
@@ -401,9 +408,11 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
     else:
         prev_total = to_f(prev[0])
         prev_twr   = to_f(prev[1])
-        # cash_flow 는 이 시점에 알 수 없으므로 0으로 계산
-        # inserter가 INSERT 후 cash_flow 가 입력되면 history 화면의 twr 재계산 로직이 보정
-        twr_asset = prev_twr * ((total_asset / prev_total) if prev_total else 1.0)
+        # net_asset: 입출금 효과를 제거한 "순수 운용 자산".
+        # 분모는 prev_total 그대로 사용 (history_DAL.save_cash_flow(),
+        # 그리고 이 시스템에서 과거부터 실제로 써온 컨벤션과 동일).
+        net_asset = total_asset - cash_flow
+        twr_asset = prev_twr * ((net_asset / prev_total) if prev_total else 1.0)
 
     # 계좌별 총자산 계산 (감시 계좌 포함) — 필요할 때만 수행
     account_totals = {}

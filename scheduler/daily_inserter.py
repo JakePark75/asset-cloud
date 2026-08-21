@@ -66,28 +66,21 @@ def _update_account_prev_totals(account_totals: dict) -> None:
 # ---------------------------------------------------------------------------
 # DB UPSERT
 # ---------------------------------------------------------------------------
-def _upsert(snapshot: dict, use_redis_cash_flow: bool = False) -> None:
+def _upsert(snapshot: dict, cash_flow: int = 0, cash_flow_note: str | None = None,
+            reset_redis_cash_flow: bool = False) -> None:
     """
     daily_summary에 UPSERT한다.
 
-    use_redis_cash_flow=True 일 때만 Redis today_cash_flow/today_cash_flow_note를
-    읽어 반영하고 리셋한다. 이건 "오늘(=어제) 정상 마감" 전용 플래그이며,
-    _insert_daily_close()에서만 True로 호출한다.
-    백필(_backfill)에서는 절대 True로 호출하지 않는다 — 과거 구멍에 그날과 무관한
-    "오늘 입출금" 값이 잘못 붙거나, 리셋되면서 유실되는 것을 막기 위함.
-    """
-    cash_flow = 0
-    cash_flow_note = None
-    if use_redis_cash_flow:
-        try:
-            from common.redis_store import get_redis
-            r = get_redis()
-            if r:
-                cash_flow      = int(r.get("today_cash_flow") or 0)
-                cash_flow_note = r.get("today_cash_flow_note")
-        except Exception as e:
-            print(f"[daily_inserter] Redis cash_flow 읽기 실패 (0으로 진행): {e}")
+    cash_flow/cash_flow_note는 호출측이 넘긴 값을 그대로 사용한다 (이 함수는 더 이상
+    Redis를 직접 읽지 않는다 — get_daily_snapshot()의 twr_asset 계산과 여기서 쓰는
+    cash_flow 값이 서로 다른 시점에 각자 Redis를 읽어 불일치할 가능성을 제거하기 위함).
 
+    reset_redis_cash_flow=True는 "오늘(=어제) 정상 마감" 전용 플래그로,
+    UPSERT 성공 후 Redis today_cash_flow/today_cash_flow_note를 리셋한다.
+    _insert_daily_close()에서만 True로 호출한다.
+    백필(_backfill)에서는 절대 True로 호출하지 않는다 — 과거 구멍 처리 중 그날과
+    무관한 "오늘 입출금" 값이 리셋되어 유실되는 것을 막기 위함.
+    """
     sql = """
         INSERT INTO daily_summary
             (date, total_asset, usd_krw, ndx100,
@@ -116,7 +109,7 @@ def _upsert(snapshot: dict, use_redis_cash_flow: bool = False) -> None:
         conn.commit()
 
     # INSERT 완료 후 Redis cash_flow 리셋 (정상 마감 경로에서만)
-    if use_redis_cash_flow:
+    if reset_redis_cash_flow:
         try:
             from common.redis_store import get_redis
             r = get_redis()
@@ -251,7 +244,7 @@ def _backfill(dates: list[datetime.date]) -> list[datetime.date]:
             "x2_ratio":    ratios["x2_ratio"],
             "x3_ratio":    ratios["x3_ratio"],
             "twr_asset":   twr_asset,
-        }, use_redis_cash_flow=False)  # 백필은 오늘 입출금을 절대 참조하지 않는다
+        })  # cash_flow/cash_flow_note 기본값(0/None) 그대로 — 백필은 오늘 입출금을 절대 참조하지 않는다
         print(f"✅ 총자산: {total_asset:,.0f} 원", flush=True)
 
     now_kst = datetime.datetime.now(KST)
@@ -286,13 +279,30 @@ def _insert_daily_close(target_date: datetime.date) -> None:
     """
     target_date(=어제) 하루의 "정상 마감" 처리 전용.
     _backfill()과 달리 daily_snapshot.get_daily_snapshot()을 사용하고,
-    Redis today_cash_flow를 daily_summary에 반영하는 유일한 경로다
-    (_upsert(use_redis_cash_flow=True)).
+    Redis today_cash_flow를 daily_summary에 반영하는 유일한 경로다.
+
+    Redis today_cash_flow/today_cash_flow_note를 여기서 한 번만 읽어
+    get_daily_snapshot()(twr_asset 계산용)과 _upsert()(cash_flow 컬럼 저장용)
+    양쪽에 동일한 값을 전달한다 — 이전에는 두 곳에서 각자 Redis를 읽어
+    그 사이 값이 바뀌면 twr_asset과 cash_flow 컬럼이 서로 다른 입출금값
+    기준으로 계산/저장될 여지가 있었다.
 
     실패하면 그대로 예외를 던진다 — 호출측(_run_daily_cycle)이 실패 날짜로 기록한다.
     """
-    snapshot = get_daily_snapshot(target_date, calc_account_totals=True)
-    _upsert(snapshot, use_redis_cash_flow=True)
+    cash_flow = 0
+    cash_flow_note = None
+    try:
+        from common.redis_store import get_redis
+        r = get_redis()
+        if r:
+            cash_flow      = int(r.get("today_cash_flow") or 0)
+            cash_flow_note = r.get("today_cash_flow_note")
+    except Exception as e:
+        print(f"[daily_inserter] Redis cash_flow 읽기 실패 (0으로 진행): {e}")
+
+    snapshot = get_daily_snapshot(target_date, calc_account_totals=True, cash_flow=cash_flow)
+    _upsert(snapshot, cash_flow=cash_flow, cash_flow_note=cash_flow_note,
+            reset_redis_cash_flow=True)
     _update_account_prev_totals(snapshot["account_totals"])
 
 # ---------------------------------------------------------------------------
