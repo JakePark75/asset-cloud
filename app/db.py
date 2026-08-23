@@ -51,12 +51,57 @@ def _get_pool() -> "pg_pool.ThreadedConnectionPool":
     return _pool
 
 
+def _get_live_conn(p: "pg_pool.ThreadedConnectionPool"):
+    """
+    풀에서 커넥션을 받아오되, 살아있는지 SELECT 1로 확인(pre-ping)한 뒤 반환한다.
+    죽은 커넥션이면 풀에서 폐기(close=True)하고 다시 받아온다 (최대 3회 재시도).
+
+    이 함수를 추가한 계기: 2026-08-22 Ubuntu unattended-upgrades가 postgresql-14를
+    자동 업그레이드하면서 서비스가 재시작됐고, 그때 살아있던 풀의 커넥션 2개가
+    "administrator command"로 서버 쪽에서 강제 종료됨. 풀 객체는 이를 모른 채
+    다음 getconn()에서 죽은 커넥션을 그대로 내어줬고, daily_inserter가
+    "connection already closed" 에러로 실패함 (postgresql 로그로 원인 확정).
+
+    표준 해법(SQLAlchemy pool_pre_ping과 동일한 패턴): 체크아웃 시 트리비얼
+    쿼리로 살아있는지 확인 후, 죽었으면 버리고 새로 발급받는다.
+    """
+    last_err = None
+    for _ in range(3):
+        conn = p.getconn()
+        if conn.closed:
+            last_err = "conn.closed flag set"
+            p.putconn(conn, close=True)
+            continue
+        try:
+            with conn.cursor() as probe:
+                probe.execute("SELECT 1")
+            # SELECT 1은 read-only라 커밋 불필요하지만, 트랜잭션이 열린 채로
+            # 반환되지 않도록 정리해둔다.
+            if conn.status == psycopg2.extensions.STATUS_IN_TRANSACTION:
+                conn.rollback()
+        except Exception as e:
+            last_err = e
+            try:
+                conn.close()
+            except Exception:
+                pass
+            p.putconn(conn, close=True)
+            continue
+        return conn
+    raise RuntimeError(
+        f"DB 커넥션 풀에서 살아있는 커넥션을 받아오지 못했습니다 (3회 재시도 실패): {last_err}"
+    )
+
+
 @contextmanager
 def get_db():
     """
     커넥션 풀에서 빌리고 반납하는 컨텍스트 매니저.
     기존 인터페이스(`with get_db() as conn:`)는 그대로 유지 — 호출부 수정 불필요.
 
+    - 빌려주기 전에 SELECT 1로 살아있는지 확인(pre-ping)하고, 죽어있으면 폐기 후
+      재발급한다 (_get_live_conn 참고 — postgres 재시작 등으로 인한 stale
+      connection 문제 대응).
     - 정상 종료됐지만 트랜잭션이 열린 채로 남아있으면(commit() 안 부르는 SELECT 전용
       호출부 다수 존재) 반납 전에 rollback() 하여 다음 사용자가 깨끗한 상태로 받게 함.
       (psycopg2 공식문서: 트랜잭션이 열린 채로 커넥션을 닫거나 반납하면 문제가 될 수
@@ -64,7 +109,7 @@ def get_db():
     - 예외 발생 시 rollback() 후 그대로 재발생(re-raise) — 예외를 삼키지 않는 기존 동작 유지
     """
     p = _get_pool()
-    conn = p.getconn()
+    conn = _get_live_conn(p)
     try:
         yield conn
         if conn.status == psycopg2.extensions.STATUS_IN_TRANSACTION:
