@@ -40,6 +40,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from app.db import get_db, get_config
+from app.utils.metrics import calc_twr
 from app.utils.daily_snapshot import get_daily_snapshot
 from scheduler.price_updater_common import get_market_status
 import app.utils.snap as snap
@@ -227,8 +228,7 @@ def _backfill(dates: list[datetime.date]) -> list[datetime.date]:
         if prev_twr_asset is None:
             twr_asset = total_asset
         else:
-            denom = prev_total_asset
-            twr_asset = prev_twr_asset * ((total_asset / denom) if denom else 1.0)
+            twr_asset = calc_twr(prev_twr_asset, prev_total_asset, total_asset, cash_flow=0)
 
         prev_twr_asset   = twr_asset
         prev_total_asset = total_asset

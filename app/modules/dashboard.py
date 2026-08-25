@@ -8,7 +8,7 @@ from shiny import module, ui, render, reactive
 from app.db import get_db, get_market_currency
 from app.price_signal import price_signal as _price_signal, daily_insert_signal as _daily_insert_signal, position_signal as _position_signal, ticker_signal as _ticker_signal
 from app.utils.metrics import (
-    to_f, calculate_xirr, calculate_monthly_irr, calculate_period_irr,
+    to_f, calc_twr, calculate_xirr, calculate_monthly_irr, calculate_period_irr,
     calculate_alpha, calculate_beta, calculate_drawdown_metrics,
     calculate_retirement_asset,
     calculate_exposure_and_ratios,
@@ -111,7 +111,7 @@ def _load_summary_data(rows, raw_rows) -> dict:
         pass
 
     denom    = prev_asset
-    live_twr = prev_twr * ((total_asset - today_cash_flow) / denom) if denom != 0 else prev_twr
+    live_twr = calc_twr(prev_twr, denom, total_asset, today_cash_flow)
     live_ndx = live_ndx100 if live_ndx100 else prev_ndx100
 
     cash_flows  = [(rows[0][0], -to_f(rows[0][1]))]

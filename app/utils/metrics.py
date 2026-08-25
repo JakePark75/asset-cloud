@@ -8,6 +8,27 @@ def to_f(val) -> float:
     if val is None: return 0.0
     return float(val)
 
+def calc_twr(prev_twr: float, prev_total: float, total_asset: float, cash_flow: float = 0.0) -> float:
+    """
+    TWR(Time-Weighted Return) 체인 계산의 단일 진실 소스(single source of truth).
+
+    twr_asset(오늘) = twr_asset(전일) * ((total_asset(오늘) - cash_flow) / total_asset(전일))
+
+    분모는 전일 total_asset 그대로 사용 (cash_flow로 조정하지 않음) — 이 프로젝트가
+    엑셀 관리 시절부터 실제로 써온 컨벤션과 일치시킨 것 (2026-08-21/23 TWR 버그
+    수정 세션에서 6/16, 5/8 실데이터로 직접 검증 후 확정).
+
+    이전에는 이 한 줄짜리 공식이 daily_snapshot.py / daily_inserter.py /
+    redis_store.py(recalc_today_row) / dashboard.py(live_twr) / history_DAL.py
+    (save_cash_flow) 5곳에 각자 따로 구현되어 있었고, 그중 recalc_today_row()
+    하나만 다른 공식(분모까지 조정)을 쓰고 있던 게 실제 버그로 이어졌었다.
+    앞으로 twr 계산식을 바꿀 일이 있으면 반드시 이 함수 하나만 고치면 된다.
+    """
+    if not prev_total:
+        return prev_twr
+    net_asset = total_asset - cash_flow
+    return prev_twr * (net_asset / prev_total)
+
 def calculate_exposure_and_ratios(db_rows: list[tuple], usd_krw: float) -> dict:
     """
     [순수 계산기] 포지션-티커 데이터를 받아 원화 환산 및 비중 지표를 계산합니다.

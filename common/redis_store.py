@@ -421,18 +421,16 @@ def recalc_today_row() -> None:
         except Exception:
             pass
 
-        # 9. twr_asset 계산
-        # 분모는 prev_total 그대로 사용 (분모까지 cash_flow로 조정하지 않음).
-        # daily_snapshot.get_daily_snapshot(), history_DAL.save_cash_flow()와
-        # 동일한 컨벤션 — 이 시스템에서 실제로 오래 써온 방식과 일치시키기 위해
-        # 기존의 "분모도 조정" 공식(denom = prev_total + cash_flow)에서 변경함.
+        # 9. twr_asset 계산 — 공용 calc_twr() 사용 (app/utils/metrics.py 참고,
+        #    daily_snapshot.get_daily_snapshot(), history_DAL.save_cash_flow()와
+        #    동일 공식으로 통일됨)
         if prev is None:
             twr_asset = total_asset
         else:
+            from app.utils.metrics import calc_twr
             prev_total = to_f(prev[0])
             prev_twr   = to_f(prev[1])
-            net_asset = total_asset - cash_flow
-            twr_asset = prev_twr * (net_asset / prev_total) if prev_total else prev_twr
+            twr_asset = calc_twr(prev_twr, prev_total, total_asset, cash_flow)
 
         # 10. Redis 저장
         

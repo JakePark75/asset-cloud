@@ -23,6 +23,7 @@ from common.kis_auth import get_kis_access_token
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from app.db import get_db, get_config, get_market_currency
+from app.utils.metrics import calc_twr
 from app.utils.metrics import calculate_exposure_and_ratios, to_f
 
 # ---------------------------------------------------------------------------
@@ -408,11 +409,7 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
     else:
         prev_total = to_f(prev[0])
         prev_twr   = to_f(prev[1])
-        # net_asset: 입출금 효과를 제거한 "순수 운용 자산".
-        # 분모는 prev_total 그대로 사용 (history_DAL.save_cash_flow(),
-        # 그리고 이 시스템에서 과거부터 실제로 써온 컨벤션과 동일).
-        net_asset = total_asset - cash_flow
-        twr_asset = prev_twr * ((net_asset / prev_total) if prev_total else 1.0)
+        twr_asset = calc_twr(prev_twr, prev_total, total_asset, cash_flow)
 
     # 계좌별 총자산 계산 (감시 계좌 포함) — 필요할 때만 수행
     account_totals = {}
