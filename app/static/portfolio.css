@@ -67,10 +67,11 @@
 .ticker-list { }
 
 /* ──────────────────────────────────────────────────────────────────
-   종목 행 3줄 레이아웃: 줄마다 좌우 폭 비율을 독립적으로 고정.
-   (이름 줄 7:3 / 손익률 줄 5:5 / 평단가 줄 6:4)
-   같은 줄의 좌우끼리만 공간을 다투고, 다른 줄에는 영향을 주지 않는다.
-   넘치는 텍스트는 줄바꿈 대신 ...으로 처리(각 줄에 overflow:hidden 적용).
+   종목 행 3줄 레이아웃: 줄마다 좌/우가 콘텐츠 크기만큼 유동적으로 폭을 가짐.
+   (이전: 줄마다 좌우 flex-grow 비율 고정 7:3 / 5:5 / 5:5)
+   합쳐서 여유 공간이 있으면 space-between으로 가운데 여백이 생기고,
+   합쳐서 폭을 넘으면 flex-shrink가 콘텐츠 크기(flex-basis)에 비례해서
+   양쪽을 줄이며, 필요한 쪽(들)만 ...으로 처리된다 (양쪽 동시에 잘릴 수 있음).
    ────────────────────────────────────────────────────────────────── */
 .ticker-row-3line {
     display: block;
@@ -79,6 +80,7 @@
 .t-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
 }
 
 .t-row + .t-row {
@@ -87,6 +89,7 @@
 
 .t-row-left,
 .t-row-right {
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
@@ -97,19 +100,41 @@
     text-align: right;
 }
 
-.t-row-1 .t-row-left  { flex: 7; overflow: visible; }
-.t-row-1 .t-row-right { flex: 3; }
+/* 레버리지 뱃지(lev-badge)가 카드 밖으로 살짝 튀어나오는 위치이므로
+   1행 좌측만 overflow는 visible 유지 (텍스트 자체 ellipsis는
+   .ticker-name / .lev-name-wrap 안쪽 요소가 처리) */
+.t-row-1 .t-row-left { overflow: visible; }
 
-.t-row-2 .t-row-left  { flex: 5; font-size: 13px; color: var(--text-muted); }
-.t-row-2 .t-row-right { flex: 5; font-size: 13px; }
+.t-row-2 .t-row-left,
+.t-row-2 .t-row-right,
+.t-row-3 .t-row-left,
+.t-row-3 .t-row-right {
+    font-size: 13px;
+}
 
-.t-row-3 .t-row-left  { flex: 5; font-size: 13px; color: var(--text-muted); }
-.t-row-3 .t-row-right { flex: 5; font-size: 13px; }
+.t-row-2 .t-row-left,
+.t-row-3 .t-row-left {
+    color: var(--text-muted);
+}
 
 .t-row-1 .t-row-right.ticker-amount {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   [옵션] 우선순위 고정: 특정 쪽이 절대 잘리면 안 될 때만 이 클래스를
+   해당 .t-row-left 또는 .t-row-right 요소에 추가해서 사용.
+   기본 상태(클래스 미부여)에서는 아무 영향 없음 — 위 A안 동작 그대로.
+   사용 예 (components.py 쪽에서 클래스 조건부로 붙이면 됨):
+     <div class="t-row-right no-shrink">...</div>
+   → 이 요소는 절대 줄어들지 않고, 반대쪽(.t-row-left)만 줄어들며
+     필요시 반대쪽에만 ...이 표시됨.
+   ────────────────────────────────────────────────────────────────── */
+.t-row-left.no-shrink,
+.t-row-right.no-shrink {
+    flex-shrink: 0;
 }
 
 
