@@ -620,7 +620,13 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
         })
 
         current_tickers   = [r[0] for r in rows_sorted] + [r[0] for r in watch_sorted]
-        structure_changed = (current_tickers != _last_tickers)
+        # 리스트(순서 포함) 비교가 아니라 멤버십(set) 비교로 판단.
+        # rows_sorted의 정렬 기준(-amount)은 시세가 바뀔 때마다 재계산되므로,
+        # 종목 구성은 그대로인데 순위만 뒤바뀌는 경우가 흔하다. 리스트 비교를 쓰면
+        # 그때마다 structure_changed=True가 되어 pf_init(전체 skeleton 재생성)이
+        # 불필요하게 발동하고, 그 시점에 열려있던 드릴다운 아코디언 DOM이
+        # 빈 상태로 리셋되어 사용자 눈에는 아코디언이 이유 없이 닫힌 것처럼 보인다.
+        structure_changed = (set(current_tickers) != set(_last_tickers))
 
         if structure_changed:
             _last_tickers = current_tickers
