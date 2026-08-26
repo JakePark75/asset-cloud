@@ -18,11 +18,11 @@ def load_portfolio(db_rows):
 
     prices = get_all_prices()
     rows   = []
-    for ticker, qty, name, market, leverage, avg_price in db_rows:
+    for ticker, qty, name, market, leverage, avg_price, sort_order in db_rows:
         p_data     = prices.get(ticker)
         price      = float(p_data["price"])      if p_data else 0.0
         change_pct = float(p_data["change_pct"]) if p_data else 0.0
-        rows.append((ticker, qty, name, price, change_pct, market, leverage, avg_price))
+        rows.append((ticker, qty, name, price, change_pct, market, leverage, avg_price, sort_order))
 
     return rows
 
@@ -78,14 +78,34 @@ def _calc_amount(ticker, qty_f, price_f, market, usd_rate):
     else:                                      return qty_f * price_f
 
 
+_UNSET_SORT_ORDER = 10**9  # sort_order 미지정 종목을 뒤로 보내기 위한 큰 값 (드래그로 지정된 종목이 항상 우선)
+
+
 def _sort_rows(rows, usd_rate):
+    """
+    정렬 우선순위: (1) 현금(KRW/USD)은 항상 맨 뒤 (2) sort_order가 지정된 종목은 그 값 순
+    (3) sort_order 미지정 종목은 평가금액 내림차순 (기존 동작과 동일하게 폴백)
+    rows[i]: (ticker, qty, name, price, chg_pct, market, leverage, avg_price, sort_order)
+    """
     return sorted(
         rows,
         key=lambda r: (
             1 if r[0] in ("KRW", "USD") else 0,
+            r[8] if r[8] is not None else _UNSET_SORT_ORDER,
             -_calc_amount(r[0], float(r[1] or 0), float(r[3] or 0), r[5], usd_rate)
         )
     )
+
+
+def _pinned_ticker_signature(rows_sorted):
+    """
+    sort_order가 명시적으로 지정된(드래그로 순서를 정한) 종목만, 그 순서 그대로 추출.
+    sort_order 미지정 종목(amount 기준 tie-break으로 정렬)의 순위 흔들림은
+    여기 포함되지 않는다 — structure_changed 판정에서 가격발 재정렬과
+    드래그발 순서변경을 구분하기 위한 용도.
+    rows[i]: (ticker, qty, name, price, chg_pct, market, leverage, avg_price, sort_order)
+    """
+    return tuple(r[0] for r in rows_sorted if r[8] is not None)
 
 
 def _sort_watch_rows(rows):
@@ -132,7 +152,7 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
         return row_html
 
     accordion_html = f'<div class="subtab-accordion" id="pf-acc-{tid}" style="display:none;"></div>'
-    return row_html + accordion_html
+    return f'<div class="pf-item" data-ticker="{ticker}">{row_html}{accordion_html}</div>'
 
 
 def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price=None, is_watch_only=False):
@@ -247,6 +267,7 @@ def portfolio_ui():
     }
 
     _applyTickers(m.tickers);
+    _pfInitSortable();
   });
 
   // ── pf_tick: 변경된 key만 patch ─────────────────────────────
@@ -303,6 +324,52 @@ def portfolio_ui():
     window._pfOpenTid = tid;
     Shiny.setInputValue(window._pfNs + '-ticker_clicked', { ticker: ticker }, { priority: 'event' });
   };
+
+  // ── 종목 드래그 정렬 (SortableJS) ────────────────────────────────────────
+  // pf_init은 #pf-ticker-list의 innerHTML을 통째로 교체하므로, 이전 SortableJS
+  // 인스턴스가 붙어있던 DOM 노드가 매번 파괴된다. 따라서 pf_init이 올 때마다
+  // 재초기화가 필요하다.
+  function _loadSortable(cb) {
+    if (window.Sortable) { cb(); return; }
+    if (window._sortableLoading) {
+      window._sortableLoading.push(cb);
+      return;
+    }
+    window._sortableLoading = [cb];
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.7/Sortable.min.js';
+    s.onload = function() {
+      var queue = window._sortableLoading;
+      window._sortableLoading = null;
+      queue.forEach(function(fn) { fn(); });
+    };
+    document.head.appendChild(s);
+  }
+
+  var _pfSortable = null;
+
+  function _pfInitSortable() {
+    var el = document.getElementById('pf-ticker-list-normal');
+    if (!el) return;
+    if (_pfSortable) { _pfSortable.destroy(); _pfSortable = null; }
+    _loadSortable(function() {
+      var el2 = document.getElementById('pf-ticker-list-normal');
+      if (!el2) return;
+      _pfSortable = Sortable.create(el2, {
+        delay: 150,
+        delayOnTouchOnly: true,
+        animation: 150,
+        dataIdAttr: 'data-ticker',
+        scroll: true,
+        scrollSensitivity: 150,  // px, 화면 가장자리로부터 이 거리 안이면 스크롤 시작
+        scrollSpeed: 400,        // px/frame, 스크롤 속도
+        onEnd: function() {
+          var order = _pfSortable.toArray();
+          Shiny.setInputValue(window._pfNs + '-ticker_reorder', order, { priority: 'event' });
+        },
+      });
+    });
+  }
 
   // pf_init용: static + dynamic 전체 적용
   function _applyTickers(tickers) {
@@ -452,11 +519,12 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
     _initialized = False  # 일반 변수: effect 자기-재트리거 방지
     open_ticker  = reactive.value(None)  # None: 아코디언 닫힘, str: 해당 ticker 아코디언 열림 (한번에 하나만)
 
-    _last_tickers:     list      = []
-    _last_display:     dict      = {}
-    _last_open_ticker: str | None = None
-    _last_dd_accounts: list      = []
-    _last_dd_display:  dict      = {}
+    _last_tickers:      list      = []
+    _last_pinned_order: tuple     = ()
+    _last_display:      dict      = {}
+    _last_open_ticker:  str | None = None
+    _last_dd_accounts:  list      = []
+    _last_dd_display:   dict      = {}
 
     # ── DB 캐시 ──────────────────────────────────────────────────────────────
 
@@ -470,12 +538,13 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
             cur.execute("""
                 SELECT p.ticker, SUM(p.quantity) AS quantity,
                        t.name, t.market, t.leverage,
-                       SUM(p.quantity * p.avg_price) / NULLIF(SUM(p.quantity), 0) AS avg_price
+                       SUM(p.quantity * p.avg_price) / NULLIF(SUM(p.quantity), 0) AS avg_price,
+                       t.sort_order
                 FROM positions p
                 LEFT JOIN tickers t ON p.ticker = t.ticker
                 LEFT JOIN accounts a ON p.account_id = a.id
                 WHERE a.is_watch = false
-                GROUP BY p.ticker, t.name, t.market, t.leverage
+                GROUP BY p.ticker, t.name, t.market, t.leverage, t.sort_order
             """)
             rows = cur.fetchall()
             cur.close()
@@ -583,11 +652,31 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
             _last_dd_display.clear()
         open_ticker.set(ticker)
 
+    # ── 종목 순서 변경 (드래그 정렬) ─────────────────────────────────────────────
+    # sort_order 변경은 ticker/quantity/leverage/market 중 어느 것도 바꾸지 않으므로,
+    # refresh_position_cache()(positions×tickers×is_watch 캐시)는 갱신 대상에
+    # sort_order가 없어 호출할 필요가 없다(redis_store.py 확인 완료).
+    # publish_ticker_changed()만 발행하면 price_signal.py의 리스너가 받아
+    # ticker_signal을 갱신하고, 그 결과 이 세션을 포함한 모든 세션의
+    # _db_portfolio_rows()가 재조회되어 새 sort_order가 반영된다.
+
+    @reactive.effect
+    @reactive.event(input.ticker_reorder)
+    def _reorder_tickers():
+        payload = input.ticker_reorder()
+        if not payload:
+            return
+        ordered_tickers = [str(t) for t in payload]
+        from app.modules.portfolio_DAL import update_ticker_order
+        from common.redis_store import publish_ticker_changed
+        update_ticker_order(ordered_tickers)
+        publish_ticker_changed()
+
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 
     @reactive.effect
     async def _send_update():
-        nonlocal _last_tickers, _last_display
+        nonlocal _last_tickers, _last_pinned_order, _last_display
         nonlocal _last_open_ticker, _last_dd_accounts, _last_dd_display
         nonlocal _initialized
 
@@ -612,31 +701,51 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
 
         ticker_values = {
             t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
-            for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
+            for t, qty, name, price, chg_pct, market, leverage, avg_price, _so in rows_sorted
         }
         ticker_values.update({
             t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price, is_watch_only=True)
             for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
         })
 
-        current_tickers   = [r[0] for r in rows_sorted] + [r[0] for r in watch_sorted]
-        # 리스트(순서 포함) 비교가 아니라 멤버십(set) 비교로 판단.
-        # rows_sorted의 정렬 기준(-amount)은 시세가 바뀔 때마다 재계산되므로,
-        # 종목 구성은 그대로인데 순위만 뒤바뀌는 경우가 흔하다. 리스트 비교를 쓰면
-        # 그때마다 structure_changed=True가 되어 pf_init(전체 skeleton 재생성)이
-        # 불필요하게 발동하고, 그 시점에 열려있던 드릴다운 아코디언 DOM이
-        # 빈 상태로 리셋되어 사용자 눈에는 아코디언이 이유 없이 닫힌 것처럼 보인다.
-        structure_changed = (set(current_tickers) != set(_last_tickers))
+        current_tickers = [r[0] for r in rows_sorted] + [r[0] for r in watch_sorted]
+        # structure_changed는 두 가지를 OR로 판단한다.
+        # (1) 멤버십(set) 비교 — 종목 구성(추가/삭제) 감지.
+        #     rows_sorted의 amount 기준 tie-break은 시세가 바뀔 때마다 재계산되므로,
+        #     리스트(순서 포함) 비교를 쓰면 종목 구성은 그대로인데 순위만 뒤바뀌는
+        #     경우에도 structure_changed=True가 되어, 그 시점에 열려있던 드릴다운
+        #     아코디언 DOM이 빈 상태로 리셋되는 문제가 있었다(리스트→set 비교로 수정 완료).
+        # (2) pinned order(sort_order 지정 종목만의 순서) 비교 — 드래그로 순서를
+        #     지정/변경한 경우 감지. sort_order 미지정 종목의 amount발 순위 흔들림은
+        #     _pinned_ticker_signature에 애초에 포함되지 않으므로 (1)의 취지를 해치지 않는다.
+        current_pinned_order = _pinned_ticker_signature(rows_sorted)
+        structure_changed = (
+            set(current_tickers) != set(_last_tickers)
+            or current_pinned_order != _last_pinned_order
+        )
 
         if structure_changed:
-            _last_tickers = current_tickers
+            _last_tickers      = current_tickers
+            _last_pinned_order = current_pinned_order
             _last_display.clear()
             cfg        = get_config()
             show_force = int(cfg.get("interval", 1)) != 0
-            ticker_list_html = "".join(
+
+            # 정상 섹션 중 현금(KRW/USD)은 드래그 대상이 아니므로 별도 렌더링하여
+            # SortableJS 컨테이너(#pf-ticker-list-normal) 밖, 감시종목 위에 고정 배치한다.
+            cash_rows   = [r for r in rows_sorted if r[0] in ("KRW", "USD")]
+            normal_rows = [r for r in rows_sorted if r[0] not in ("KRW", "USD")]
+
+            normal_html = "".join(
                 _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
-                for t, qty, name, price, chg_pct, market, leverage, avg_price in rows_sorted
+                for t, qty, name, price, chg_pct, market, leverage, avg_price, _so in normal_rows
             )
+            cash_html = "".join(
+                _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
+                for t, qty, name, price, chg_pct, market, leverage, avg_price, _so in cash_rows
+            )
+            ticker_list_html = f'<div id="pf-ticker-list-normal">{normal_html}</div>{cash_html}'
+
             if watch_sorted:
                 ticker_list_html += '<h4 class="section-heading">감시종목</h4>'
                 ticker_list_html += "".join(

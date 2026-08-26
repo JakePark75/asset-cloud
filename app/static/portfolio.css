@@ -243,3 +243,35 @@
 
 /*      */
 .chart-touch-wrap { touch-action: pan-y; }
+
+/* ──────────────────────────────────────────────────────────────────
+   종목 드래그 정렬 (SortableJS, #pf-ticker-list-normal 안의 .pf-item)
+   sortable-ghost / sortable-chosen / sortable-drag 는 SortableJS
+   기본 클래스명(ghostClass/chosenClass/dragClass 옵션을 override하지
+   않았으므로 기본값 그대로 적용됨).
+   ────────────────────────────────────────────────────────────────── */
+.pf-item {
+    cursor: grab;
+}
+
+/* 드래그 중인 원본 요소 자체 (delay 동안 눌려있는 상태 포함) */
+.pf-item.sortable-chosen {
+    cursor: grabbing;
+    background: var(--surface2);
+    border-radius: var(--radius-md);
+}
+
+/* 드롭될 위치를 보여주는 placeholder */
+.pf-item.sortable-ghost {
+    opacity: 0.35;
+    background: var(--surface);
+    border-radius: var(--radius-md);
+}
+
+/* 실제로 손가락/마우스를 따라다니는 복제 요소 */
+.pf-item.sortable-drag {
+    opacity: 0.9;
+    background: var(--surface2);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}

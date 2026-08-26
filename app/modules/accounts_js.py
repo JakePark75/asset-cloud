@@ -44,9 +44,57 @@ def accounts_js(market_currency_map_js: str) -> str:
       if (!accEl) window._acOpenId = null;
     }
     _applyAccountCards(m.cards);
+    _acInitSortable();
     // 새로고침 후 상태 복원 로직이 "계좌 목록 렌더링 완료"를 알 수 있도록 알림
     document.dispatchEvent(new CustomEvent('ac:list_init'));
   });
+
+  // ── 계좌 카드 드래그 정렬 (SortableJS) ────────────────────────────────────
+  // ac_list_init은 #ac-account-list의 innerHTML을 통째로 교체하므로, 이전
+  // SortableJS 인스턴스가 붙어있던 DOM 노드가 매번 파괴된다. 따라서 innerHTML
+  // 교체가 일어날 때마다(즉 ac_list_init이 올 때마다) 재초기화가 필요하다.
+  function _loadSortable(cb) {
+    if (window.Sortable) { cb(); return; }
+    if (window._sortableLoading) {
+      window._sortableLoading.push(cb);
+      return;
+    }
+    window._sortableLoading = [cb];
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.7/Sortable.min.js';
+    s.onload = function() {
+      var queue = window._sortableLoading;
+      window._sortableLoading = null;
+      queue.forEach(function(fn) { fn(); });
+    };
+    document.head.appendChild(s);
+  }
+
+  var _acSortable = null;
+
+  function _acInitSortable() {
+    var el = document.getElementById('ac-account-list-normal');
+    if (!el) return;
+    if (_acSortable) { _acSortable.destroy(); _acSortable = null; }
+    _loadSortable(function() {
+      // innerHTML 교체 중 이미 다른 노드로 바뀌었을 수 있으니 재조회
+      var el2 = document.getElementById('ac-account-list-normal');
+      if (!el2) return;
+      _acSortable = Sortable.create(el2, {
+        delay: 150,
+        delayOnTouchOnly: true,
+        animation: 150,
+        dataIdAttr: 'data-account-id',
+        scroll: true,
+        scrollSensitivity: 150,  // px, 화면 가장자리로부터 이 거리 안이면 스크롤 시작
+        scrollSpeed: 400,        // px/frame, 스크롤 속도
+        onEnd: function() {
+          var order = _acSortable.toArray();
+          Shiny.setInputValue(window._acNs + '-account_reorder', order, { priority: 'event' });
+        },
+      });
+    });
+  }
 
   // ── ac_list_tick ───────────────────────────────────────────────────────
   Shiny.addCustomMessageHandler('ac_list_tick', function(m) {

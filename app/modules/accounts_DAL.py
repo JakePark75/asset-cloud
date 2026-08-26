@@ -19,7 +19,7 @@ def fetch_accounts_summary():
             FROM accounts a
             LEFT JOIN positions p ON a.id = p.account_id
             LEFT JOIN tickers pr ON p.ticker = pr.ticker
-            ORDER BY a.id
+            ORDER BY COALESCE(a.sort_order, 999999999), a.id
         """)
         db_rows = cur.fetchall()
         cur.close()
@@ -264,6 +264,23 @@ def delete_account(account_id: int):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM accounts WHERE id = %s", (account_id,))
+        conn.commit()
+        cur.close()
+
+
+def update_account_order(ordered_ids: list[int]):
+    """
+    드래그 앤 드롭으로 결정된 계좌 순서를 accounts.sort_order에 반영.
+    ordered_ids: 화면에 표시된 순서 그대로의 계좌 id 리스트 (정상 계좌 섹션만 대상,
+    감시 계좌는 컨테이너 밖에 있어 이 리스트에 포함되지 않음).
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        for order, acc_id in enumerate(ordered_ids):
+            cur.execute(
+                "UPDATE accounts SET sort_order = %s WHERE id = %s",
+                (order, acc_id)
+            )
         conn.commit()
         cur.close()
 

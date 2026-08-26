@@ -18,7 +18,7 @@ def _build_account_card_skeleton(acc, ns_str):
     a_id, name, alias, total, cash, is_watch, prev_total = acc
     alias_str = f" ({alias})" if alias else ""
     return (
-        f'<div onclick="acToggleCard({a_id});" style="cursor:pointer;">'
+        f'<div onclick="acToggleCard({a_id});" style="cursor:pointer;" data-account-id="{a_id}">'
         f'  <div class="ticker-row" id="ac-card-{a_id}">'
         f'    <div>'
         f'      <div class="lev-name-wrap">'

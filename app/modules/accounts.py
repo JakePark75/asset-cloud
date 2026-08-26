@@ -4,7 +4,7 @@ from app.modules.accounts_DAL import (
     fetch_accounts_summary, calc_accounts_summary,
     fetch_account_details, calc_account_details,
     execute_buy, execute_sell,
-    add_account, delete_account,
+    add_account, delete_account, update_account_order,
     add_position, edit_position, delete_position,
     add_cash, edit_cash, delete_cash,
     search_tickers_by_name,
@@ -168,11 +168,12 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
             _last_accounts = current_accounts
             _last_list_disp.clear()
             if normal:
-                skeleton_html = "".join(
+                normal_html = "".join(
                     _build_account_card_skeleton(a, ns_str) for a in normal
                 )
             else:
-                skeleton_html = '<p style="color:#888; padding:16px 0;">등록된 계좌가 없습니다.</p>'
+                normal_html = '<p style="color:#888; padding:16px 0;">등록된 계좌가 없습니다.</p>'
+            skeleton_html = f'<div id="ac-account-list-normal">{normal_html}</div>'
             if watch:
                 skeleton_html += '<h4 class="section-heading">감시 계좌</h4>'
                 skeleton_html += "".join(
@@ -329,6 +330,29 @@ def accounts_server(input, output, session, active_tab: reactive.value = None,
         open_account.set(None)
         refresh.set(refresh() + 1)
         _notify_position_changed()
+
+    # ── 계좌 순서 변경 (드래그 정렬) ─────────────────────────────────────────────
+    # 순서 변경은 계좌 구성/포지션에 영향을 주지 않고, portfolio.py도 계좌 순서를
+    # 참조하지 않으므로(종목 순서만 사용) _notify_position_changed/_notify_ticker_changed
+    # 호출은 불필요. refresh.set()만으로 이 세션의 _db_accounts()가 재조회됨.
+    #
+    # 참고(알려진 한계): refresh는 세션-로컬 reactive.value이므로, 다른 탭/세션에서
+    # 열려있는 accounts 화면은 이 갱신을 즉시 받지 못하고 그 세션 자체의 다음 갱신
+    # 계기(가격 tick 등)까지 이전 순서로 남아있을 수 있음. 필요 시 별도 pub/sub
+    # 채널 추가가 필요하며, 현재는 범위 밖으로 남겨둠.
+
+    @reactive.effect
+    @reactive.event(input.account_reorder)
+    def _reorder_accounts():
+        payload = input.account_reorder()
+        if not payload:
+            return
+        try:
+            ordered_ids = [int(x) for x in payload]
+        except (TypeError, ValueError):
+            return
+        update_account_order(ordered_ids)
+        refresh.set(refresh() + 1)
 
     # ── 종목 추가 ─────────────────────────────────────────────────────────────
 
