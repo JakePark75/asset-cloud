@@ -325,6 +325,12 @@ def portfolio_ui():
     Shiny.setInputValue(window._pfNs + '-ticker_clicked', { ticker: ticker }, { priority: 'event' });
   };
 
+  // 세션5~9에서 오토스크롤 원인 규명용으로 쓰던 진단 로깅 인프라
+  // (scrollTop 인터셉터, touchmove/scroll 로깅, 1초 flush 타이머,
+  // window._pfDebugLog 등)는 세션9에서 방향 A 검증 완료 후 제거함.
+  // 로직이 아니라 계측 코드였으므로, 추후 다른 스크롤 이슈가 재발하면
+  // 이 시점 이전 버전을 참고해 필요한 부분만 다시 추가하면 된다.
+
   // ── 종목 드래그 정렬 (SortableJS) ────────────────────────────────────────
   // pf_init은 #pf-ticker-list의 innerHTML을 통째로 교체하므로, 이전 SortableJS
   // 인스턴스가 붙어있던 DOM 노드가 매번 파괴된다. 따라서 pf_init이 올 때마다
@@ -347,6 +353,9 @@ def portfolio_ui():
   }
 
   var _pfSortable = null;
+  var _pfSettleToken = 0; // dragEnd 이후 실제 스크롤 수렴을 기다리는 루프의 유효성 토큰.
+                          // 새 드래그가 시작되면 증가시켜, 이전 드래그의 settle 루프가
+                          // 뒤늦게 transform을 건드리지 못하게 막는다.
 
   function _pfInitSortable() {
     var el = document.getElementById('pf-ticker-list-normal');
@@ -360,12 +369,161 @@ def portfolio_ui():
         delayOnTouchOnly: true,
         animation: 150,
         dataIdAttr: 'data-ticker',
+        fallbackOnBody: true,   // ghost를 document.body에 직접 부착 — transform 대상의
+                                 // 후손이 되지 않도록 containing block 재해석 문제를 회피한다.
         scroll: true,
         scrollSensitivity: 150,  // px, 화면 가장자리로부터 이 거리 안이면 스크롤 시작
-        scrollSpeed: 400,        // px/frame, 스크롤 속도
+        scrollSpeed: 15,        // px/frame(24ms tick), scrollFn에 전달되는 offset의 스케일
+
+        // ── transform 기반 자체 오토스크롤 ────────────────────────────────
+        // iOS Safari가 터치 활성 중 실제 scrollTop 반영을 지연시키는 것이
+        // "반전 시 속도 급증" 증상의 근본 원인으로 확인됨(세션5 인수인계 문서).
+        // 네이티브 스크롤 API를 아예 안 쓰기 위해, SortableJS가 계산한
+        // offsetY(이미 scrollSpeed가 곱해진 24ms당 델타)를 실제 scrollTop에
+        // 쓰는 대신 #asset-root의 transform: translateY()에 누적 반영한다.
+        //
+        // 대상이 #pf-ticker-list가 아니라 #asset-root인 이유: 히어로(.db-hero)와
+        // 서브탭 네비바(.asset-sub-tabbar)가 asset.py에서 #pf-ticker-list와 형제
+        // 관계가 아니라 훨씬 상위(#asset-root)의 형제 요소로 존재함이 확인됨.
+        // 실제 페이지 스크롤이라면 이들도 리스트와 함께 밀려 올라가야 하는데,
+        // 리스트에만 transform을 걸면 그 위에 겹쳐 그려지는 문제가 있었음.
+        //
+        // 드롭 타겟 판별(_emulateDragOver)은 elementFromPoint 기반(뷰포트 좌표)
+        // 이라 이 방식과 충돌하지 않음을 소스 확인 완료.
+        //
+        // AutoScroll.js의 vy 계산: 위 방향 스크롤 조건에 `!!scrollPosY`(실제
+        // scrollTop이 0보다 큰지)가 들어있음(소스 확인 완료). 드래그 중 실제
+        // scrollTop을 0으로 유지하면 위 방향 오토스크롤이 영원히 막히므로,
+        // fakeScrollY가 0→양수로 바뀌는 최초 시점에 실제 scrollTop을 1px만
+        // 밀어 이 조건을 만족시킨다. 이 1px은 transform 계산에서 상쇄해
+        // 시각적으로는 이중 이동이 안 보이게 한다. 실기기 검증 필요.
+        scrollFn: function(offsetX, offsetY, originalEvent, touchEvt, hoverTargetEl) {
+          var rootEl = document.getElementById('asset-root');
+          if (!rootEl || !offsetY) return;
+
+          var maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+          var proposed = window._pfFakeScrollY + offsetY;
+          var proposedAbs = window._pfScrollStartY + proposed;
+
+          if (proposedAbs < 0) proposed = -window._pfScrollStartY;
+          if (proposedAbs > maxScroll) proposed = maxScroll - window._pfScrollStartY;
+
+          window._pfFakeScrollY = proposed;
+
+          // 위 방향 오토스크롤 잠금 해제용 1px 실스크롤 동기화
+          if (window._pfFakeScrollY > 0 && !window._pfRealScrollNudge) {
+            window.scrollTo(0, window._pfScrollStartY + 1);
+            window._pfRealScrollNudge = 1;
+          } else if (window._pfFakeScrollY <= 0 && window._pfRealScrollNudge) {
+            window.scrollTo(0, window._pfScrollStartY);
+            window._pfRealScrollNudge = 0;
+          }
+
+          var visualShift = window._pfFakeScrollY - window._pfRealScrollNudge;
+          rootEl.style.transform = 'translateY(' + (-visualShift) + 'px)';
+        },
+
+        onStart: function() {
+          window._pfFakeScrollY = 0;
+          window._pfRealScrollNudge = 0;
+          window._pfScrollStartY = window.scrollY;
+          _pfSettleToken++; // 이전 드래그의 settle 루프(있다면)를 무효화 — settle 루프 자체는
+                             // 현재 비활성화(주석 처리)돼 있지만, 재활성화 시 바로 쓸 수 있도록 유지.
+          var rootEl = document.getElementById('asset-root');
+          if (rootEl) rootEl.style.transition = 'none';
+        },
+
+        // ============================================================================
+        // [방향 A 채택 — 세션9] 검증 완료, settle 루프 비활성화
+        //
+        // 세션8 문서 4-2절 방향 A 가설("scrollTo에 behavior:'instant'를 명시하면
+        // real scrollY가 즉시 반영되어 따라잡을 gap 자체가 없어진다")을 세션9에서
+        // 검증함. 실기기 4회 재현(위/아래 방향 혼합, target 120~510px) 전부에서:
+        //   - scrollTo_called 직후 winScrollImmediatelyAfter가 target과 정확히 일치
+        //   - settle 루프가 매번 frame 0에서 즉시 종료 (remaining=0)
+        //   - 육안으로도 튐/어긋남 없음 (4회 전부 확인)
+        // 결과가 일관되어, settle 루프가 실질적으로 할 일이 없다고 판단해 비활성화함.
+        //
+        // 완전히 삭제하지 않고 주석으로 남겨두는 이유: 이번 검증은 아래 케이스들을
+        // 다루지 않았음(모두 미검증 — 팩트 아님, 우려 사항으로만 기록):
+        //   - 매우 빠르게 연속으로 드래그를 반복하는 경우
+        //   - 손을 뗀 시점에 관성(모멘텀) 스크롤이 이미 진행 중이던 경우와 겹침
+        //   - 스크롤 최상단/최하단에서 iOS 바운스(rubber-band)와 겹치는 경우
+        //   - 저사양 기기·부하 상황
+        // 위 케이스 중 하나에서 다시 튐 증상이 재현되면, 아래 주석을 해제해
+        // 안전망으로 복원할 것. 그 전까지는 정상 케이스에서 불필요한 로직이므로
+        // 비활성화 상태를 유지한다.
+        // ============================================================================
+
         onEnd: function() {
-          var order = _pfSortable.toArray();
-          Shiny.setInputValue(window._pfNs + '-ticker_reorder', order, { priority: 'event' });
+        var rootEl = document.getElementById('asset-root');
+        var targetScroll = window._pfScrollStartY + window._pfFakeScrollY;
+        var myToken = ++_pfSettleToken;
+
+        if (window._pfFakeScrollY === 0) {
+            if (rootEl) {
+            rootEl.style.transform = '';
+            rootEl.style.transition = '';
+            }
+            window._pfRealScrollNudge = 0;
+        } else {
+            // 방향 A: behavior:'instant' — real scrollY가 동기적으로 즉시 target에
+            // 반영됨(세션9 실기기 검증 완료). 따라서 scrollTo 호출 직후 바로
+            // transform을 지워도 됨 — settle로 따라잡을 gap이 없다.
+            window.scrollTo({ top: targetScroll, left: 0, behavior: 'instant' });
+
+            if (rootEl) {
+            rootEl.style.transform = '';
+            rootEl.style.transition = '';
+            }
+            window._pfFakeScrollY = 0;
+            window._pfRealScrollNudge = 0;
+
+            /* ── [비활성화 — 세션9] settle rAF 보정 루프 ──────────────────────────
+               세션7~8에서 쓰던 fallback: scrollTo가 즉시 반영되지 않는다는 전제
+               하에, real scrollY를 매 프레임 관찰하며 그 gap만큼 transform으로
+               계속 보정하던 루프. behavior:'instant' 적용 후에는 gap이 발생하지
+               않아(세션9 검증 완료) 이 루프가 실행될 일이 없으므로 비활성화함.
+               위 주석에 적은 미검증 엣지케이스에서 튐이 재현되면 복원할 것.
+
+            var TOLERANCE = 1;
+            var MAX_FRAMES = 90;
+
+            (function _pfSettle(frame) {
+              if (myToken !== _pfSettleToken) {
+                _pfDebugLog('settle_aborted_new_drag', { frame: frame });
+                return;
+              }
+
+              var currentReal = window.scrollY;
+              var remaining = targetScroll - currentReal;
+
+              if (Math.abs(remaining) <= TOLERANCE || frame >= MAX_FRAMES) {
+                if (rootEl) {
+                  rootEl.style.transform = '';
+                  rootEl.style.transition = '';
+                }
+                window._pfFakeScrollY = 0;
+                window._pfRealScrollNudge = 0;
+                _pfDebugLog('settle_complete', {
+                  frame: frame,
+                  finalReal: currentReal,
+                  remaining: remaining,
+                  timedOut: frame >= MAX_FRAMES,
+                });
+                return;
+              }
+
+              if (rootEl) rootEl.style.transform = 'translateY(' + (-remaining) + 'px)';
+              _pfDebugLog('settle_tick', { frame: frame, real: currentReal, remaining: remaining });
+
+              requestAnimationFrame(function() { _pfSettle(frame + 1); });
+            })(0);
+            */
+        }
+
+        var order = _pfSortable.toArray();
+        Shiny.setInputValue(window._pfNs + '-ticker_reorder', order, { priority: 'event' });
         },
       });
     });
@@ -671,6 +829,10 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
         from common.redis_store import publish_ticker_changed
         update_ticker_order(ordered_tickers)
         publish_ticker_changed()
+
+    # 세션9: 오토스크롤 진단 로깅용 이펙트(_log_autoscroll_debug) 제거함.
+    # 클라이언트 쪽 로깅 인프라(portfolio_ui의 _pfDebugLog 등)도 함께 제거되어
+    # input.autoscroll_debug_log 자체가 더 이상 발생하지 않음. 필요 시 재추가.
 
     # ── 화면 갱신 ─────────────────────────────────────────────────────────────
 

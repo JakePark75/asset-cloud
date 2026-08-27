@@ -71,6 +71,9 @@ def accounts_js(market_currency_map_js: str) -> str:
   }
 
   var _acSortable = null;
+  var _acSettleToken = 0; // dragEnd 이후 실제 스크롤 수렴을 기다리는 루프(현재 비활성화)의
+                          // 유효성 토큰. 재활성화 시 이전 드래그의 settle 루프가 뒤늦게
+                          // transform을 건드리지 못하게 막는 용도.
 
   function _acInitSortable() {
     var el = document.getElementById('ac-account-list-normal');
@@ -85,10 +88,132 @@ def accounts_js(market_currency_map_js: str) -> str:
         delayOnTouchOnly: true,
         animation: 150,
         dataIdAttr: 'data-account-id',
+        fallbackOnBody: true,   // ghost를 document.body에 직접 부착 — transform 대상의
+                                 // 후손이 되지 않도록 containing block 재해석 문제를 회피한다.
+                                 // (portfolio.py와 동일 — 세션9 검증분 이식)
         scroll: true,
         scrollSensitivity: 150,  // px, 화면 가장자리로부터 이 거리 안이면 스크롤 시작
-        scrollSpeed: 400,        // px/frame, 스크롤 속도
+        scrollSpeed: 15,         // px/frame(24ms tick), scrollFn에 전달되는 offset의 스케일
+                                 // (portfolio.py와 동일값으로 수정 — 기존 400은 이식 시
+                                 // 남아있던 구값으로 추정, 별도 검증은 안 됨)
+
+        // ── transform 기반 자체 오토스크롤 ────────────────────────────────
+        // portfolio.py(포트폴리오 탭)와 완전히 동일한 상위 구조(#asset-root
+        // 아래 히어로/서브탭 네비바 공유)를 쓰는 페이지이므로, 포트폴리오에서
+        // 세션5~9에 걸쳐 진단·검증한 것과 동일한 원인·동일한 해결 방식을 그대로
+        // 적용함(별도 재검증 없이 이식 — 계좌 목록에서 다른 양상이 나오면 그때
+        // 별도 진단 필요).
+        //
+        // 원인 요약: iOS Safari가 터치 활성 중 실제 scrollTop 반영을 지연시킴
+        // → SortableJS 네이티브 스크롤(scroll:true 기본 동작) 대신 offsetY를
+        // #asset-root의 transform: translateY()에 누적 반영.
+        //
+        // 대상이 #ac-account-list가 아니라 #asset-root인 이유: 히어로(.db-hero)와
+        // 서브탭 네비바(.asset-sub-tabbar)가 #ac-account-list와 형제 관계가
+        // 아니라 훨씬 상위(#asset-root)의 형제 요소로 존재함(포트폴리오와 동일
+        // 구조로 확인됨). 리스트에만 transform을 걸면 그 위에 겹쳐 그려짐.
+        //
+        // 위 방향 오토스크롤 잠금 해제용 1px 실스크롤 동기화 로직도 포트폴리오와
+        // 동일한 이유(AutoScroll.js의 vy 계산이 `!!scrollPosY`를 요구)로 필요함.
+        scrollFn: function(offsetX, offsetY, originalEvent, touchEvt, hoverTargetEl) {
+          var rootEl = document.getElementById('asset-root');
+          if (!rootEl || !offsetY) return;
+
+          var maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+          var proposed = window._acFakeScrollY + offsetY;
+          var proposedAbs = window._acScrollStartY + proposed;
+
+          if (proposedAbs < 0) proposed = -window._acScrollStartY;
+          if (proposedAbs > maxScroll) proposed = maxScroll - window._acScrollStartY;
+
+          window._acFakeScrollY = proposed;
+
+          // 위 방향 오토스크롤 잠금 해제용 1px 실스크롤 동기화
+          if (window._acFakeScrollY > 0 && !window._acRealScrollNudge) {
+            window.scrollTo(0, window._acScrollStartY + 1);
+            window._acRealScrollNudge = 1;
+          } else if (window._acFakeScrollY <= 0 && window._acRealScrollNudge) {
+            window.scrollTo(0, window._acScrollStartY);
+            window._acRealScrollNudge = 0;
+          }
+
+          var visualShift = window._acFakeScrollY - window._acRealScrollNudge;
+          rootEl.style.transform = 'translateY(' + (-visualShift) + 'px)';
+        },
+
+        onStart: function() {
+          window._acFakeScrollY = 0;
+          window._acRealScrollNudge = 0;
+          window._acScrollStartY = window.scrollY;
+          _acSettleToken++; // 이전 드래그의 settle 루프(있다면, 현재 비활성화)를 무효화
+          var rootEl = document.getElementById('asset-root');
+          if (rootEl) rootEl.style.transition = 'none';
+        },
+
+        // ============================================================================
+        // [포트폴리오에서 이식 — 방향 A 채택, 세션9 검증 완료분]
+        // scrollTo에 behavior:'instant'를 명시하면 real scrollY가 동기적으로 즉시
+        // 반영되어(포트폴리오 실기기 4회 재현으로 검증 완료) "따라잡을 gap" 자체가
+        // 없어짐. 따라서 scrollTo 호출 직후 바로 transform을 지워도 됨 — 매 프레임
+        // gap을 관찰하며 보정하던 settle rAF 루프는 불필요해짐.
+        //
+        // settle 루프를 완전히 삭제하지 않고 주석으로 남겨두는 이유(포트폴리오와
+        // 동일): 아래 케이스들은 검증되지 않았음(미검증 — 팩트 아님, 우려 사항):
+        //   - 매우 빠르게 연속으로 드래그를 반복하는 경우
+        //   - 손을 뗀 시점에 관성(모멘텀) 스크롤이 이미 진행 중이던 경우와 겹침
+        //   - 스크롤 최상단/최하단에서 iOS 바운스(rubber-band)와 겹치는 경우
+        //   - 저사양 기기·부하 상황
+        // 위 케이스 중 하나에서 튐 증상이 재현되면, 아래 주석을 해제해 안전망으로
+        // 복원할 것.
+        // ============================================================================
         onEnd: function() {
+          var rootEl = document.getElementById('asset-root');
+          var targetScroll = window._acScrollStartY + window._acFakeScrollY;
+          var myToken = ++_acSettleToken;
+
+          if (window._acFakeScrollY === 0) {
+            if (rootEl) {
+              rootEl.style.transform = '';
+              rootEl.style.transition = '';
+            }
+            window._acRealScrollNudge = 0;
+          } else {
+            window.scrollTo({ top: targetScroll, left: 0, behavior: 'instant' });
+
+            if (rootEl) {
+              rootEl.style.transform = '';
+              rootEl.style.transition = '';
+            }
+            window._acFakeScrollY = 0;
+            window._acRealScrollNudge = 0;
+
+            /* ── [비활성화] settle rAF 보정 루프 (안전망으로 보존) ────────────────
+            var TOLERANCE = 1;
+            var MAX_FRAMES = 90;
+
+            (function _acSettle(frame) {
+              if (myToken !== _acSettleToken) return;
+
+              var currentReal = window.scrollY;
+              var remaining = targetScroll - currentReal;
+
+              if (Math.abs(remaining) <= TOLERANCE || frame >= MAX_FRAMES) {
+                if (rootEl) {
+                  rootEl.style.transform = '';
+                  rootEl.style.transition = '';
+                }
+                window._acFakeScrollY = 0;
+                window._acRealScrollNudge = 0;
+                return;
+              }
+
+              if (rootEl) rootEl.style.transform = 'translateY(' + (-remaining) + 'px)';
+
+              requestAnimationFrame(function() { _acSettle(frame + 1); });
+            })(0);
+            */
+          }
+
           var order = _acSortable.toArray();
           Shiny.setInputValue(window._acNs + '-account_reorder', order, { priority: 'event' });
         },
