@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 import threading
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 
 # common/ 패키지 접근을 위해 PROJECT_ROOT를 sys.path에 추가
@@ -42,16 +42,27 @@ MARKET_CLOSE_BUFFER_MIN = 0
 KR_FINAL_CLOSE_BUFFER_MIN = 5
 
 # ---------------------------------------------------------------------------
-# 미국주간거래(Day Trading) 시세 조회 가능 시간대 (KST, 분 단위)
-#  - KIS 공식 API 문서 기준: 10:00~16:00
-#  - 뉴욕 현지시간 pre(04:00 ET)/open/after 구간과는 절대 겹치지 않음
-#    (04:00 ET는 KST 17:00 EDT/18:00 EST로, 항상 16:00 이후) — 확인됨.
-#  - 휴장 판단은 KST 날짜 기준 holiday_cache.is_us_holiday()를 그대로 사용.
-#    (미국주식 주간거래 휴장일은 그날 저녁 개장하는 미국 정규장 날짜와 동일하게
-#    매핑되므로, 별도 판단 로직 없이 기존 holiday_cache 재사용 — 2026-08-20)
+# 한국투자증권 미국주식 거래시간 공식 안내 (KST 기준, "미국주식 주간거래 재개
+# 안내" 및 한투 앱 내 안내문 원문 그대로. 2026-08-27 사용자 확인)
+#
+#   구분              표준시           서머타임(Summer Time)
+#   주간거래(장전)     10:00 ~ 18:00    10:00 ~ 17:00
+#   프리마켓(장전)     18:00 ~ 23:30    17:00 ~ 22:30
+#   정규장             23:30 ~ 06:00    22:30 ~ 05:00
+#   애프터마켓         06:00 ~ 07:00    05:00 ~ 07:00
+#   애프터마켓 연장     07:00 ~ 09:00    07:00 ~ 09:00 (동일)
+#
+#   ※ 애프터마켓+연장 합산 종료는 표준시/서머타임 모두 09:00 KST로 고정.
+#     주간거래 시작은 양쪽 모두 10:00 KST로 고정.
+#     → 이 두 값 사이, 매일 KST 09:00~10:00은 어떤 세션에도 속하지 않아
+#       시세 조회가 불가능한 공백 구간(휴장일 여부와 무관하게 항상 존재).
+#
+#   프리마켓/정규장은 NY 로컬시각 4:00~9:30/9:30~16:00 ET로 계산해도
+#   표준시/서머타임 두 케이스 모두 위 표와 정확히 일치함(검증됨, 아래
+#   get_market_status()의 pre/open 분기 참고). 반면 주간거래·애프터마켓은
+#   ET 로컬시각 고정값으로 환산해도 표준시/서머타임 간 폭이 달라져 위 표와
+#   맞지 않으므로, 아래처럼 KST 값 자체를 DST 여부에 따라 분기한다.
 # ---------------------------------------------------------------------------
-US_DAY_TRADING_START_MIN = 10 * 60  # 10:00
-US_DAY_TRADING_END_MIN   = 16 * 60  # 16:00 (이 시각 미포함)
 
 # ---------------------------------------------------------------------------
 # 실시간 크립토 소스 선택
@@ -241,13 +252,36 @@ holiday_cache = HolidayCache()
 
 
 # ---------------------------------------------------------------------------
+# 미국 서머타임(EDT) 적용 여부 판정
+#  - pytz의 America/New_York 타임존은 IANA tzdata를 기반으로 DST 전환일을
+#    자동 계산하므로, 매년 전환일을 별도로 하드코딩할 필요가 없다.
+#  - datetime.now(tz)로 얻은 aware datetime의 .dst()가 0이 아니면 서머타임
+#    (EDT, UTC-4), 0이면 표준시(EST, UTC-5)로 판정한다.
+#    (2026-08-27 웹검색으로 확인: pytz에서 naive datetime에 tzinfo=를 직접
+#    물리는 방식은 잘못된 패턴이지만, datetime.now(tz)는 공식적으로 올바른
+#    패턴 — 별도 localize() 불필요.)
+# ---------------------------------------------------------------------------
+def _is_us_dst_today() -> bool:
+    tz = pytz.timezone("America/New_York")
+    now_ny = datetime.now(tz)
+    return now_ny.dst() != timedelta(0)
+
+
+# ---------------------------------------------------------------------------
 # 미국주간거래(Day Trading) 시간대 여부 판단
 #  - 뉴욕 현지시간 기준 판단(get_market_status 본체)과는 독립적으로, KST
 #    날짜/시각만으로 판단한다. NY 기준 요일/휴장 체크를 먼저 거치면 KST와
 #    NY 날짜가 다른 경계(예: KST 월요일 오전 = NY 일요일 밤)에서 주간거래가
 #    잘못 걸러지는 문제가 생기므로, get_market_status()의 NY 분기보다 먼저
 #    독립적으로 확인해야 한다.
+#  - 시작(10:00 KST)은 표준시/서머타임 동일, 종료만 한투 공식 안내 기준으로
+#    DST에 따라 18:00(표준시)/17:00(서머타임)로 갈린다 — 상단 주석 참고.
 # ---------------------------------------------------------------------------
+US_DAY_TRADING_START_MIN     = 10 * 60  # 10:00 (표준시/서머타임 동일)
+US_DAY_TRADING_END_MIN_STD   = 18 * 60  # 18:00 (표준시)
+US_DAY_TRADING_END_MIN_DST   = 17 * 60  # 17:00 (서머타임)
+
+
 def _is_us_day_trading_window() -> bool:
     tz = pytz.timezone("Asia/Seoul")
     now_local   = datetime.now(tz)
@@ -259,7 +293,35 @@ def _is_us_day_trading_window() -> bool:
         return False
 
     now_min = now_local.hour * 60 + now_local.minute
-    return US_DAY_TRADING_START_MIN <= now_min < US_DAY_TRADING_END_MIN
+    end_min = US_DAY_TRADING_END_MIN_DST if _is_us_dst_today() else US_DAY_TRADING_END_MIN_STD
+    return US_DAY_TRADING_START_MIN <= now_min < end_min
+
+
+# ---------------------------------------------------------------------------
+# 미국 애프터마켓(정규장 종료 후 거래, 연장 포함) 시간대 여부 판단
+#  - 주간거래와 동일하게 KST 날짜/시각만으로 독립 판단한다.
+#  - 종료(09:00 KST, 애프터마켓+연장 합산)는 표준시/서머타임 동일, 시작만
+#    한투 공식 안내 기준으로 DST에 따라 06:00(표준시)/05:00(서머타임)로
+#    갈린다 — 상단 주석 참고.
+# ---------------------------------------------------------------------------
+US_AFTER_MARKET_END_MIN        = 9 * 60  # 09:00 (표준시/서머타임 동일)
+US_AFTER_MARKET_START_MIN_STD  = 6 * 60  # 06:00 (표준시)
+US_AFTER_MARKET_START_MIN_DST  = 5 * 60  # 05:00 (서머타임)
+
+
+def _is_us_after_market_window() -> bool:
+    tz = pytz.timezone("Asia/Seoul")
+    now_local   = datetime.now(tz)
+    today_local = now_local.date()
+
+    if now_local.weekday() >= 5:
+        return False
+    if holiday_cache.is_us_holiday(today_local):
+        return False
+
+    now_min    = now_local.hour * 60 + now_local.minute
+    start_min  = US_AFTER_MARKET_START_MIN_DST if _is_us_dst_today() else US_AFTER_MARKET_START_MIN_STD
+    return start_min <= now_min < US_AFTER_MARKET_END_MIN
 
 
 # ---------------------------------------------------------------------------
@@ -298,11 +360,20 @@ def get_market_status(market: str) -> str:
         return "closed"
 
     if market_time == "US":
-        # 주간거래(KST 10:00~16:00) — NY 시간대 판단보다 먼저, 독립적으로 확인.
-        # 이 구간은 NY 기준으로는 항상 20:00~04:00(closed) 구간 안에 완전히
-        # 포함되므로(확인됨), 아래 NY 분기 결과와 절대 충돌하지 않는다.
+        # 주간거래(KST, DST별 10:00~18:00/17:00) — NY 시간대 판단보다 먼저,
+        # 독립적으로 확인. 이 구간은 NY 기준으로는 항상 20:00~04:00(closed)
+        # 구간 안에 완전히 포함되므로(확인됨), 아래 NY 분기 결과와 절대
+        # 충돌하지 않는다.
         if _is_us_day_trading_window():
             return "day"
+
+        # 애프터마켓(연장 포함, KST, DST별 06:00/05:00~09:00 고정 종료) —
+        # 이 구간도 ET 로컬시각 고정값으로는 표준시/서머타임 폭이 달라져
+        # 한투 공식 안내와 어긋나므로, 주간거래와 동일하게 KST 값으로 직접
+        # 판단한다. NY 기준으로는 16:00~20:00 ET 부근에 걸쳐 있어 아래 NY
+        # 분기(pre/open)와 겹치지 않는다.
+        if _is_us_after_market_window():
+            return "after"
 
         tz = pytz.timezone("America/New_York")
         now_local   = datetime.now(tz)
@@ -318,8 +389,6 @@ def get_market_status(market: str) -> str:
             return "pre"
         if 9 * 60 + 30 <= now_min <= 16 * 60:
             return "open"
-        if 16 * 60 < now_min <= 20 * 60 + MARKET_CLOSE_BUFFER_MIN:
-            return "after"
         return "closed"
 
     return "open"

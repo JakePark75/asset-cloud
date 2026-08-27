@@ -5,7 +5,9 @@ config.json 의 realtime_quote = true 일 때 동작.
 구조:
   - KR/US 종목: KIS 웹소켓 (H0STCNT0 / HDFSCNT0) push 수신
   - FX/INDEX/CRYPTO: Yahoo Finance REST 폴링 (별도 asyncio task)
-  - 미국주간거래(KST 10:00~16:00): [2026-08-20 추가] 이 구간에는 US 종목의
+  - 미국주간거래(KST 10:00~18:00, 서머타임 17:00 — 한투 공식 안내 기준,
+    price_updater_common.get_market_status()가 DST에 따라 종료시각을 동적으로
+    판정함, 2026-08-27 수정): [2026-08-20 추가] 이 구간에는 US 종목의
     HDFSCNT0 tr_key 접두어를 기존 D(DNAS/DNYS/DAMS)에서 R(RBAQ/RBAY/RBAA)로
     전환해서 구독을 유지한다(추가구독이 아닌 "전환" — 41종목 세션 한도 보호,
     make_us_tr_key/_switch_us_day_trading_prefix 참고). 전환은
@@ -28,9 +30,10 @@ config.json 의 realtime_quote = true 일 때 동작.
        장 상태와 무관하게 항상 구독 대상이므로 이 이벤트 자체가 구독에 영향을 주지
        않음. 활성/휴장 전환은 이제도 관찰용 로그만 남긴다(KIS가 장마감 중 idle 세션을
        자연 종료하는지는 아직 미확인 — 이 로그로 추후 관찰).
-       단, [2026-08-20 추가] 같은 task 안에서 미국주간거래(KST 10:00/16:00) 진입·이탈은
-       예외로, 이 이벤트는 US 종목의 tr_key 접두어(D↔R) 전환을 실제로 트리거한다
-       (재시작이 아니라 개별 UNSUB/SUB — 아래 _switch_us_day_trading_prefix 참고).
+       단, [2026-08-20 추가] 같은 task 안에서 미국주간거래(KST 10:00~18:00,
+       서머타임 17:00) 진입·이탈은 예외로, 이 이벤트는 US 종목의 tr_key 접두어(D↔R)
+       전환을 실제로 트리거한다(재시작이 아니라 개별 UNSUB/SUB —
+       아래 _switch_us_day_trading_prefix 참고).
 
 [테스트 모드]
     TEST_FX_OFFSET_MODE = 0  정상 운영
@@ -93,7 +96,8 @@ US_MARKET_PREFIX = {
     "AMS": "DAMS",
 }
 
-# DB market → HDFSCNT0 tr_key prefix (미국주간거래, KST 10:00~16:00 전용)
+# DB market → HDFSCNT0 tr_key prefix (미국주간거래, KST 10:00~18:00/서머타임
+# 17:00 전용 — price_updater_common.get_market_status() 판정 기준)
 # tr_id는 D접두어와 동일하게 HDFSCNT0, tr_key 접두어만 R+거래소 코드로 다름
 # (KIS 공식 API 문서 기준: 나스닥 BAQ / 뉴욕 BAY / 아멕스 BAA)
 US_MARKET_DAY_PREFIX = {
@@ -169,7 +173,9 @@ def make_us_tr_key(ticker: str, market: str, day_trading: bool = False) -> str:
 
 def _is_us_day_trading_now() -> bool:
     """
-    현재 미국주간거래(KST 10:00~16:00) 시간대인지 여부.
+    현재 미국주간거래(KST 10:00~18:00, 서머타임 17:00 — 한투 공식 안내 기준,
+    price_updater_common.get_market_status()가 DST를 판정해 종료시각을 동적으로
+    고른다) 시간대인지 여부.
     get_market_status()는 US 마켓별로 호출해야 하지만, 주간거래 판단 자체는
     NAS/NYS/AMS 어느 마켓으로 호출해도 동일한 결과가 나온다(순수 KST 시각/
     날짜 기준 계산이라 거래소별 차이가 없음) — 그래서 "NAS" 고정으로 호출한다.
@@ -728,9 +734,10 @@ async def _request_subscribe(shared: SharedState, tr_id: str, tr_key: str, sub: 
 # ---------------------------------------------------------------------------
 async def _switch_us_day_trading_prefix(shared: SharedState, to_day: bool):
     """
-    KST 10:00/16:00 경계에서 호출된다. US 종목 1개당 tr_key 1개만 유지하는
-    "전환" 방식(41종목 세션 한도 보호, 2026-08-20 설계 확정)이므로, 이미
-    구독 중인 종목 전체를 대상으로 기존 접두어를 UNSUB하고 새 접두어로 SUB한다.
+    KST 10:00~18:00(서머타임 17:00) 경계에서 호출된다. US 종목 1개당 tr_key
+    1개만 유지하는 "전환" 방식(41종목 세션 한도 보호, 2026-08-20 설계 확정)
+    이므로, 이미 구독 중인 종목 전체를 대상으로 기존 접두어를 UNSUB하고 새
+    접두어로 SUB한다.
 
     처리 순서는 전체 UNSUB → 전체 SUB (하루 2번뿐인 저빈도 이벤트라, 전환
     구간 동안 US 시세가 잠깐 비는 것을 감수하는 단순한 구조를 택함 — 종목별
@@ -877,11 +884,12 @@ async def market_status_watcher_task(shared: SharedState):
     세션을 서버 측에서 자연 종료하는지(인계 문서 1.4, 공식 자료로 미확인)
     여부를, 실제 운영 로그로 나중에 확인하기 위한 참고 자료 용도다.
 
-    [2026-08-20 변경] 단, 미국주간거래(KST 10:00/16:00) 진입·이탈은 예외다.
-    이건 "장 상태 전환"이 아니라 "같은 종목의 tr_key 접두어(D↔R)를 바꿔야
-    하는" 별도 이벤트라서, 이 task가 감지해서 _switch_us_day_trading_prefix()로
-    실제 구독 해제/재등록을 수행한다. 그래서 더 이상 "구독 변경에 관여하지
-    않는 task"가 아니다.
+    [2026-08-20 변경] 단, 미국주간거래(KST 10:00~18:00, 서머타임 17:00 —
+    한투 공식 안내 기준, get_market_status()가 DST에 따라 종료시각을 동적으로
+    판정) 진입·이탈은 예외다. 이건 "장 상태 전환"이 아니라 "같은 종목의
+    tr_key 접두어(D↔R)를 바꿔야 하는" 별도 이벤트라서, 이 task가 감지해서
+    _switch_us_day_trading_prefix()로 실제 구독 해제/재등록을 수행한다.
+    그래서 더 이상 "구독 변경에 관여하지 않는 task"가 아니다.
 
     DB 조회는 태스크 시작 시 1회만 수행한다(활성/휴장 관찰용 markets 집합
     산출에만 쓰임). 이후 10초 폴링 루프 안에서는 get_market_status()(순수
