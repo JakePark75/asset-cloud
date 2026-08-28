@@ -220,35 +220,50 @@ def _load_position_data(rows) -> list[dict]:
 
 # ── SVG 헬퍼 ─────────────────────────────────────────────────
 
+def _mix_hex(hex_color: str, target_hex: str, amount: float) -> str:
+    """hex_color를 target_hex 쪽으로 amount(0~1)만큼 섞은 hex 반환. 슬라이스별 밝은 톤 계산용."""
+    c = hex_color.lstrip("#")
+    t = target_hex.lstrip("#")
+    r, g, b    = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    tr, tg, tb = int(t[0:2], 16), int(t[2:4], 16), int(t[4:6], 16)
+    nr = round(r + (tr - r) * amount)
+    ng = round(g + (tg - g) * amount)
+    nb = round(b + (tb - b) * amount)
+    return f"#{nr:02x}{ng:02x}{nb:02x}"
+
+
 def _donut_svg(slices: list[dict]) -> str:
     """
     slices: [{"label": str, "value": float, "color": str}, ...]
     SVG 도넛 차트 생성 (130x130)
+    - 방사형/슬라이스 중심축 기준 광택을 적용하여 상/하/좌/우 위치와 무관하게 고유 색상과 광택 유지
     """
     total = sum(s["value"] for s in slices)
     if total == 0:
         return ""
 
     cx, cy, r_outer, r_inner = 65, 65, 58, 36
-    gap_angle = 1.5  # 슬라이스 간 갭 (도)
-    angle_snap = 2.0  # 슬라이스 경계 각도 스냅 단위 (도) — 이보다 작은 비중 변화는 도넛 모양 불변
+    gap_angle = 0.8   # 슬라이스 간 갭 (도)
+    angle_snap = 2.0  # 슬라이스 경계 각도 스냅 단위 (도)
 
+    grads = []
     paths = []
-    angle = -90.0  # 12시 방향 시작 (정밀 누적값, 스냅 전)
 
+    raw_bounds = [-90.0]
     for s in slices:
-        frac      = s["value"] / total
-        sweep     = frac * 360 - gap_angle
-        if sweep <= 0:
-            angle += frac * 360
-            continue
+        raw_bounds.append(raw_bounds[-1] + (s["value"] / total) * 360)
+    snapped_bounds = [round(b / angle_snap) * angle_snap for b in raw_bounds]
 
-        # 좌표 계산용 각도는 angle_snap 단위로 스냅 (미세 변화 시 동일 문자열 출력 → 재전송 안 됨)
-        disp_start = round(angle / angle_snap) * angle_snap
-        disp_end   = round((angle + sweep) / angle_snap) * angle_snap
+    for idx, s in enumerate(slices):
+        disp_start = snapped_bounds[idx]     + gap_angle / 2
+        disp_end   = snapped_bounds[idx + 1] - gap_angle / 2
+        sweep = disp_end - disp_start
+        if sweep <= 0:
+            continue
 
         start_rad = math.radians(disp_start)
         end_rad   = math.radians(disp_end)
+        mid_rad   = math.radians((disp_start + disp_end) / 2)
 
         x1o = cx + r_outer * math.cos(start_rad)
         y1o = cy + r_outer * math.sin(start_rad)
@@ -268,24 +283,42 @@ def _donut_svg(slices: list[dict]) -> str:
             f"A {r_inner} {r_inner} 0 {large} 0 {x2i:.1f} {y2i:.1f} "
             f"Z"
         )
-        paths.append(f'<path d="{d}" fill="{s["color"]}" />')
-        angle += frac * 360
 
+        base_color = s["color"]
+        # 과도하게 뜨지 않도록 화이트 믹스 비율을 0.35로 정돈
+        light = _mix_hex(base_color, "#ffffff", 0.35)
+        grad_id = f"sliceGrad{idx}"
+
+        # 슬라이스 호의 중심 방향(외곽 -> 안쪽)으로 그라디언트 축 설정 (빛 반사 일체감 형성)
+        gx1 = 50 + 40 * math.cos(mid_rad)
+        gy1 = 50 + 40 * math.sin(mid_rad)
+        gx2 = 50 - 40 * math.cos(mid_rad)
+        gy2 = 50 - 40 * math.sin(mid_rad)
+
+        grads.append(
+            f'<linearGradient id="{grad_id}" x1="{gx1:.1f}%" y1="{gy1:.1f}%" x2="{gx2:.1f}%" y2="{gy2:.1f}%">'
+            f'<stop offset="0%" stop-color="{light}" />'
+            f'<stop offset="60%" stop-color="{base_color}" />'
+            f'<stop offset="100%" stop-color="{base_color}" />'
+            f'</linearGradient>'
+        )
+        paths.append(
+            f'<path d="{d}" fill="url(#{grad_id})" />'
+        )
+
+    grads_html = "\n".join(grads)
     paths_html = "\n".join(paths)
-    return f'''<svg viewBox="0 0 130 130" xmlns="http://www.w3.org/2000/svg">
+
+    return f'''<svg viewBox="0 0 130 130" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45));">
+<defs>
+{grads_html}
+</defs>
 {paths_html}
 </svg>'''
 
 # ── 도넛 데이터 빌더 (server에서 공유) ───────────────────────
 
 def _build_donut_payload(positions: list[dict]) -> dict:
-    """
-    position_data() 결과를 받아 도넛 렌더링에 필요한 데이터를 반환.
-    svg_html + legend dict를 반환. legend는 {ticker: {name, color, pct, is_cash, leverage}} 구조.
-    key를 종목명이 아닌 티커(고정 ID)로 두는 이유: 종목명은 사용자가 언제든 바꿀 수 있는
-    값이라 diff의 key로 쓰면 이름 변경이 "기존 항목 수정"이 아니라 "삭제+신규 추가"로
-    보여 구조 변경 취급되어 버림. 티커는 불변이므로 이름 변경도 항상 필드 단위 diff로 잡힌다.
-    """
     if not positions:
         return {}
 
@@ -321,38 +354,35 @@ def _build_donut_payload(positions: list[dict]) -> dict:
     others     = items_sorted[8:]
     other_eval = sum(p["eval_krw"] for p in others)
 
-    # 다크테마(#0a0a0a) + base.css 기존 액센트 토큰(green/amber/red/blue/purple)과
-    # 동일한 채도(S≈68%)·명도(L≈58%) 대역에서 색상환(H)만 균등 10분배한 카테고리 팔레트
+    # 7색 고유 팔레트
     TICKER_PALETTE = [
-        "#dd634b", "#ddbb4b", "#a7dd4b", "#50dd4b", "#4bdd9e",
-        "#4bc4dd", "#4b6ddd", "#804bdd", "#d84bdd", "#dd4b8a",
+        "#dd4b4b", "#ddc74b", "#74dd4b", "#4bdd9e",
+        "#4b9edd", "#744bdd", "#dd4bc7",
     ]
+    CASH_COLOR   = "#434956"  # 어두운 슬레이트 블루그레이
+    OTHERS_COLOR = "#938c85"  # 밝은 웜그레이
 
-    def _ticker_color(ticker: str) -> str:
-        # 프로세스 재시작 시에도 항상 같은 색이 나오도록 안정적인 해시(md5) 사용.
-        # 파이썬 내장 hash()는 보안을 위해 실행마다 시드가 랜덤화되어 사용 불가.
-        digest = hashlib.md5(ticker.encode("utf-8")).hexdigest()
-        idx = int(digest, 16) % len(TICKER_PALETTE)
-        return TICKER_PALETTE[idx]
-
+    # 상위 종목들은 화면 내에서 색상이 절대 겹치지 않도록 순차 인덱스로 배정
     slices = []
+    color_idx = 0
     for p in top8:
         if p["ticker"] == "CASH":
-            slices.append({"ticker": "CASH", "label": "현금", "value": p["eval_krw"], "color": "#111111", "leverage": 1})
+            slices.append({"ticker": "CASH", "label": "현금", "value": p["eval_krw"], "color": CASH_COLOR, "leverage": 1})
             continue
+        
+        assigned_color = TICKER_PALETTE[color_idx % len(TICKER_PALETTE)]
+        color_idx += 1
+        
         slices.append({
             "ticker":   p["ticker"],
             "label":    p["name"] or p["ticker"],
             "value":    p["eval_krw"],
-            "color":    _ticker_color(p["ticker"]),
+            "color":    assigned_color,
             "leverage": p.get("leverage", 1),
         })
 
     if other_eval > 0:
-        # "기타"도 top8 구성이 바뀔 때마다 매번 등장/소멸할 수 있는 항목이므로
-        # 고정 key(__OTHERS__)를 부여 — 종목 티커와 절대 충돌하지 않는 값
-        # leverage=1: 여러 종목이 섞인 합산 항목이라 특정 배수로 단정할 수 없음
-        slices.append({"ticker": "__OTHERS__", "label": "기타", "value": other_eval, "color": "#3a3a3a", "leverage": 1})
+        slices.append({"ticker": "__OTHERS__", "label": "기타", "value": other_eval, "color": OTHERS_COLOR, "leverage": 1})
 
     svg_html = _donut_svg(slices)
 
@@ -362,6 +392,7 @@ def _build_donut_payload(positions: list[dict]) -> dict:
         legend[s["ticker"]] = {
             "name":     s["label"],
             "color":    s["color"],
+            "light":    _mix_hex(s["color"], "#ffffff", 0.35),
             "pct":      f"{pct:.1f}%",
             "is_cash":  s["ticker"] == "CASH",
             "leverage": s["leverage"],
@@ -549,6 +580,13 @@ def _dashboard_ui_dom_patch():
     return '';
   }
 
+  // 파이차트 슬라이스와 동일한 톤(세로 밝음→원색 그라디언트)을 범례 dot 배경에 조립.
+  // color/light 둘 다 서버(_build_donut_payload)에서 미리 계산해서 내려주므로
+  // 여기선 문자열만 조립함 — 색 섞는 로직은 서버 쪽 _mix_hex()와 중복 두지 않음.
+  function db_donut_dot_bg(color, light) {
+    return 'linear-gradient(180deg, ' + light + ' 0%, ' + color + ' 55%, ' + color + ' 100%)';
+  }
+
   Shiny.addCustomMessageHandler('donut_init', function(m) {
     var legendEl = document.getElementById('db-donut-legend');
     if (legendEl && m.legend) {
@@ -561,8 +599,9 @@ def _dashboard_ui_dom_patch():
         var dotCls    = 'db-donut-legend-dot' + (it.is_cash ? ' cash' : '');
         var nameColor = db_donut_name_color(it.leverage);
         var nameStyle = nameColor ? ' style="color:' + nameColor + '"' : '';
+        var dotStyle  = 'background:' + db_donut_dot_bg(it.color, it.light);
         html += '<div class="db-donut-legend-row" data-ticker="' + it.ticker + '">'
-              + '<span class="' + dotCls + '" style="background:' + it.color + '"></span>'
+              + '<span class="' + dotCls + '" data-color="' + it.color + '" data-light="' + it.light + '" style="' + dotStyle + '"></span>'
               + '<span class="db-donut-legend-name"' + nameStyle + '>' + it.name + '</span>'
               + '<span class="db-donut-legend-pct">' + it.pct + '</span>'
               + '</div>';
@@ -588,7 +627,15 @@ def _dashboard_ui_dom_patch():
           // 서버-클라이언트 상태 불일치이지 정상 흐름이 아니다 — 조용히 무시.
           if (!row) continue;
           if (it.pct      !== undefined) row.querySelector('.db-donut-legend-pct').textContent = it.pct;
-          if (it.color    !== undefined) row.querySelector('.db-donut-legend-dot').style.background = it.color;
+          if (it.color !== undefined || it.light !== undefined) {
+            var dotEl = row.querySelector('.db-donut-legend-dot');
+            // color/light 중 하나만 와도 안전하게 현재 값을 유지하도록 dataset에 캐시해둠
+            var curColor = it.color !== undefined ? it.color : dotEl.dataset.color;
+            var curLight = it.light !== undefined ? it.light : dotEl.dataset.light;
+            dotEl.dataset.color = curColor;
+            dotEl.dataset.light = curLight;
+            dotEl.style.background = db_donut_dot_bg(curColor, curLight);
+          }
           if (it.name     !== undefined) row.querySelector('.db-donut-legend-name').textContent = it.name;
           if (it.leverage !== undefined) row.querySelector('.db-donut-legend-name').style.color = db_donut_name_color(it.leverage);
         }
@@ -947,7 +994,7 @@ def dashboard_server(input, output, session, active_tab: reactive.value = None,
                     "subtitle": subtitle,
                 })
             else:
-                # depth=2: 종목별 entry(name/color/pct/is_cash) 중 실제로 값이 바뀐
+                # depth=2: 종목별 entry(name/color/light/pct/is_cash) 중 실제로 값이 바뀐
                 # 필드만 diff에 실림 (depth=1로 하면 pct 하나만 바뀌어도 color까지
                 # 매번 다시 그리게 되어 불필요한 DOM patch가 늘어남)
                 donut_diff = diff_display(legend, _last_donut_display, depth=2)

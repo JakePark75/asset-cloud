@@ -79,7 +79,7 @@
 .db-ratio-sub { font-size: 11px; color: var(--db-text-muted); margin-top: 2px; }
 
 /*     */
-.db-lev-bar-track { display: flex; height: 18px; border-radius: 4px; overflow: hidden; gap: 2px; margin-bottom: 10px; }
+.db-lev-bar-track { display: flex; height: 18px; border-radius: 4px; overflow: hidden; gap: 0px; margin-bottom: 10px; }
 .db-lev-bar-seg {
     display: flex; align-items: center; justify-content: center;
     font-size: 12px; font-weight: 700;
@@ -88,10 +88,11 @@
     min-width: 0; overflow: hidden; border-radius: 3px;
     letter-spacing: 0.02em;
 }
-.db-lev-bar-seg.x1   { background: var(--db-green); color: rgba(0,0,0,0.8); }
-.db-lev-bar-seg.x2   { background: var(--db-amber); color: rgba(0,0,0,0.8); }
-.db-lev-bar-seg.x3   { background: var(--db-red);   color: rgba(0,0,0,0.8); }
-.db-lev-bar-seg.cash { background: #000000;          color: #ffffff; }
+/* ── glossy 마감 v5: gap 제거 + border 축소로 세그먼트 간 틈 최소화 ── */
+.db-lev-bar-seg.x1   { background: linear-gradient(180deg, #99e6c7 0%, var(--db-green) 55%, var(--db-green) 100%); color: rgba(0,0,0,0.85); border: 1px solid #000000; box-sizing: border-box; }
+.db-lev-bar-seg.x2   { background: linear-gradient(180deg, #f5dca2 0%, var(--db-amber) 55%, var(--db-amber) 100%); color: rgba(0,0,0,0.85); border: 1px solid #000000; box-sizing: border-box; }
+.db-lev-bar-seg.x3   { background: linear-gradient(180deg, #ffb8b8 0%, var(--db-red) 55%, var(--db-red) 100%);   color: rgba(0,0,0,0.85); border: 1px solid #000000; box-sizing: border-box; }
+.db-lev-bar-seg.cash { background: linear-gradient(180deg, #999999 0%, #000000 55%, #000000 100%);              color: #ffffff;         border: 1px solid #000000; box-sizing: border-box; }
 
 /*      */
 .db-lev-legend { display: flex; gap: 5px; flex-wrap: nowrap; }
@@ -102,10 +103,11 @@
     padding: 2px 6px; color: #b0b0b0;
     white-space: nowrap; flex: 1; justify-content: center;
 }
-.db-lev-legend-dot { width: 9px; height: 9px; border-radius: 4px; flex-shrink: 0; }
+.db-lev-legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; border: 1px solid #000000; box-sizing: border-box; }
+/* 작은 dot(9px)에서는 그라디언트가 오히려 식별성을 떨어뜨려 flat 색상으로 되돌림 */
 .db-lev-legend-dot.x1   { background: var(--db-green); }
 .db-lev-legend-dot.x2   { background: var(--db-amber); }
-.db-lev-legend-dot.x3   { background: var(--db-red);   }
+.db-lev-legend-dot.x3   { background: var(--db-red); }
 .db-lev-legend-dot.cash { background: #000000; border: 1px solid #444; }
 
 /*  /   */
@@ -139,7 +141,7 @@
 .db-donut-svg-wrap { flex-shrink: 0; width: 130px; height: 130px; }
 .db-donut-legend { flex: 1; display: flex; flex-direction: column; gap: 8px; }
 .db-donut-legend-row { display: flex; align-items: center; gap: 8px; }
-.db-donut-legend-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+.db-donut-legend-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; border: 1px solid #000000; box-sizing: border-box; }
 .db-donut-legend-dot.cash { background: #111111; border: 1px solid #666666; }
 .db-donut-legend-name { font-size: 13px; color: var(--db-text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .db-donut-legend-pct { font-size: 13px; font-weight: 600; color: var(--db-text-muted); flex-shrink: 0; }
