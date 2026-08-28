@@ -79,7 +79,19 @@ def build_ticker_row_skeleton(
         f'style="{"" if leverage > 1 else "display:none;"}">x{leverage}</span>'
     )
 
-    status_html = f'<span id="{id_prefix}-status-{row_id}" class="ticker-status" style="white-space:nowrap; flex-shrink:0;"></span>'
+    # 시장상태 배지: dot(status_dot)/텍스트(status_txt)/색상클래스(status_cls)를
+    # 각각 독립된 요소로 분리한다. diff 전송 시 세 필드 중 값이 안 바뀐 필드는
+    # payload에서 아예 빠질 수 있는데(예: day→pre 전환 시 dot은 그대로 "●"),
+    # 하나의 textContent에 합쳐서 렌더링하면 "빠진 필드" 때문에 전체가 지워지는
+    # 문제가 생긴다(2026-08 실사용 중 발견). 그래서 price/chg 처리와 동일하게
+    # 필드 하나 = DOM 요소 하나 원칙으로 분리해, 각 필드는 자신이 전송됐을 때만
+    # 자기 요소만 독립적으로 갱신한다.
+    status_html = (
+        f'<span id="{id_prefix}-status-{row_id}" class="ticker-status" style="white-space:nowrap; flex-shrink:0;">'
+        f'<span id="{id_prefix}-status-dot-{row_id}"></span>'
+        f'<span id="{id_prefix}-status-txt-{row_id}"></span>'
+        f'</span>'
+    )
     onclick_str = f'onclick="{onclick_attr}" style="cursor:pointer;"' if onclick_attr else ""
 
     if is_cash:
