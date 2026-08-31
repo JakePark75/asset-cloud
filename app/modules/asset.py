@@ -120,16 +120,6 @@ def asset_ui():
     Shiny.setInputValue('asset-active_sub_tab', name, {priority: 'event'});
   };
 
-  // 서브탭 복원
-  Shiny.addCustomMessageHandler('restore_sub_tab', function(msg) {
-    var saved = localStorage.getItem('activeSubTab') || 'dashboard';
-    var subNames = ['dashboard', 'portfolio', 'accounts'];
-    if (subNames.indexOf(saved) === -1) saved = 'dashboard';
-    var btns = document.querySelectorAll('.asset-sub-btn');
-    var idx = subNames.indexOf(saved);
-    if (btns[idx]) switchSubTab(saved, btns[idx]);
-  });
-
   // ── 서브탭 스와이프 ────────────────────────────────────────
   // asset-root가 DOM에 생긴 뒤 한 번만 등록
   var _subSwipeInit = false;
@@ -146,6 +136,14 @@ def asset_ui():
     // 모든 손가락이 화면에서 떨어질 때까지(touches.length === 0) 스와이프 판정을 하지 않는다.
     var isMultiTouch = false;
 
+    // 스와이프(플릭) vs 팬(드래그) 구분: 총 이동거리가 아니라 "손을 뗄 때의 순간 속도"로 판정.
+    // 플릭은 짧은 시간에 훅 지나가고 뗌(속도 큼), 팬은 화면에 붙어서 천천히/일정하게 끌림(속도 작음).
+    // touchmove마다 좌표+시각 샘플을 쌓아두고, touchend 시점엔 최근 VELOCITY_WINDOW_MS 구간만 사용.
+    var VELOCITY_WINDOW_MS = 80;   // 이 구간 안의 샘플만 속도 계산에 사용
+    var VELOCITY_THRESHOLD = 0.45; // px/ms (≈450px/s) 이상이어야 플릭으로 인정
+    var MIN_DX = 15;               // 너무 짧은 흔들림(탭 오차) 배제용 최소 이동거리
+    var touchSamples = [];
+
     root.addEventListener('touchstart', function(e) {
       if (e.touches.length > 1) {
         isMultiTouch = true;
@@ -154,13 +152,19 @@ def asset_ui():
       isMultiTouch = false;
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
+      touchSamples = [{ x: touchStartX, y: touchStartY, t: e.timeStamp }];
     }, { passive: true });
 
     root.addEventListener('touchmove', function(e) {
       // 한 손가락으로 시작한 뒤 두 번째 손가락이 나중에 닿는 경우까지 커버
       if (e.touches.length > 1) {
         isMultiTouch = true;
+        return;
       }
+      touchSamples.push({ x: e.touches[0].clientX, y: e.touches[0].clientY, t: e.timeStamp });
+      // 오래된 샘플은 버려서 배열이 무한정 커지지 않게 함 (윈도우의 2배 여유만 보관)
+      var cutoff = e.timeStamp - VELOCITY_WINDOW_MS * 2;
+      while (touchSamples.length > 2 && touchSamples[0].t < cutoff) touchSamples.shift();
     }, { passive: true });
 
     root.addEventListener('touchend', function(e) {
@@ -170,11 +174,32 @@ def asset_ui():
         return;
       }
 
-      var dx = e.changedTouches[0].clientX - touchStartX;
-      var dy = e.changedTouches[0].clientY - touchStartY;
+      var endX = e.changedTouches[0].clientX;
+      var endY = e.changedTouches[0].clientY;
+      var dx = endX - touchStartX;
+      var dy = endY - touchStartY;
+
+      if (Math.abs(dx) < MIN_DX) return;
 
       // 수평 스와이프만 처리 (수직 스크롤과 구분)
-      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      if (Math.abs(dx) < Math.abs(dy) * 1.5) return;
+
+      // 최근 VELOCITY_WINDOW_MS 구간의 시작 샘플을 찾아 "손을 뗄 때의 순간 속도"를 계산.
+      // 이렇게 하면 시작은 느렸다가 막판에 훅 튕기는 플릭도, 반대로 처음엔 빨랐지만
+      // 끝에서 멈칫하며 뗀 느린 팬도 올바르게 구분됨.
+      var endTime = e.timeStamp;
+      var windowStart = touchSamples[0];
+      for (var i = touchSamples.length - 1; i >= 0; i--) {
+        if (endTime - touchSamples[i].t >= VELOCITY_WINDOW_MS) {
+          windowStart = touchSamples[i];
+          break;
+        }
+        windowStart = touchSamples[i];
+      }
+      var dt = endTime - windowStart.t;
+      var velocity = dt > 0 ? Math.abs(endX - windowStart.x) / dt : 0;
+
+      if (velocity < VELOCITY_THRESHOLD) return; // 플릭이 아니라 팬/드래그로 판단 → 무시
 
       // 현재 서브탭 인덱스 파악
       var currentIdx = -1;
