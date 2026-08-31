@@ -300,10 +300,18 @@ def _is_us_day_trading_window() -> bool:
 
 # ---------------------------------------------------------------------------
 # 미국 애프터마켓(정규장 종료 후 거래, 연장 포함) 시간대 여부 판단
-#  - 주간거래와 동일하게 KST 날짜/시각만으로 독립 판단한다.
-#  - 종료(09:00 KST, 애프터마켓+연장 합산)는 표준시/서머타임 동일, 시작만
-#    한투 공식 안내 기준으로 DST에 따라 06:00(표준시)/05:00(서머타임)로
-#    갈린다 — 상단 주석 참고.
+#  - 시간 폭(05:00/06:00~09:00)은 한투 공식 안내 기준 KST 값을 그대로 쓴다.
+#  - 요일/휴장 판정은 day 마켓과 달리 KST '오늘'이 아니라 NY 로컬시각 기준으로
+#    한다. 이 구간(KST 05:00~09:00 서머/06:00~09:00 표준)을 ET로 환산하면
+#    항상 자정을 걸치지 않는 "전일 16:00~20:00 ET" 단일 구간에 대응하므로
+#    (day 마켓처럼 NY 자정을 걸치지 않음 — 확인됨), NY 로컬시각의 날짜/요일을
+#    바로 써도 안전하다.
+#    [2026-08-31 수정] 이전엔 day 마켓 함수를 그대로 본떠 KST '오늘' 요일로
+#    체크했었는데, 이 구간은 KST 기준 항상 전날 밤 미국 정규장의 연장선이라
+#    실제 미국 거래일과 KST 날짜가 어긋나는 경우(KST 월요일 새벽 = NY 일요일
+#    오후, KST 토요일 새벽 = NY 금요일 오후)에 오판이 발생했다(실사용 중
+#    2026-08-31 발견: KST 월요일 오전에 잘못 after로 표시됨). NY 로컬시각
+#    기준으로 바꿔 근본 수정.
 # ---------------------------------------------------------------------------
 US_AFTER_MARKET_END_MIN        = 9 * 60  # 09:00 (표준시/서머타임 동일)
 US_AFTER_MARKET_START_MIN_STD  = 6 * 60  # 06:00 (표준시)
@@ -311,17 +319,22 @@ US_AFTER_MARKET_START_MIN_DST  = 5 * 60  # 05:00 (서머타임)
 
 
 def _is_us_after_market_window() -> bool:
-    tz = pytz.timezone("Asia/Seoul")
-    now_local   = datetime.now(tz)
-    today_local = now_local.date()
+    tz_kst  = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(tz_kst)
+    now_min = now_kst.hour * 60 + now_kst.minute
 
-    if now_local.weekday() >= 5:
+    # 요일/휴장/DST 판정은 모두 같은 NY 로컬시각 스냅샷 하나로 처리
+    # (America/New_York 타임존 조회를 여러 번 반복하지 않도록 재사용).
+    tz_ny  = pytz.timezone("America/New_York")
+    now_ny = datetime.now(tz_ny)
+
+    if now_ny.weekday() >= 5:
         return False
-    if holiday_cache.is_us_holiday(today_local):
+    if holiday_cache.is_us_holiday(now_ny.date()):
         return False
 
-    now_min    = now_local.hour * 60 + now_local.minute
-    start_min  = US_AFTER_MARKET_START_MIN_DST if _is_us_dst_today() else US_AFTER_MARKET_START_MIN_STD
+    is_dst    = now_ny.dst() != timedelta(0)
+    start_min = US_AFTER_MARKET_START_MIN_DST if is_dst else US_AFTER_MARKET_START_MIN_STD
     return start_min <= now_min < US_AFTER_MARKET_END_MIN
 
 
@@ -369,9 +382,8 @@ def get_market_status(market: str) -> str:
             return "day"
 
         # 애프터마켓(연장 포함, KST, DST별 06:00/05:00~09:00 고정 종료) —
-        # 이 구간도 ET 로컬시각 고정값으로는 표준시/서머타임 폭이 달라져
-        # 한투 공식 안내와 어긋나므로, 주간거래와 동일하게 KST 값으로 직접
-        # 판단한다. NY 기준으로는 16:00~20:00 ET 부근에 걸쳐 있어 아래 NY
+        # 시간 폭은 KST 값, 요일/휴장 판정은 NY 로컬시각 기준(위 함수 주석
+        # 참고). NY 기준으로는 16:00~20:00 ET 부근에 걸쳐 있어 아래 NY
         # 분기(pre/open)와 겹치지 않는다.
         if _is_us_after_market_window():
             return "after"
