@@ -92,6 +92,10 @@ def build_ticker_row_skeleton(
         f'<span id="{id_prefix}-status-txt-{row_id}"></span>'
         f'</span>'
     )
+    updated_html = (
+        f'<span id="{id_prefix}-updated-{row_id}" class="ticker-updated" '
+        f'style="font-size:11px; color:var(--text-dim,#888); margin-left:4px; white-space:nowrap;"></span>'
+    )
     onclick_str = f'onclick="{onclick_attr}" style="cursor:pointer;"' if onclick_attr else ""
 
     if is_cash:
@@ -123,6 +127,7 @@ def build_ticker_row_skeleton(
             f'        {lev_html}'
             f'        <span id="{id_prefix}-name-{row_id}" class="ticker-name">{display_name}</span>'
             f'        {status_html}'
+            f'        {updated_html}'
             f'      </div>'
             f'      <div class="t-row-right ticker-amount" id="{id_prefix}-amount-{row_id}"></div>'
             f'    </div>'
@@ -165,6 +170,7 @@ def build_ticker_row_values(
     usd_rate: float = 1.0,       # 손익액 KRW 환산용 (USD 종목일 때 사용)
     qty_in_values: bool = True,  # portfolio: True, accounts/드릴다운: False(골격에 고정)
     is_watch_only: bool = False, # True: 보유 0, 감시계좌에만 존재하는 종목 (수량/평가금액 비표시)
+    updated_at: int | None = None,  # 마지막으로 실제 가격이 바뀐 시각 (unix epoch, 초 단위 int, UTC)
 ) -> dict:
     is_cash  = ticker in ('KRW', 'USD')
     qty_f    = float(qty      or 0)
@@ -252,6 +258,7 @@ def build_ticker_row_values(
             "pnl_amount": pnl_amount_str,
             "pnl_pct":    pnl_pct_str,
             "pnl_css":    pnl_css,
+            "updated_at": updated_at,  # raw epoch 그대로 — 포맷팅("Ns"/"Nm"/"Nh"/"Nd")은 클라이언트(JS)에서 처리
         },
     }
 

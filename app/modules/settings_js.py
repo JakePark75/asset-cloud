@@ -7,6 +7,36 @@ def settings_js() -> str:
 
   var _stDynamicCache = {}; // ticker id -> {price, chg, chg_css} 마지막 값 캐시 (부분 diff 병합용)
 
+  // ── 갱신시각 카운트업 (서버 재통신 없이 클라이언트에서 매초 재계산) ─────
+  // portfolio_js.py/accounts_js.py의 동일 로직과 같은 이유 — 서버는 값이 실제로
+  // 바뀔 때만 raw epoch(t.updated_at)을 보낸다. 그 값을 레지스트리에 저장해두고,
+  // 1초 인터벌이 모든 등록된 DOM에 대해 "지금 - updated_at"을 재계산해서
+  // 텍스트만 갱신한다.
+  var _stUpdatedAt = {};
+
+  function _stFmtElapsed(updatedAt) {
+    if (updatedAt == null) return '-';
+    var elapsed = Math.floor(Date.now() / 1000 - updatedAt);
+    if (elapsed < 0) elapsed = 0;
+    if (elapsed < 60)    return elapsed + 's';
+    if (elapsed < 3600)  return Math.floor(elapsed / 60) + 'm';
+    if (elapsed < 86400) return Math.floor(elapsed / 3600) + 'h';
+    return Math.floor(elapsed / 86400) + 'd';
+  }
+
+  function _stSetUpdated(domId, updatedAt) {
+    _stUpdatedAt[domId] = updatedAt;
+    var el = document.getElementById(domId);
+    if (el) el.textContent = _stFmtElapsed(updatedAt);
+  }
+
+  setInterval(function() {
+    Object.keys(_stUpdatedAt).forEach(function(domId) {
+      var el = document.getElementById(domId);
+      if (el) el.textContent = _stFmtElapsed(_stUpdatedAt[domId]);
+    });
+  }, 1000);
+
   Shiny.addCustomMessageHandler('st_init', function(m) {
     _stDynamicCache = {};
 
@@ -251,6 +281,13 @@ def settings_js() -> str:
   function _applyOneTickerDynamic(t) {
     var row = document.getElementById('st-row-' + t.id);
     if (row && row.dataset.auto && row.style.display === 'none') return;
+
+    // updated_at: 값이 바뀐 티커만 diff에 실려 오므로 필드 유무(!== undefined)로
+    // "이번에 갱신됐는지"를 판단한다. null도 유효한 값(=아직 갱신 이력 없음, '-' 표시)
+    // 이라 다른 필드들과 달리 != null 체크를 쓰면 안 된다.
+    if (t.updated_at !== undefined) {
+      _stSetUpdated('st-updated-' + t.id, t.updated_at);
+    }
 
     if (t.price == null && t.chg == null && t.chg_css == null) return;
 

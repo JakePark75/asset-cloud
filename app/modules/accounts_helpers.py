@@ -67,7 +67,7 @@ def _build_account_card_values(acc):
 
 def _build_position_row_skeleton(pos, ns_str):
     """종목 행 골격 HTML — 공통 build_ticker_row_skeleton 사용"""
-    pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price = pos
+    pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price, _updated_at = pos
     qty_f    = float(qty or 0)
     leverage = int(leverage) if leverage else 1
     is_cash  = ticker in ('KRW', 'USD')
@@ -111,7 +111,7 @@ def _build_position_row_skeleton(pos, ns_str):
 
 def _build_position_row_values(pos, usd_rate):
     """종목 행 가변값 dict — 공통 build_ticker_row_values 사용"""
-    pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price = pos
+    pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price, updated_at = pos
     qty_f   = float(qty   or 0)
     price_f = float(price or 0)
     is_cash = ticker in ('KRW', 'USD')
@@ -145,6 +145,7 @@ def _build_position_row_values(pos, usd_rate):
         leverage               = leverage,
         usd_rate               = usd_rate,
         qty_in_values          = True,  # 수량도 tick으로 갱신 (매수/매도 직후 즉시 반영)
+        updated_at             = updated_at,
     )
 
     # accounts 전용 추가 필드 — 종목 수정 모달을 같은 세션에서 다시 열 때

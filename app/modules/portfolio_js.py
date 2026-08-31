@@ -8,6 +8,36 @@ def portfolio_js() -> str:
     return """
 (function() {
 
+  // ── 갱신시각 카운트업 (서버 재통신 없이 클라이언트에서 매초 재계산) ─────
+  // 서버는 값이 실제로 바뀔 때만 raw epoch(t.updated_at)을 보낸다. 그 값을
+  // 여기 레지스트리에 저장해두고, 1초 인터벌이 모든 등록된 DOM에 대해
+  // "지금 - updated_at"을 다시 계산해서 텍스트만 갱신한다. 서버 push는 값이
+  // 바뀔 때만 오므로, 매초 증가하는 표시 자체는 서버 통신 없이 처리된다.
+  var _pfUpdatedAt = {}; // { domId: epochSeconds|null }
+
+  function _pfFmtElapsed(updatedAt) {
+    if (updatedAt == null) return '-';
+    var elapsed = Math.floor(Date.now() / 1000 - updatedAt);
+    if (elapsed < 0) elapsed = 0;
+    if (elapsed < 60)    return elapsed + 's';
+    if (elapsed < 3600)  return Math.floor(elapsed / 60) + 'm';
+    if (elapsed < 86400) return Math.floor(elapsed / 3600) + 'h';
+    return Math.floor(elapsed / 86400) + 'd';
+  }
+
+  function _pfSetUpdated(domId, updatedAt) {
+    _pfUpdatedAt[domId] = updatedAt;
+    var el = document.getElementById(domId);
+    if (el) el.textContent = _pfFmtElapsed(updatedAt);
+  }
+
+  setInterval(function() {
+    Object.keys(_pfUpdatedAt).forEach(function(domId) {
+      var el = document.getElementById(domId);
+      if (el) el.textContent = _pfFmtElapsed(_pfUpdatedAt[domId]);
+    });
+  }, 1000);
+
   // ── pf_init: 종목 구성 변경 시 골격 통째 교체 ──────────────
   Shiny.addCustomMessageHandler('pf_init', function(m) {
     var el = document.getElementById('pf-ticker-list');
@@ -392,6 +422,13 @@ def portfolio_js() -> str:
         if (t.pnl_css    != null) pnlEl.className          = t.pnl_css;
         pnlEl.textContent = (pnlEl.dataset.pnlAmount || '') + (pnlEl.dataset.pnlPct ? ' ' + pnlEl.dataset.pnlPct : '');
       }
+    }
+
+    // updated_at: 값이 바뀐 티커만 diff에 실려 오므로 필드 유무(!== undefined)로
+    // "이번에 갱신됐는지"를 판단한다. null도 유효한 값(=아직 갱신 이력 없음, '-' 표시)
+    // 이라 다른 필드들과 달리 != null 체크를 쓰면 안 된다.
+    if (t.updated_at !== undefined) {
+      _pfSetUpdated('pf-updated-' + t.id, t.updated_at);
     }
   }
 

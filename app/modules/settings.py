@@ -115,6 +115,8 @@ def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
         f'      {lev_html}'
         f'      <span id="st-name-{tid}" class="ticker-name">{name}</span>'
         f'      <span id="st-status-{tid}" class="ticker-status"></span>'
+        f'      <span id="st-updated-{tid}" class="ticker-updated" '
+        f'style="font-size:11px; color:var(--text-dim,#888); margin-left:4px; white-space:nowrap;"></span>'
         f'    </div>'
         f'    <div class="ticker-qty">{ticker} / <span id="st-market-{tid}">{market}</span></div>'
         f'  </div>'
@@ -126,7 +128,7 @@ def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
     )
 
 
-def _build_tick_values(ticker, name, market, leverage, price, change_pct):
+def _build_tick_values(ticker, name, market, leverage, price, change_pct, updated_at=None):
     """시세 갱신 시마다 전송하는 값 — static/dynamic 분리 구조."""
     tid      = _ticker_to_id(ticker)
     leverage = int(leverage) if leverage else 1
@@ -153,10 +155,11 @@ def _build_tick_values(ticker, name, market, leverage, price, change_pct):
             "status_cls": status_cls,
         },
         "dynamic": {
-            "id":      tid,
-            "price":   price_str,
-            "chg":     chg_str,
-            "chg_css": chg_css,
+            "id":         tid,
+            "price":      price_str,
+            "chg":        chg_str,
+            "chg_css":    chg_css,
+            "updated_at": updated_at,  # raw epoch 그대로 — 포맷팅("Ns"/"Nm"/"Nh"/"Nd")은 클라이언트(JS)에서 처리
         },
     }
 
@@ -416,7 +419,8 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 p_data     = prices.get(ticker)
                 price      = float(p_data["price"])      if p_data else 0.0
                 change_pct = float(p_data["change_pct"]) if p_data else 0.0
-                result[ticker] = _build_tick_values(ticker, name, market, leverage, price, change_pct)
+                updated_at = p_data.get("updated_at") if p_data else None
+                result[ticker] = _build_tick_values(ticker, name, market, leverage, price, change_pct, updated_at)
             return result
 
         if structure_changed:

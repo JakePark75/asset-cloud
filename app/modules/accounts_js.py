@@ -12,6 +12,36 @@ def accounts_js(market_currency_map_js: str) -> str:
   // ── market → currency 매핑 (Python에서 주입) ──────────────────────────
   var _marketCurrencyMap = """ + market_currency_map_js + """;
 
+  // ── 갱신시각 카운트업 (서버 재통신 없이 클라이언트에서 매초 재계산) ─────
+  // portfolio_js.py의 동일 로직과 같은 이유 — 서버는 값이 실제로 바뀔 때만
+  // raw epoch(p.updated_at)을 보낸다. 그 값을 레지스트리에 저장해두고,
+  // 1초 인터벌이 모든 등록된 DOM에 대해 "지금 - updated_at"을 재계산해서
+  // 텍스트만 갱신한다.
+  var _acUpdatedAt = {};
+
+  function _acFmtElapsed(updatedAt) {
+    if (updatedAt == null) return '-';
+    var elapsed = Math.floor(Date.now() / 1000 - updatedAt);
+    if (elapsed < 0) elapsed = 0;
+    if (elapsed < 60)    return elapsed + 's';
+    if (elapsed < 3600)  return Math.floor(elapsed / 60) + 'm';
+    if (elapsed < 86400) return Math.floor(elapsed / 3600) + 'h';
+    return Math.floor(elapsed / 86400) + 'd';
+  }
+
+  function _acSetUpdated(domId, updatedAt) {
+    _acUpdatedAt[domId] = updatedAt;
+    var el = document.getElementById(domId);
+    if (el) el.textContent = _acFmtElapsed(updatedAt);
+  }
+
+  setInterval(function() {
+    Object.keys(_acUpdatedAt).forEach(function(domId) {
+      var el = document.getElementById(domId);
+      if (el) el.textContent = _acFmtElapsed(_acUpdatedAt[domId]);
+    });
+  }, 1000);
+
   // ── id 조회 헬퍼 ───────────────────────────────────────────────────────
   window.acGetEl = function(id) {
     if (!id) return null;
@@ -390,6 +420,11 @@ def accounts_js(market_currency_map_js: str) -> str:
         if (p.pnl_css    != null) pnlEl.className          = p.pnl_css;
         pnlEl.textContent = (pnlEl.dataset.pnlAmount || '') + (pnlEl.dataset.pnlPct ? ' ' + pnlEl.dataset.pnlPct : '');
       }
+    }
+
+    // updated_at: portfolio_js.py의 _applyOneTicker와 동일한 이유로 !== undefined 사용.
+    if (p.updated_at !== undefined) {
+      _acSetUpdated('ac-updated-' + p.id, p.updated_at);
     }
   }
 

@@ -53,18 +53,27 @@ def get_redis() -> redis.Redis | None:
 
 # ── 시세 Read / Write ─────────────────────────────────────────────────────────
 
-def write_price(ticker: str, price: float, change_pct: float) -> None:
+def write_price(ticker: str, price: float, change_pct: float, updated_at: int | None = None) -> None:
     """
-    prices hash에 ticker → json{price, change_pct} 기록.
+    prices hash에 ticker → json{price, change_pct, updated_at} 기록.
     USDKRW=X인 경우 usd_krw key도 함께 갱신.
+
+    updated_at: 이 가격이 실제로 "마지막으로 바뀐" 시각 (unix epoch, 초 단위 int, UTC).
+      호출자(scheduler/price_updater_common.py의 update_price_cache())가 이전 값과 비교해서
+      결정한 값을 그대로 저장한다 — 이 함수 자체는 비교를 하지 않는다.
+      int로 받는 이유: 이 값은 이후 diff_display_split()에서 "==" 비교당하므로 float를
+      쓰지 않는다(코드리뷰 반영, price_updater_common.py 상단 주석 참고).
+      None이면 payload에 필드 자체를 넣지 않는다(하위호환).
     실패해도 예외를 밖으로 내보내지 않는다.
     """
     try:
         r = get_redis()
         if not r:
             return
-        payload = json.dumps({"price": price, "change_pct": change_pct})
-        r.hset("prices", ticker, payload)
+        payload = {"price": price, "change_pct": change_pct}
+        if updated_at is not None:
+            payload["updated_at"] = updated_at
+        r.hset("prices", ticker, json.dumps(payload))
         if ticker == "USDKRW=X":
             r.set("usd_krw", price)
     except Exception as e:
