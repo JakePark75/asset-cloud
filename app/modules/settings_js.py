@@ -68,7 +68,6 @@ def settings_js() -> str:
     if (listEl) listEl.innerHTML = m.ticker_list_html || '<p style="color:#888; padding:8px 0;">등록된 티커가 없습니다.</p>';
 
     _applyTickers(m.tickers);
-    _applyAutoTickerVisibility();
   });
 
   // ── st_tick: dynamic 필드만 patch ──────────────────────────
@@ -83,31 +82,6 @@ def settings_js() -> str:
     Object.keys(m).forEach(function(key) {
       _applyOneTickerStatic(m[key]);
     });
-  });
-
-  // ── 자동 티커 숨김/표시 ───────────────────────────────────
-  function _applyAutoTickerVisibility() {
-    var btn = document.getElementById('st-auto-ticker-toggle');
-    if (!btn) return;
-    var hidden = btn.dataset.hidden === '1';
-    var rows = document.querySelectorAll('#st-ticker-list .ticker-row[data-auto]');
-    rows.forEach(function(r) { r.style.display = hidden ? 'none' : ''; });
-  }
-
-  window.stToggleAutoTickers = function() {
-    var btn = document.getElementById('st-auto-ticker-toggle');
-    var hidden = btn.dataset.hidden === '1';
-    var nextHidden = !hidden;
-    btn.dataset.hidden = nextHidden ? '1' : '0';
-    btn.style.color = nextHidden ? '#888' : '#00c073';
-    btn.textContent = nextHidden ? '자동 숨김' : '자동 표시';
-    _applyAutoTickerVisibility();
-    Shiny.setInputValue('settings-auto_hidden', nextHidden ? '1' : '0');
-  };
-
-  // 초기 상태(자동 숨김=1) 서버에 동기화
-  document.addEventListener('shiny:connected', function() {
-    Shiny.setInputValue('settings-auto_hidden', '1');
   });
 
   // ── 티커 자동조회 ──────────────────────────────────────────
@@ -268,9 +242,6 @@ def settings_js() -> str:
 
   // st_static_tick용: static 필드만 (수신된 필드만 존재)
   function _applyOneTickerStatic(t) {
-    var row = document.getElementById('st-row-' + t.id);
-    if (row && row.dataset.auto && row.style.display === 'none') return;
-
     if (t.name != null) {
       var nameEl = document.getElementById('st-name-' + t.id);
       if (nameEl) nameEl.textContent = t.name;
@@ -303,9 +274,6 @@ def settings_js() -> str:
   // diff_display_split이 변경된 필드만 보내므로(price만 오거나 chg만 오는 경우 있음),
   // 수신 필드만으로 innerHTML을 다시 쓰면 안 온 필드가 사라진다. 마지막 값을 캐시해두고 병합한다.
   function _applyOneTickerDynamic(t) {
-    var row = document.getElementById('st-row-' + t.id);
-    if (row && row.dataset.auto && row.style.display === 'none') return;
-
     // updated_at: 값이 바뀐 티커만 diff에 실려 오므로 필드 유무(!== undefined)로
     // "이번에 갱신됐는지"를 판단한다. null도 유효한 값(=아직 갱신 이력 없음, '-' 표시)
     // 이라 다른 필드들과 달리 != null 체크를 쓰면 안 된다.

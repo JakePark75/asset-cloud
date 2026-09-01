@@ -2,7 +2,6 @@ import asyncio
 import subprocess
 
 from shiny import ui, module, reactive
-from shiny.types import SilentException
 from app.db import get_db, get_market_currency, get_market_map
 from app.modules.components import fmt_change
 from app.price_signal import price_signal, ticker_signal
@@ -81,16 +80,20 @@ def _ticker_to_id(ticker: str) -> str:
     return ticker.replace("-", "_").replace("^", "_").replace("=", "_")
 
 def _sort_key(r):
-    ticker, _, market, leverage, is_manual = r
+    ticker, _, market, leverage = r
     return (
-        0 if is_manual else 1,
         _MARKET_ORDER.get(market, 99),
         -(leverage or 1),
         ticker,
     )
 
-def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
-    """구조 변경 시 1회 전송하는 골격 HTML."""
+def _build_row_skeleton(ticker, name, market, leverage, ns_str):
+    """구조 변경 시 1회 전송하는 골격 HTML.
+
+    자동추가 티커는 더 이상 이 화면에 노출되지 않으므로(2026-09 정리),
+    tickers 테이블은 항상 is_manual=true 행만 조회한다. 따라서 삭제 버튼은
+    조건 없이 항상 노출한다.
+    """
     tid      = _ticker_to_id(ticker)
     leverage = int(leverage) if leverage else 1
 
@@ -104,12 +107,10 @@ def _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str):
         f'onclick="if(confirm(\'{ticker} 티커를 삭제할까요?\')) '
         f'Shiny.setInputValue(\'{ns_str}confirm_delete_ticker\', \'{ticker}\', {{priority: \'event\'}});">'
         f'삭제</button>'
-    ) if is_manual else '<div></div>'
-
-    auto_attr = '' if is_manual else ' data-auto="1"'
+    )
 
     return (
-        f'<div class="ticker-row" id="st-row-{tid}"{auto_attr}>'
+        f'<div class="ticker-row" id="st-row-{tid}">'
         f'  <div>'
         f'    <div class="lev-name-wrap">'
         f'      {lev_html}'
@@ -180,14 +181,6 @@ def settings_ui():
             ui.div(
                 ui.p("티커 관리", style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin:0;"),
                 ui.div(
-                    ui.tags.button(
-                        "자동 표시",
-                        id="st-auto-ticker-toggle",
-                        class_="btn-danger-sm",
-                        style="color:#00c073;",
-                        data_hidden="1",
-                        onclick="stToggleAutoTickers();",
-                    ),
                     ui.tags.button(
                         "+ 추가",
                         class_="btn-danger-sm",
@@ -383,7 +376,9 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         refresh()
         with get_db() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT ticker, name, market, leverage, is_manual FROM tickers")
+            # 포트폴리오 화면이 보유종목 시세를 자체적으로 잘 보여주므로(2026-09),
+            # 자동추가(is_manual=false) 티커는 이 설정 화면에서 더 이상 노출하지 않는다.
+            cur.execute("SELECT ticker, name, market, leverage FROM tickers WHERE is_manual = true")
             rows = cur.fetchall()
             cur.close()
         return rows
@@ -410,12 +405,9 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
         #       f"structure_changed={structure_changed} current_tickers={current_tickers} "
         #       f"_last_tickers={_last_tickers}")
 
-        # structure_changed: 전체 필요 / tick: 자동 숨김 시 is_manual만
-        def _build_ticker_values(include_auto: bool):
+        def _build_ticker_values():
             result = {}
-            for ticker, name, market, leverage, is_manual in rows:
-                if not include_auto and not is_manual:
-                    continue
+            for ticker, name, market, leverage in rows:
                 p_data     = prices.get(ticker)
                 price      = float(p_data["price"])      if p_data else 0.0
                 change_pct = float(p_data["change_pct"]) if p_data else 0.0
@@ -428,10 +420,10 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             _last_display.clear()
             ns_str   = session.ns("_")[:-1]
             ticker_list_html = "".join(
-                _build_row_skeleton(ticker, name, market, leverage, is_manual, ns_str)
-                for ticker, name, market, leverage, is_manual in rows
+                _build_row_skeleton(ticker, name, market, leverage, ns_str)
+                for ticker, name, market, leverage in rows
             )
-            ticker_values = _build_ticker_values(include_auto=True)
+            ticker_values = _build_ticker_values()
             # print(f"[SETTINGS_DEBUG] structure_changed branch: sending st_init, "
             #       f"ticker_values_keys={list(ticker_values.keys())}")
             await session.send_custom_message("st_init", {
@@ -443,14 +435,9 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 },
             })
         else:
-            try:
-                auto_hidden_val = input.auto_hidden()
-            except SilentException:
-                auto_hidden_val = None
-            auto_hidden = (auto_hidden_val or '1') == '1'
-            ticker_values = _build_ticker_values(include_auto=not auto_hidden)
+            ticker_values = _build_ticker_values()
             dyn_diff, sta_diff = diff_display_split(ticker_values, _last_display)
-            # print(f"[SETTINGS_DEBUG] else branch: auto_hidden={auto_hidden} "
+            # print(f"[SETTINGS_DEBUG] else branch: "
             #       f"ticker_values_keys={list(ticker_values.keys())} "
             #       f"dyn_diff={dyn_diff} sta_diff={sta_diff}")
             if dyn_diff:
