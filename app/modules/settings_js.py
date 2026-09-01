@@ -61,6 +61,54 @@ def settings_js() -> str:
     }, 500);
   }
 
+  // ── 티커 드래그 정렬 (SortableJS) ────────────────────────────────────────
+  // st_init이 #st-ticker-list의 innerHTML을 통째로 교체하므로, 이전 SortableJS
+  // 인스턴스가 붙어있던 DOM 노드가 매번 파괴된다. portfolio_js.py(pf_init)와
+  // 동일한 이유로 st_init이 올 때마다 재초기화한다.
+  // 설정 화면은 asset_ui(#asset-root) 밖의 완전히 독립된 최상위 탭이므로,
+  // portfolio_js.py에 있는 #asset-root 기반 iOS 자동스크롤 transform
+  // 워크어라운드는 적용 대상 DOM 자체가 없어 넣지 않는다(2026-09 asset.py 확인 완료).
+  // window.Sortable/_sortableLoading은 portfolio_js.py와 이름을 맞춰 공유되며,
+  // 두 스크립트가 같은 페이지에 있어도 CDN 스크립트가 중복 로드되지 않는다.
+  function _stLoadSortable(cb) {
+    if (window.Sortable) { cb(); return; }
+    if (window._sortableLoading) {
+      window._sortableLoading.push(cb);
+      return;
+    }
+    window._sortableLoading = [cb];
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.7/Sortable.min.js';
+    s.onload = function() {
+      var queue = window._sortableLoading;
+      window._sortableLoading = null;
+      queue.forEach(function(fn) { fn(); });
+    };
+    document.head.appendChild(s);
+  }
+
+  var _stSortable = null;
+
+  function _stInitSortable() {
+    var el = document.getElementById('st-ticker-list-normal');
+    if (!el) return;
+    if (_stSortable) { _stSortable.destroy(); _stSortable = null; }
+    _stLoadSortable(function() {
+      var el2 = document.getElementById('st-ticker-list-normal');
+      if (!el2) return;
+      _stSortable = Sortable.create(el2, {
+        delay: 150,
+        delayOnTouchOnly: true,
+        animation: 150,
+        dataIdAttr: 'data-ticker',
+        onEnd: function() {
+          var order = _stSortable.toArray();
+          Shiny.setInputValue('settings-ticker_reorder', order, { priority: 'event' });
+        },
+      });
+    });
+  }
+
   Shiny.addCustomMessageHandler('st_init', function(m) {
     _stDynamicCache = {};
 
@@ -68,6 +116,7 @@ def settings_js() -> str:
     if (listEl) listEl.innerHTML = m.ticker_list_html || '<p style="color:#888; padding:8px 0;">등록된 티커가 없습니다.</p>';
 
     _applyTickers(m.tickers);
+    _stInitSortable();
   });
 
   // ── st_tick: dynamic 필드만 patch ──────────────────────────

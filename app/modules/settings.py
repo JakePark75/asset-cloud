@@ -87,6 +87,26 @@ def _sort_key(r):
         ticker,
     )
 
+_UNSET_SORT_ORDER = 10**9  # sort_order 미지정 종목을 뒤로 보내기 위한 큰 값 (드래그로 지정된 종목이 항상 우선)
+
+def _sort_rows(rows):
+    """
+    정렬 우선순위: (1) sort_order가 지정된 티커는 그 값 순
+    (2) sort_order 미지정 티커는 기존 방식(시장/레버리지/티커명)으로 폴백.
+    rows[i]: (ticker, name, market, leverage, sort_order)
+
+    tickers.sort_order는 portfolio_DAL.update_ticker_order를 통해 포트폴리오
+    화면과 공유하는 컬럼이다. (수동추가 티커는 대부분 환율/지수처럼 포트폴리오에
+    보유할 수 없는 종목이라 실질적으로 겹치는 케이스가 없다는 전제 하에 공유 결정함 — 2026-09)
+    """
+    return sorted(
+        rows,
+        key=lambda r: (
+            r[4] if r[4] is not None else _UNSET_SORT_ORDER,
+            _sort_key(r[:4]),
+        )
+    )
+
 def _build_row_skeleton(ticker, name, market, leverage, ns_str):
     """구조 변경 시 1회 전송하는 골격 HTML.
 
@@ -109,7 +129,7 @@ def _build_row_skeleton(ticker, name, market, leverage, ns_str):
         f'삭제</button>'
     )
 
-    return (
+    row_html = (
         f'<div class="ticker-row" id="st-row-{tid}">'
         f'  <div>'
         f'    <div class="lev-name-wrap">'
@@ -127,6 +147,7 @@ def _build_row_skeleton(ticker, name, market, leverage, ns_str):
         f'  </div>'
         f'</div>'
     )
+    return f'<div class="st-item" data-ticker="{ticker}">{row_html}</div>'
 
 
 def _build_tick_values(ticker, name, market, leverage, price, change_pct, updated_at=None):
@@ -378,7 +399,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             cur = conn.cursor()
             # 포트폴리오 화면이 보유종목 시세를 자체적으로 잘 보여주므로(2026-09),
             # 자동추가(is_manual=false) 티커는 이 설정 화면에서 더 이상 노출하지 않는다.
-            cur.execute("SELECT ticker, name, market, leverage FROM tickers WHERE is_manual = true")
+            cur.execute("SELECT ticker, name, market, leverage, sort_order FROM tickers WHERE is_manual = true")
             rows = cur.fetchall()
             cur.close()
         return rows
@@ -397,7 +418,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
 
         prices = get_all_prices()
 
-        rows = sorted(_ticker_rows(), key=_sort_key)
+        rows = _sort_rows(_ticker_rows())
 
         current_tickers = [r[0] for r in rows]
         structure_changed = (current_tickers != _last_tickers)
@@ -407,7 +428,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
 
         def _build_ticker_values():
             result = {}
-            for ticker, name, market, leverage in rows:
+            for ticker, name, market, leverage, _sort_order in rows:
                 p_data     = prices.get(ticker)
                 price      = float(p_data["price"])      if p_data else 0.0
                 change_pct = float(p_data["change_pct"]) if p_data else 0.0
@@ -419,10 +440,13 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             _last_tickers = current_tickers
             _last_display.clear()
             ns_str   = session.ns("_")[:-1]
-            ticker_list_html = "".join(
+            rows_html = "".join(
                 _build_row_skeleton(ticker, name, market, leverage, ns_str)
-                for ticker, name, market, leverage in rows
+                for ticker, name, market, leverage, _sort_order in rows
             )
+            # #st-ticker-list-normal: settings_js.py의 SortableJS가 드래그 정렬 대상으로
+            # 잡는 컨테이너 (portfolio_js.py의 #pf-ticker-list-normal과 동일한 패턴).
+            ticker_list_html = f'<div id="st-ticker-list-normal">{rows_html}</div>'
             ticker_values = _build_ticker_values()
             # print(f"[SETTINGS_DEBUG] structure_changed branch: sending st_init, "
             #       f"ticker_values_keys={list(ticker_values.keys())}")
@@ -460,6 +484,26 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
             cur.close()
         refresh.set(refresh() + 1)
         _notify_ticker_changed()
+
+    # ── 티커 순서 변경 (드래그 정렬) ─────────────────────────────────────────────
+    # tickers.sort_order 컬럼을 포트폴리오 화면과 공유하므로 portfolio_DAL.update_ticker_order를
+    # 그대로 재사용한다 (사용자 확인: 수동추가 티커는 대부분 매수 불가능한 환율/지수라
+    # 실질적으로 겹치는 케이스가 없음 — 2026-09).
+    # sort_order 변경은 ticker/quantity/leverage/market 중 어느 것도 바꾸지 않으므로
+    # refresh_position_cache()(positions×tickers×is_watch 캐시)는 호출할 필요가 없다
+    # (portfolio.py의 동일 로직·근거 참고). publish_ticker_changed()만 발행하면
+    # price_signal.py 리스너가 받아 ticker_signal을 갱신하고, 이 세션을 포함한 모든
+    # 세션의 _ticker_rows()가 재조회되어 새 sort_order가 반영된다.
+    @reactive.effect
+    @reactive.event(input.ticker_reorder)
+    def _reorder_tickers():
+        payload = input.ticker_reorder()
+        if not payload:
+            return
+        ordered_tickers = [str(t) for t in payload]
+        from app.modules.portfolio_DAL import update_ticker_order
+        update_ticker_order(ordered_tickers)
+        publish_ticker_changed()
 
     # ── 티커 자동조회 ─────────────────────────────────────────────────────────
     @reactive.effect
