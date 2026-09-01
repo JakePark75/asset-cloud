@@ -37,6 +37,30 @@ def settings_js() -> str:
     });
   }, 1000);
 
+  // ── 시세 갱신 시 가격박스 깜빡임(테두리) ────────────────────
+  // portfolio_js.py의 _pfFlashPriceBox와 동일한 이유/방식.
+  // 여기선 가격+등락률이 이미 st-change-{id} 하나에 합쳐져 있으므로 그 요소 자체가 대상.
+  // 색은 그 안에 렌더링된 등락 span(class=chg_css)의 실제 계산된 색을 그대로 사용한다.
+  var _stFlashTimers = {};
+
+  function _stFlashChangeBox(id) {
+    var box = document.getElementById('st-change-' + id);
+    if (!box) return;
+    var innerSpan = box.querySelector('span');
+    var color = innerSpan ? getComputedStyle(innerSpan).color : '';
+
+    if (_stFlashTimers[id]) clearTimeout(_stFlashTimers[id]);
+
+    box.style.outline = '1px solid ' + (color || 'currentColor');
+    box.style.outlineOffset = '1px';
+
+    _stFlashTimers[id] = setTimeout(function() {
+      box.style.outline = '';
+      box.style.outlineOffset = '';
+      delete _stFlashTimers[id];
+    }, 500);
+  }
+
   Shiny.addCustomMessageHandler('st_init', function(m) {
     _stDynamicCache = {};
 
@@ -285,11 +309,15 @@ def settings_js() -> str:
     // updated_at: 값이 바뀐 티커만 diff에 실려 오므로 필드 유무(!== undefined)로
     // "이번에 갱신됐는지"를 판단한다. null도 유효한 값(=아직 갱신 이력 없음, '-' 표시)
     // 이라 다른 필드들과 달리 != null 체크를 쓰면 안 된다.
-    if (t.updated_at !== undefined) {
+    var shouldFlash = (t.updated_at !== undefined);
+    if (shouldFlash) {
       _stSetUpdated('st-updated-' + t.id, t.updated_at);
     }
 
-    if (t.price == null && t.chg == null && t.chg_css == null) return;
+    if (t.price == null && t.chg == null && t.chg_css == null) {
+      if (shouldFlash) _stFlashChangeBox(t.id);
+      return;
+    }
 
     var cache = _stDynamicCache[t.id] || {};
     if (t.price != null)   cache.price   = t.price;
@@ -307,6 +335,8 @@ def settings_js() -> str:
     } else {
       chgEl.innerHTML = '';
     }
+
+    if (shouldFlash) _stFlashChangeBox(t.id);
   }
 
 })();

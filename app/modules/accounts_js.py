@@ -42,6 +42,28 @@ def accounts_js(market_currency_map_js: str) -> str:
     });
   }, 1000);
 
+  // ── 시세 갱신 시 가격박스 깜빡임(테두리) ────────────────────
+  // portfolio_js.py의 _pfFlashPriceBox와 동일한 이유/방식.
+  var _acFlashTimers = {};
+
+  function _acFlashPriceBox(id) {
+    var box = document.getElementById('ac-pricebox-' + id);
+    if (!box) return;
+    var chgEl = document.getElementById('ac-chg-' + id);
+    var color = chgEl ? getComputedStyle(chgEl).color : '';
+
+    if (_acFlashTimers[id]) clearTimeout(_acFlashTimers[id]);
+
+    box.style.outline = '1px solid ' + (color || 'currentColor');
+    box.style.outlineOffset = '1px';
+
+    _acFlashTimers[id] = setTimeout(function() {
+      box.style.outline = '';
+      box.style.outlineOffset = '';
+      delete _acFlashTimers[id];
+    }, 500);
+  }
+
   // ── id 조회 헬퍼 ───────────────────────────────────────────────────────
   window.acGetEl = function(id) {
     if (!id) return null;
@@ -425,6 +447,7 @@ def accounts_js(market_currency_map_js: str) -> str:
     // updated_at: portfolio_js.py의 _applyOneTicker와 동일한 이유로 !== undefined 사용.
     if (p.updated_at !== undefined) {
       _acSetUpdated('ac-updated-' + p.id, p.updated_at);
+      _acFlashPriceBox(p.id);
     }
   }
 

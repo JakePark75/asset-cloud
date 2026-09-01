@@ -136,7 +136,7 @@ def build_ticker_row_skeleton(
             f'        <span class="ticker-label">평균단가</span>'
             f'        <span id="{id_prefix}-avgprice-{row_id}"></span>'
             f'      </div>'
-            f'      <div class="t-row-right">'
+            f'      <div class="t-row-right" id="{id_prefix}-pricebox-{row_id}">'
             f'        <span id="{id_prefix}-price-{row_id}" style="margin-right:4px;"></span>'
             f'        <span id="{id_prefix}-chg-{row_id}"></span>'
             f'      </div>'

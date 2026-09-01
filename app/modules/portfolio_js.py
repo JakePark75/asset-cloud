@@ -38,6 +38,31 @@ def portfolio_js() -> str:
     });
   }, 1000);
 
+  // ── 시세 갱신 시 가격박스 깜빡임(테두리) ────────────────────
+  // 티커 id별로 setTimeout 핸들을 들고 있다가, 갱신이 다시 오면 clearTimeout 후
+  // 재시작 — "표시 중 재갱신되면 0.5초 다시 카운트" 요구사항을 그대로 구현.
+  // 테두리 색은 하드코딩하지 않고, 이미 chg_css(positive/negative) 클래스가 적용된
+  // pf-chg-{id}의 실제 계산된 색(getComputedStyle)을 그대로 읽어와 사용한다.
+  var _pfFlashTimers = {};
+
+  function _pfFlashPriceBox(id) {
+    var box = document.getElementById('pf-pricebox-' + id);
+    if (!box) return;
+    var chgEl = document.getElementById('pf-chg-' + id);
+    var color = chgEl ? getComputedStyle(chgEl).color : '';
+
+    if (_pfFlashTimers[id]) clearTimeout(_pfFlashTimers[id]);
+
+    box.style.outline = '1px solid ' + (color || 'currentColor');
+    box.style.outlineOffset = '1px';
+
+    _pfFlashTimers[id] = setTimeout(function() {
+      box.style.outline = '';
+      box.style.outlineOffset = '';
+      delete _pfFlashTimers[id];
+    }, 500);
+  }
+
   // ── pf_init: 종목 구성 변경 시 골격 통째 교체 ──────────────
   Shiny.addCustomMessageHandler('pf_init', function(m) {
     var el = document.getElementById('pf-ticker-list');
@@ -429,6 +454,7 @@ def portfolio_js() -> str:
     // 이라 다른 필드들과 달리 != null 체크를 쓰면 안 된다.
     if (t.updated_at !== undefined) {
       _pfSetUpdated('pf-updated-' + t.id, t.updated_at);
+      _pfFlashPriceBox(t.id);
     }
   }
 
