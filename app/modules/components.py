@@ -1,4 +1,38 @@
 from shiny import ui
+import time
+
+
+# ── 갱신시각 추적 (화면 렌더링 시점 기준) ────────────────────────────────────
+#
+# "마지막 갱신 후 경과시간" 표시(N초/분/시간/일 전)는 Redis에 값을 "쓴 시각"이
+# 아니라 "화면에 실제로 그려지는 문자열이 바뀐 시각" 기준으로 정의한다.
+# 시세 수집 단계(scheduler/price_updater_common.py)는 폴링 주기마다 값이 안
+# 바뀌어도 매번 Redis에 쓰므로, 거기서 "바뀌었나"를 판단하면 화면에 실제로
+# 보이는 자리수(원 단위/센트 단위)와 어긋날 위험이 있다(2026-09 코드리뷰로
+# 재설계). 대신 이 함수가 호출되는 지점 — 즉 build_ticker_row_values가 이미
+# 계산한 price_str(화면에 그대로 렌더링될 문자열) — 에서 직접 비교한다.
+#
+# portfolio.py/accounts_helpers.py/settings.py가 전부 이 모듈(레벨) dict를
+# 공유하므로(같은 Shiny 앱 프로세스 안에서 import), 어느 화면에서 보든 같은
+# 종목은 같은 갱신시각을 보여준다. Redis/DB 호출 없음 — 순수 인메모리 비교.
+#
+# [알려진 한계] 이 앱(Shiny 서버) 프로세스가 재시작되면 이 dict가 초기화되어,
+# 재시작 직후 모든 종목이 "방금 갱신됨"으로 리셋된다.
+_last_known_price_str:  dict = {}  # ticker -> price_str(화면에 마지막으로 표시됐던 문자열)
+_last_price_changed_at: dict = {}  # ticker -> changed_at(int, unix epoch 초)
+
+
+def track_price_change(ticker: str, price_str: str) -> int:
+    """
+    price_str(화면에 실제로 표시되는 문자열)이 이전과 다르면 지금 시각으로,
+    같으면 이전에 기록해둔 시각을 그대로 반환한다.
+    """
+    now = round(time.time())
+    prev = _last_known_price_str.get(ticker)
+    if prev is None or prev != price_str:
+        _last_price_changed_at[ticker] = now
+        _last_known_price_str[ticker] = price_str
+    return _last_price_changed_at[ticker]
 
 
 # ── 포맷 유틸 ─────────────────────────────────────────────────────────────────
@@ -170,7 +204,6 @@ def build_ticker_row_values(
     usd_rate: float = 1.0,       # 손익액 KRW 환산용 (USD 종목일 때 사용)
     qty_in_values: bool = True,  # portfolio: True, accounts/드릴다운: False(골격에 고정)
     is_watch_only: bool = False, # True: 보유 0, 감시계좌에만 존재하는 종목 (수량/평가금액 비표시)
-    updated_at: int | None = None,  # 마지막으로 실제 가격이 바뀐 시각 (unix epoch, 초 단위 int, UTC)
 ) -> dict:
     is_cash  = ticker in ('KRW', 'USD')
     qty_f    = float(qty      or 0)
@@ -194,8 +227,10 @@ def build_ticker_row_values(
     # ── 현재가 / 등락률 ───────────────────────────────────────
     if is_cash:
         price_str = chg_str = chg_css = ""
+        changed_at = None
     else:
         price_str, chg_str, chg_css = fmt_change(price_f, chg_f, currency=currency)
+        changed_at = track_price_change(ticker, price_str)  # 화면 문자열 기준 갱신시각 판단
 
     # ── 수량 ─────────────────────────────────────────────────
     # 감시종목은 보유 수량이 없으므로 표시하지 않음(드릴다운에서는 계좌별 수량 표시)
@@ -258,7 +293,7 @@ def build_ticker_row_values(
             "pnl_amount": pnl_amount_str,
             "pnl_pct":    pnl_pct_str,
             "pnl_css":    pnl_css,
-            "updated_at": updated_at,  # raw epoch 그대로 — 포맷팅("Ns"/"Nm"/"Nh"/"Nd")은 클라이언트(JS)에서 처리
+            "updated_at": changed_at,  # raw epoch — 화면 문자열이 바뀐 시점에만 새 값, 포맷팅은 클라이언트(JS)에서 처리
         },
     }
 

@@ -23,8 +23,7 @@ def load_portfolio(db_rows):
         p_data     = prices.get(ticker)
         price      = float(p_data["price"])      if p_data else 0.0
         change_pct = float(p_data["change_pct"]) if p_data else 0.0
-        updated_at = p_data.get("updated_at") if p_data else None
-        rows.append((ticker, qty, name, price, change_pct, market, leverage, avg_price, sort_order, updated_at))
+        rows.append((ticker, qty, name, price, change_pct, market, leverage, avg_price, sort_order))
 
     return rows
 
@@ -42,8 +41,7 @@ def load_watch_only(db_rows):
         p_data     = prices.get(ticker)
         price      = float(p_data["price"])      if p_data else 0.0
         change_pct = float(p_data["change_pct"]) if p_data else 0.0
-        updated_at = p_data.get("updated_at") if p_data else None
-        rows.append((ticker, 0, name, price, change_pct, market, leverage, None, updated_at))
+        rows.append((ticker, 0, name, price, change_pct, market, leverage, None))
 
     return rows
 
@@ -158,7 +156,7 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
     return f'<div class="pf-item" data-ticker="{ticker}">{row_html}{accordion_html}</div>'
 
 
-def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price=None, is_watch_only=False, updated_at=None):
+def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price=None, is_watch_only=False):
     """포트폴리오 종목 tick 값"""
     tid     = _ticker_to_id(ticker)
     qty_f   = float(qty   or 0)
@@ -190,7 +188,6 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
         usd_rate               = usd_rate,
         qty_in_values          = True,
         is_watch_only          = is_watch_only,
-        updated_at             = updated_at,
     )
 
 
@@ -470,12 +467,12 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
         watch_sorted = _sort_watch_rows(watch_rows)
 
         ticker_values = {
-            t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price, updated_at=updated_at)
-            for t, qty, name, price, chg_pct, market, leverage, avg_price, _so, updated_at in rows_sorted
+            t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price)
+            for t, qty, name, price, chg_pct, market, leverage, avg_price, _so in rows_sorted
         }
         ticker_values.update({
-            t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price, is_watch_only=True, updated_at=updated_at)
-            for t, qty, name, price, chg_pct, market, leverage, avg_price, updated_at in watch_sorted
+            t: _build_pf_tick_values(t, qty, name, price, chg_pct, market, leverage, usd_rate, avg_price, is_watch_only=True)
+            for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
         })
 
         current_tickers = [r[0] for r in rows_sorted] + [r[0] for r in watch_sorted]
@@ -508,11 +505,11 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
 
             normal_html = "".join(
                 _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
-                for t, qty, name, price, chg_pct, market, leverage, avg_price, _so, _ua in normal_rows
+                for t, qty, name, price, chg_pct, market, leverage, avg_price, _so in normal_rows
             )
             cash_html = "".join(
                 _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
-                for t, qty, name, price, chg_pct, market, leverage, avg_price, _so, _ua in cash_rows
+                for t, qty, name, price, chg_pct, market, leverage, avg_price, _so in cash_rows
             )
             ticker_list_html = f'<div id="pf-ticker-list-normal">{normal_html}</div>{cash_html}'
 
@@ -520,7 +517,7 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
                 ticker_list_html += '<h4 class="section-heading">감시종목</h4>'
                 ticker_list_html += "".join(
                     _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)
-                    for t, qty, name, price, chg_pct, market, leverage, avg_price, _ua in watch_sorted
+                    for t, qty, name, price, chg_pct, market, leverage, avg_price in watch_sorted
                 )
             # pf_init: static(이름/레버리지/수량/평단/상태) + dynamic(가격/평가금액/손익) 모두 전송
             await session.send_custom_message("pf_init", {

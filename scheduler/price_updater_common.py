@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 import threading
-import time
 from datetime import datetime, date, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 
@@ -510,63 +509,13 @@ def get_upbit_crypto_price(ticker):
 
 
 # ---------------------------------------------------------------------------
-# 종목별 "마지막으로 실제 가격이 바뀐 시각" 인메모리 추적
-# (2026-08 추가 — 포트폴리오/계좌 화면의 "N초/분/시간/일 전" 표시용)
-#
-# Yahoo(10초)/Upbit(1초) 폴링은 가격이 안 바뀌어도 매 주기 update_price_cache()를
-# 호출한다. Redis에 "쓴 시각"을 그대로 저장하면 안 바뀐 값도 매번 방금 갱신된 것처럼
-# 보이므로, 이 프로세스 메모리에 종목별 마지막 가격을 들고 있다가 실제로 값이
-# 달라졌을 때만 시각을 갱신한다. Redis 재조회 없이 처리되어 고빈도 경로에 추가
-# Redis 호출이 발생하지 않는다.
-#
-# [알려진 한계] 이 프로세스(price_updater_ws.py)가 재시작되면 이 dict가 초기화되어,
-# 재시작 직후 모든 종목이 "방금 갱신됨"으로 리셋된다. price_updater.py --force(강제
-# 재조회)는 별도 프로세스이지만 사용 안 하는 기능으로 확인되어 동기화 문제 없음.
-#
-# [부동소수점 동등비교 회피 — 2026-08 코드리뷰 반영]
-# 가격 변경 감지(아래 price_key)와 갱신시각(changed_at)은 모두 이후
-# diff_display_split()에서 "==" 로 비교당하는 값들이므로, float 그대로 저장/비교하지
-# 않는다.
-#   - price_key: price를 정수로 스케일링(소수점 8자리까지, 크립토 저가코인 포함)해서
-#     정수끼리 비교. 부동소수점은 같은 값이어도 소스가 준 문자열 표현에 따라 다른
-#     비트로 파싱될 수 있어 "==" 비교가 항상 안전하다고 보장할 수 없다.
-#   - changed_at: time.time()의 소수점(밀리초 이하)을 버리고 초 단위 int로 저장.
-#     화면 표시 단위가 애초에 초(s) 이상이라 소수점 정보는 어차피 쓰이지 않으며,
-#     Redis(JSON) 왕복 후 diff_display_split이 정수끼리 비교하므로 오차 여지가 없다.
-# ---------------------------------------------------------------------------
-_PRICE_COMPARE_SCALE = 10 ** 8  # 소수점 8자리까지 정수로 스케일링 후 비교
-
-_last_known_price: dict = {}  # ticker -> price_key(int, 스케일링된 정수)
-_last_changed_at:  dict = {}  # ticker -> changed_at(int, unix epoch 초)
-_price_change_lock = threading.Lock()
-
-
-# ---------------------------------------------------------------------------
 # Redis 시세 업데이트
 # ---------------------------------------------------------------------------
 def update_price_cache(ticker, price, change_pct, data_time=None):
-    """
-    Redis write (휘발성 시세 데이터).
-
-    data_time(호출부가 넘기는 소스별 체결/조회 시각 — KR은 항상 None, Yahoo/Upbit는
-    실제 값)은 의도적으로 사용하지 않는다. "마지막 갱신 후 경과시간" 표시는
-    "실제 가격 값이 바뀐 시점" 기준으로 정의하기로 확정했고, 소스마다 의미가 다른
-    data_time 대신 이 프로세스가 관찰한 이전 값과의 비교로 changed_at을 직접 결정한다.
-    """
-    price = float(price)
-    price_key = round(price * _PRICE_COMPARE_SCALE)  # 정수 비교용 — float "==" 회피
-    now = round(time.time())  # 초 단위 int — 이후 diff 비교(==)에서 float 회피
-
-    with _price_change_lock:
-        prev_price_key = _last_known_price.get(ticker)
-        if prev_price_key is None or prev_price_key != price_key:
-            _last_changed_at[ticker] = now
-            _last_known_price[ticker] = price_key
-        changed_at = _last_changed_at[ticker]
-
+    # Redis write (휘발성 시세 데이터)
     try:
         from common.redis_store import write_price
-        write_price(ticker, price, float(change_pct), changed_at)
+        write_price(ticker, float(price), float(change_pct))
     except Exception as e:
         log.warning(f"[redis] write_price 실패 ({ticker}): {e}")
 

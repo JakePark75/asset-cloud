@@ -106,7 +106,7 @@ def calc_account_details(acc, db_rows, prices, usd_rate):
     """
     DB rows + Redis 시세로 포지션 계산.
     반환: (acc, positions, usd_rate)
-      positions: [(pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price, updated_at), ...]
+      positions: [(pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price), ...]
     """
     usd_rate_f  = float(usd_rate or 1.0)
     usd_markets = {m for m, v in get_market_map().items() if v.get("currency") == "USD"}
@@ -116,13 +116,12 @@ def calc_account_details(acc, db_rows, prices, usd_rate):
         p_data     = prices.get(ticker)
         price      = float(p_data["price"])      if p_data else 0.0
         change_pct = float(p_data["change_pct"]) if p_data else 0.0
-        updated_at = p_data.get("updated_at") if p_data else None
-        positions_raw.append((pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price, updated_at))
+        positions_raw.append((pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price))
 
     _MARKET_ORDER = {"KR": 0, "CRYPTO": 2}
 
     def _sort_key(row):
-        pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price, updated_at = row
+        pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price = row
         qty_f = float(qty or 0)
 
         if ticker == "KRW":

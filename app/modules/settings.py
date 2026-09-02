@@ -3,7 +3,7 @@ import subprocess
 
 from shiny import ui, module, reactive
 from app.db import get_db, get_market_currency, get_market_map
-from app.modules.components import fmt_change
+from app.modules.components import fmt_change, track_price_change
 from app.price_signal import price_signal, ticker_signal
 from scheduler.price_updater_common import get_market_status
 from app.utils.display_diff import diff_display_split
@@ -150,13 +150,14 @@ def _build_row_skeleton(ticker, name, market, leverage, ns_str):
     return f'<div class="st-item" data-ticker="{ticker}">{row_html}</div>'
 
 
-def _build_tick_values(ticker, name, market, leverage, price, change_pct, updated_at=None):
+def _build_tick_values(ticker, name, market, leverage, price, change_pct):
     """시세 갱신 시마다 전송하는 값 — static/dynamic 분리 구조."""
     tid      = _ticker_to_id(ticker)
     leverage = int(leverage) if leverage else 1
 
     currency = get_market_currency(market)
     price_str, chg_str, chg_css = fmt_change(price, change_pct, currency=currency)
+    changed_at = track_price_change(ticker, price_str)  # 화면 문자열 기준 갱신시각 판단
 
     status = get_market_status(market)
     dot_map = {
@@ -181,7 +182,7 @@ def _build_tick_values(ticker, name, market, leverage, price, change_pct, update
             "price":      price_str,
             "chg":        chg_str,
             "chg_css":    chg_css,
-            "updated_at": updated_at,  # raw epoch 그대로 — 포맷팅("Ns"/"Nm"/"Nh"/"Nd")은 클라이언트(JS)에서 처리
+            "updated_at": changed_at,  # raw epoch — 화면 문자열이 바뀐 시점에만 새 값
         },
     }
 
@@ -432,8 +433,7 @@ def settings_server(input, output, session, active_tab: reactive.value = None):
                 p_data     = prices.get(ticker)
                 price      = float(p_data["price"])      if p_data else 0.0
                 change_pct = float(p_data["change_pct"]) if p_data else 0.0
-                updated_at = p_data.get("updated_at") if p_data else None
-                result[ticker] = _build_tick_values(ticker, name, market, leverage, price, change_pct, updated_at)
+                result[ticker] = _build_tick_values(ticker, name, market, leverage, price, change_pct)
             return result
 
         if structure_changed:
