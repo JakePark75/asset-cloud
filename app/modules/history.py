@@ -19,15 +19,69 @@ from app.utils.display_diff import diff_display
 @module.ui
 def history_ui():
     return ui.div(
-        # 기간 버튼 (JS에서 직접 relayout, 서버 호출 없음)
+        # 기간 슬라이더 (JS에서 직접 relayout, 서버 호출 없음)
+        # 최소 1개월 ~ 데이터 전체범위 사이를 로그 스케일로 연속 조절.
+        # 로그 스케일을 쓰는 이유: 데이터가 수년치로 쌓이면 선형 스케일에서는
+        # "1개월~수개월" 같은 짧은 구간을 슬라이더로 정밀하게 고르기 어려워짐.
+        ui.tags.style("""
+        .period-slider-group   { padding: 2px 24px 12px; }
+        .period-slider-label-wrap { text-align:center; margin-bottom:4px; }
+        .period-slider-label   { font-size:12px; color:#aaaaaa; }
+
+        /* 이 블록 안의 값들만 조절하면 슬라이더 폭/크기를 바꿀 수 있습니다.
+           - .period-slider-group 의 padding 좌우값을 늘리면 슬라이더가
+             화면 좌우 끝에서 안쪽으로 들어옵니다 (폭이 줄어듦).
+           - 또는 아래 input.period-slider 의 width를 100% 대신
+             예: 80% 로 주고 margin: 0 auto 로 가운데 정렬해도 됩니다. */
+        input.period-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 32px;           /* 터치 인식 영역 (실제 트랙보다 훨씬 크게) */
+          background: transparent;
+          outline: none;
+          margin: 0;
+        }
+        /* 눈에 보이는 얇은 트랙은 pseudo-element로 별도 정의 */
+        input.period-slider::-webkit-slider-runnable-track {
+          height: 4px;
+          border-radius: 2px;
+          background: #333333;
+        }
+        input.period-slider::-moz-range-track {
+          height: 4px;
+          border-radius: 2px;
+          background: #333333;
+        }
+        input.period-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 22px; height: 22px;
+          margin-top: -9px;       /* 트랙(4px) 중앙에 손잡이(22px)를 맞춤 */
+          border-radius: 50%;
+          background: #00c073;
+          cursor: pointer;
+          border: 2px solid #0a0a0a;
+        }
+        input.period-slider::-moz-range-thumb {
+          width: 22px; height: 22px;
+          border-radius: 50%;
+          background: #00c073;
+          cursor: pointer;
+          border: 2px solid #0a0a0a;
+        }
+        """),
         ui.div(
-            ui.tags.button("1개월", class_="period-btn",
-                           onclick="setChartPeriod('1m', this)"),
-            ui.tags.button("3개월", class_="period-btn active",
-                           onclick="setChartPeriod('3m', this)"),
-            ui.tags.button("전체",  class_="period-btn",
-                           onclick="setChartPeriod('all', this)"),
-            class_="period-btn-group",
+            ui.div(
+                ui.tags.span("3개월", id="period-slider-label", class_="period-slider-label"),
+                class_="period-slider-label-wrap",
+            ),
+            ui.tags.input(
+                type="range", id="period-slider", min="0", max="1000", value="500",
+                class_="period-slider",
+                oninput="onPeriodSliderInput(this.value)",
+            ),
+            class_="period-slider-group",
         ),
 
         # 그래프 1: 총자산 추이
@@ -78,6 +132,12 @@ def history_ui():
           var _chartData = null;   // history_data 수신 시 저장
           var _pendingDraw = false; // 숨겨진 상태에서 데이터 수신 시 true
 
+          // 기간 슬라이더 상태 (drawCharts 시 데이터 범위로 갱신)
+          var SLIDER_STEPS      = 1000;  // 슬라이더 해상도 (드래그 부드러움)
+          var _periodMinDays    = 30;    // 최소 구간 = 1개월
+          var _periodDataMinMs  = null;  // 보유 데이터의 첫 날짜 (ms)
+          var _periodDataMaxMs  = null;  // 보유 데이터의 마지막 날짜 (ms)
+
           // ── 포맷 헬퍼 ────────────────────────────────────────────────────
           function fmtKrw(v) {
             var n = parseFloat(v) || 0;
@@ -105,45 +165,86 @@ def history_ui():
             return !!tab && getComputedStyle(tab).display !== 'none';
           }
 
-          // ── 기간 버튼 ────────────────────────────────────────────────────
-          window.setChartPeriod = function(period, el) {
-            document.querySelectorAll('.period-btn').forEach(function(b) {
-              b.classList.remove('active');
-            });
-            el.classList.add('active');
+          // ── 기간 슬라이더 ────────────────────────────────────────────────
+          // 슬라이더 값(0~SLIDER_STEPS)을 [최소구간(1개월) ~ 전체구간] 로그 스케일로 매핑.
+          // 로그 스케일이라 슬라이더 앞쪽(왼쪽)에서 1~수개월 단위를 세밀하게,
+          // 뒤쪽(오른쪽)에서 연 단위를 크게 조절하게 된다.
+          function periodDaysToLabel(days, totalDays) {
+            if (days >= totalDays - 0.5) return '전체';
+            var months = Math.round(days / 30.44);
+            if (months <= 1) return '1개월';
+            if (months < 12) return months + '개월';
+            var years     = Math.floor(months / 12);
+            var remMonths = months % 12;
+            return years + '년' + (remMonths > 0 ? ' ' + remMonths + '개월' : '');
+          }
 
+          function periodSliderValueToDays(sliderVal) {
+            if (_periodDataMinMs === null || _periodDataMaxMs === null) return null;
+            var totalDays = (_periodDataMaxMs - _periodDataMinMs) / 86400000;
+            var minDays   = Math.min(_periodMinDays, totalDays);
+            var maxDays   = totalDays;
+            if (maxDays <= minDays || maxDays <= 0) return maxDays;
+            var t = Math.max(0, Math.min(1, sliderVal / SLIDER_STEPS));
+            return minDays * Math.pow(maxDays / minDays, t);
+          }
+
+          function periodDaysToSliderValue(days) {
+            var totalDays = (_periodDataMaxMs - _periodDataMinMs) / 86400000;
+            var minDays   = Math.min(_periodMinDays, totalDays);
+            var maxDays   = totalDays;
+            if (maxDays <= minDays || maxDays <= 0) return SLIDER_STEPS;
+            var clamped = Math.max(minDays, Math.min(maxDays, days));
+            var t = Math.log(clamped / minDays) / Math.log(maxDays / minDays);
+            return Math.round(Math.max(0, Math.min(1, t)) * SLIDER_STEPS);
+          }
+
+          function applyPeriodDays(days) {
+            var totalDays = (_periodDataMaxMs - _periodDataMinMs) / 86400000;
+            var endMs     = _periodDataMaxMs;
+            var startMs   = endMs - days * 86400000;
+            if (startMs < _periodDataMinMs) startMs = _periodDataMinMs;
+
+            var label = document.getElementById('period-slider-label');
+            if (label) label.textContent = periodDaysToLabel(days, totalDays);
+
+            var startStr = new Date(startMs).toISOString().slice(0,10);
+            var endStr   = new Date(endMs).toISOString().slice(0,10);
             var charts = ['chart-asset', 'chart-twr'];
             charts.forEach(function(id) {
               var gd = document.getElementById(id);
               if (!gd || !gd.data) return;
-
-              var xs = gd.data[0].x;
-              if (!xs || xs.length === 0) return;
-              var first = xs[0];
-              var last  = xs[xs.length - 1];
-
-              var endDate   = new Date(last);
-              var startDate;
-              if (period === '1m') {
-                startDate = new Date(endDate);
-                startDate.setMonth(startDate.getMonth() - 1);
-                if (startDate < new Date(first)) startDate = new Date(first);
-              } else if (period === '3m') {
-                startDate = new Date(endDate);
-                startDate.setMonth(startDate.getMonth() - 3);
-                if (startDate < new Date(first)) startDate = new Date(first);
-              } else {
-                startDate = new Date(first);
-              }
-
-              Plotly.relayout(gd, {
-                'xaxis.range': [
-                  startDate.toISOString().slice(0,10),
-                  endDate.toISOString().slice(0,10),
-                ]
-              });
+              Plotly.relayout(gd, {'xaxis.range': [startStr, endStr]});
             });
+          }
+
+          // input 이벤트: 드래그하는 동안 실시간으로 계속 발생 (표준 동작).
+          // 두 차트를 매 프레임 relayout하므로, 저사양 환경에서 버벅이면
+          // 여기에 짧은 debounce(예: 30~50ms)를 추가로 넣을 수 있다.
+          window.onPeriodSliderInput = function(sliderVal) {
+            var days = periodSliderValueToDays(parseFloat(sliderVal));
+            if (days === null) return;
+            applyPeriodDays(days);
           };
+
+          // drawCharts()에서 새 데이터 수신 시 호출: 슬라이더의 min/max 기준(날짜 범위)을
+          // 갱신하고, 기존 기본값(3개월)에 해당하는 슬라이더 위치로 맞춘다.
+          function initPeriodSlider(dates) {
+            if (!dates || dates.length === 0) return;
+            _periodDataMinMs = new Date(dates[0]).getTime();
+            _periodDataMaxMs = new Date(dates[dates.length - 1]).getTime();
+
+            var slider = document.getElementById('period-slider');
+            if (!slider) return;
+
+            var totalDays   = (_periodDataMaxMs - _periodDataMinMs) / 86400000;
+            var defaultDays = Math.min(90, totalDays); // 기존 기본값(3개월)과 동일
+
+            slider.value = periodDaysToSliderValue(defaultDays);
+
+            var label = document.getElementById('period-slider-label');
+            if (label) label.textContent = periodDaysToLabel(defaultDays, totalDays);
+          }
 
           // ── 차트 공통 레이아웃 ───────────────────────────────────────────
           var BASE_LAYOUT = {
@@ -210,6 +311,8 @@ def history_ui():
             var asc = data.slice().reverse();
 
             var dates  = asc.map(function(r) { return r.dt; });
+            initPeriodSlider(dates);
+
             var assets = asc.map(function(r) { return parseFloat(r.ta) || 0; });
             var cflows = asc.map(function(r) { return parseFloat(r.cf) || 0; });
             var notes  = asc.map(function(r) { return r.cn || ''; });
