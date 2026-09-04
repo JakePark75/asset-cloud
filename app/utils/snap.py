@@ -16,7 +16,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))  # app/utils
 PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))  # 프로젝트 루트
 sys.path.append(PROJECT_ROOT)
 
-from app.db import get_db
+from app.db import CASH_KRW, CASH_USD, get_db
 from app.utils.metrics import calculate_exposure_and_ratios, to_f
 from common.kis_auth import get_kis_access_token, KISAuthError as KISTokenError
 
@@ -272,9 +272,9 @@ def fetch_snapshot(target_date: datetime.date, position_rows: list, token: str):
         qty = to_f(qty)
         market_str = market.upper() if market else "KR"
 
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             past_price = 1.0
-        elif ticker == "USD":
+        elif ticker == CASH_USD:
             past_price = usd_krw
         elif market_str == "KR":
             past_price = get_historical_kr_price(ticker, date_str, token)

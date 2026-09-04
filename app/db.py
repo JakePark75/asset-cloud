@@ -6,6 +6,36 @@ from contextlib import contextmanager
 
 CONFIG_PATH = Path(__file__).parent.parent / "scheduler" / "config.json"
 
+CASH_KEY_PREFIX = "__CASH_"
+CASH_KEY_SUFFIX = "__"
+
+
+def cash_key(currency: str) -> str:
+    """Return the internal position key for a cash currency."""
+    normalized = str(currency or "").strip().upper()
+    if not normalized or not normalized.isalpha():
+        raise ValueError(f"Invalid cash currency: {currency!r}")
+    return f"{CASH_KEY_PREFIX}{normalized}{CASH_KEY_SUFFIX}"
+
+
+def cash_currency(ticker: str) -> str | None:
+    """Return a cash key's currency; keep legacy KRW rows readable."""
+    value = str(ticker or "").strip().upper()
+    if value == "KRW":
+        return "KRW"
+    if value.startswith(CASH_KEY_PREFIX) and value.endswith(CASH_KEY_SUFFIX):
+        currency = value[len(CASH_KEY_PREFIX):-len(CASH_KEY_SUFFIX)]
+        return currency or None
+    return None
+
+
+def is_cash_ticker(ticker: str) -> bool:
+    return cash_currency(ticker) is not None
+
+
+CASH_KRW = cash_key("KRW")
+CASH_USD = cash_key("USD")
+
 def get_config():
     with open(CONFIG_PATH, encoding="utf-8") as f:
         return json.load(f)
@@ -163,6 +193,21 @@ def get_market_currency(market: str) -> str:
 def get_market_label(market: str) -> str:
     """마켓 코드 -> 표시 레이블. 정의 안 된 마켓은 마켓 코드 그대로 반환."""
     return get_market_map().get(market, {}).get("label", market)
+
+
+def get_cash_currencies() -> list[str]:
+    """Configured currencies available in the cash input UI."""
+    currencies = get_config().get("cash_currencies", ["KRW", "USD"])
+    return [str(currency).strip().upper() for currency in currencies if str(currency).strip()]
+
+
+def get_cash_fx_map() -> dict[str, str]:
+    """Configured currency -> KRW FX ticker map for future rate support."""
+    return {
+        str(currency).strip().upper(): str(ticker).strip()
+        for currency, ticker in get_config().get("cash_fx", {}).items()
+        if str(currency).strip() and str(ticker).strip()
+    }
 
 def is_us_market(market: str) -> bool:
     """USD 통화 마켓 여부."""

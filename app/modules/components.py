@@ -1,5 +1,6 @@
 from shiny import ui
 import time
+from app.db import CASH_KRW, CASH_USD
 
 
 # ── 갱신시각 추적 (화면 렌더링 시점 기준) ────────────────────────────────────
@@ -84,7 +85,7 @@ def _fmt_amount_short(amount: float) -> str:
 # portfolio, accounts 상세, 포트폴리오 드릴다운(계좌 행) 모두 동일한 HTML 구조를 사용.
 #
 # 파라미터:
-#   is_cash     : ticker in ('KRW','USD') 로 내부 판단
+#   is_cash     : ticker in ('KRW', CASH_USD) 로 내부 판단
 #   display_name: 행에 표시할 이름 (종목명 또는 계좌명)
 #   id_prefix   : DOM id 접두사. 예) "pf", "ac", "pfd"
 #   row_id      : DOM id 식별자. portfolio/드릴다운은 ticker_safe, accounts는 pos_id
@@ -104,7 +105,7 @@ def build_ticker_row_skeleton(
     onclick_attr: str = "",
     data_attrs: str = "",
 ) -> str:
-    is_cash  = ticker in ('KRW', 'USD')
+    is_cash  = ticker in (CASH_KRW, CASH_USD)
     leverage = int(leverage) if leverage else 1
 
     # 레버리지는 종목 수정 후에도 바뀔 수 있으므로 항상 렌더링해두고 표시 여부만 토글.
@@ -205,7 +206,7 @@ def build_ticker_row_values(
     qty_in_values: bool = True,  # portfolio: True, accounts/드릴다운: False(골격에 고정)
     is_watch_only: bool = False, # True: 보유 0, 감시계좌에만 존재하는 종목 (수량/평가금액 비표시)
 ) -> dict:
-    is_cash  = ticker in ('KRW', 'USD')
+    is_cash  = ticker in (CASH_KRW, CASH_USD)
     qty_f    = float(qty      or 0)
     price_f  = float(price    or 0)
     chg_f    = float(chg_pct  or 0)
@@ -216,7 +217,7 @@ def build_ticker_row_values(
 
     # ── amount_str: 현금은 원화환산 표기, 종목은 원화 평가금액 ──
     # 감시종목(is_watch_only)은 보유 자산이 아니므로 평가금액을 표시하지 않음
-    if ticker == 'USD':
+    if ticker == CASH_USD:
         # "₩1,234,567 ($1,234.56)" 형태로 원화+달러 통합 표시
         amount_str = f"{fmt_krw(amount)} ({fmt_usd(qty_f)})"
     elif is_watch_only:

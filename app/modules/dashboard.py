@@ -5,7 +5,7 @@ import math
 from zoneinfo import ZoneInfo
 from shiny import module, ui, render, reactive
 
-from app.db import get_db, get_market_currency
+from app.db import CASH_KRW, CASH_USD, get_db, get_market_currency
 from app.price_signal import price_signal as _price_signal, daily_insert_signal as _daily_insert_signal, position_signal as _position_signal, ticker_signal as _ticker_signal
 from app.utils.metrics import (
     to_f, calc_twr, calculate_xirr, calculate_monthly_irr, calculate_period_irr,
@@ -63,9 +63,9 @@ def _load_summary_data(rows, raw_rows) -> dict:
     # positions에 Redis 시세 매핑
     pos_rows = []
     for ticker, qty, leverage, market in raw_rows:
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             pos_rows.append((ticker, qty, 1.0, 1, market))
-        elif ticker == "USD":
+        elif ticker == CASH_USD:
             pos_rows.append((ticker, qty, usd_krw, 1, market))
         else:
             p_data = prices.get(ticker)
@@ -198,9 +198,9 @@ def _load_position_data(rows) -> list[dict]:
     for ticker, name, market, leverage, qty in rows:
         qty    = to_f(qty)
         market = (market or "").upper()
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             eval_krw = qty
-        elif ticker == "USD":
+        elif ticker == CASH_USD:
             eval_krw = qty * usd_krw
         else:
             p_data = prices.get(ticker)
@@ -337,9 +337,9 @@ def _build_donut_payload(positions: list[dict]) -> dict:
 
     # 현금(KRW+USD) 하나로 합산
     cash_eval = sum(
-        v["eval_krw"] for k, v in merged.items() if k in ("KRW", "USD")
+        v["eval_krw"] for k, v in merged.items() if k in (CASH_KRW, CASH_USD)
     )
-    items = [v for k, v in merged.items() if k not in ("KRW", "USD")]
+    items = [v for k, v in merged.items() if k not in (CASH_KRW, CASH_USD)]
     if cash_eval > 0:
         items.append({
             "ticker":   "CASH",

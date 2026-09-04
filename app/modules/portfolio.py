@@ -1,7 +1,7 @@
 from shiny import ui, reactive, module
 import subprocess
 import sys
-from app.db import get_db, get_usd_krw, get_config, get_market_currency
+from app.db import CASH_KRW, CASH_USD, get_db, get_usd_krw, get_config, get_market_currency
 from app.price_signal import price_signal, position_signal, ticker_signal
 from app.modules.components import (
     build_ticker_row_skeleton, build_ticker_row_values,
@@ -73,8 +73,8 @@ def _ticker_to_id(ticker: str) -> str:
 
 
 def _calc_amount(ticker, qty_f, price_f, market, usd_rate):
-    if ticker == "KRW":                        return qty_f
-    elif ticker == "USD":                      return qty_f * usd_rate
+    if ticker == CASH_KRW:                     return qty_f
+    elif ticker == CASH_USD:                    return qty_f * usd_rate
     elif get_market_currency(market) == "USD": return qty_f * price_f * usd_rate
     else:                                      return qty_f * price_f
 
@@ -91,7 +91,7 @@ def _sort_rows(rows, usd_rate):
     return sorted(
         rows,
         key=lambda r: (
-            1 if r[0] in ("KRW", "USD") else 0,
+            1 if r[0] in (CASH_KRW, CASH_USD) else 0,
             r[8] if r[8] is not None else _UNSET_SORT_ORDER,
             -_calc_amount(r[0], float(r[1] or 0), float(r[3] or 0), r[5], usd_rate)
         )
@@ -120,12 +120,12 @@ def _build_pf_row_skeleton(ticker, qty, name, market, leverage, avg_price=None):
     tid      = _ticker_to_id(ticker)
     qty_f    = float(qty or 0)
     leverage = int(leverage) if leverage else 1
-    is_cash  = ticker in ('KRW', 'USD')
+    is_cash  = ticker in (CASH_KRW, CASH_USD)
 
-    if ticker == 'KRW':
+    if ticker == CASH_KRW:
         display_name = "현금(KRW)"
         qty_fixed    = ""
-    elif ticker == 'USD':
+    elif ticker == CASH_USD:
         display_name = "현금(USD)"
         qty_fixed    = None  # 1행 구조 — 달러 잔액은 amount_str에 통합 표시
     else:
@@ -164,9 +164,9 @@ def _build_pf_tick_values(ticker, qty, name, price, chg_pct, market, leverage, u
 
     amount = _calc_amount(ticker, qty_f, price_f, market, usd_rate)
 
-    if ticker == 'KRW':
+    if ticker == CASH_KRW:
         display_name = "현금(KRW)"
-    elif ticker == 'USD':
+    elif ticker == CASH_USD:
         display_name = "현금(USD)"
     else:
         display_name = name or ticker
@@ -500,8 +500,8 @@ def portfolio_server(input, output, session, active_tab: reactive.value = None,
 
             # 정상 섹션 중 현금(KRW/USD)은 드래그 대상이 아니므로 별도 렌더링하여
             # SortableJS 컨테이너(#pf-ticker-list-normal) 밖, 감시종목 위에 고정 배치한다.
-            cash_rows   = [r for r in rows_sorted if r[0] in ("KRW", "USD")]
-            normal_rows = [r for r in rows_sorted if r[0] not in ("KRW", "USD")]
+            cash_rows   = [r for r in rows_sorted if r[0] in (CASH_KRW, CASH_USD)]
+            normal_rows = [r for r in rows_sorted if r[0] not in (CASH_KRW, CASH_USD)]
 
             normal_html = "".join(
                 _build_pf_row_skeleton(t, qty, name, market, leverage, avg_price)

@@ -2,7 +2,7 @@ import datetime
 from decimal import Decimal
 import numpy as np
 import scipy.optimize as optimize
-from app.db import get_market_currency
+from app.db import CASH_KRW, CASH_USD, get_market_currency
 
 def to_f(val) -> float:
     if val is None: return 0.0
@@ -45,7 +45,7 @@ def calculate_exposure_and_ratios(db_rows: list[tuple], usd_krw: float) -> dict:
         leverage = int(leverage) if leverage else 1
         market = market if market else ""
 
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             eval_krw = qty
         elif get_market_currency(market) == "USD":
             eval_krw = qty * price * usd_krw
@@ -53,7 +53,7 @@ def calculate_exposure_and_ratios(db_rows: list[tuple], usd_krw: float) -> dict:
             eval_krw = qty * price
 
         # 익스포저 제외 자산 분류
-        if ticker in ("KRW", "USD"):
+        if ticker in (CASH_KRW, CASH_USD):
             cash_eval += eval_krw
         else:
             stock_eval += eval_krw

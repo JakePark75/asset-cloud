@@ -18,7 +18,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-from app.db import get_db, is_us_market
+from app.db import CASH_KRW, CASH_USD, get_db, is_us_market
 from common.redis_store import get_all_prices, get_redis
 from app.modules.history_DAL import load_history, load_today_row
 
@@ -93,9 +93,9 @@ def _auto_width(ws, min_w=8, max_w=28):
 
 
 def _eval_krw(ticker: str, qty_f: float, price: float, market: str, usd_krw: float) -> float:
-    if ticker == "KRW":
+    if ticker == CASH_KRW:
         return qty_f
-    if ticker == "USD":
+    if ticker == CASH_USD:
         return qty_f * usd_krw
     if is_us_market(market):
         return qty_f * price * usd_krw
@@ -158,10 +158,10 @@ def _build_sheet1(wb, prices: dict, usd_krw: float, now_str: str):
                 qty_f = float(qty or 0)
                 avg_f = float(avg_price) if avg_price is not None else None
 
-                if ticker == "KRW":
+                if ticker == CASH_KRW:
                     price, tname, display_market, display_lev = 1.0, "원화 현금", "-", "-"
                     pnl, pnl_frac = None, None
-                elif ticker == "USD":
+                elif ticker == CASH_USD:
                     price, tname, display_market, display_lev = usd_krw, "달러 현금", "-", "-"
                     pnl, pnl_frac = None, None
                 else:
@@ -245,9 +245,9 @@ def _build_sheet2(wb, prices: dict, usd_krw: float, now_str: str):
     total_eval = 0.0
     for ticker, tname, market, leverage, qty, avg_price in rows:
         qty_f = float(qty or 0)
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             e = qty_f
-        elif ticker == "USD":
+        elif ticker == CASH_USD:
             e = qty_f * usd_krw
         else:
             p_data = prices.get(ticker)
@@ -262,10 +262,10 @@ def _build_sheet2(wb, prices: dict, usd_krw: float, now_str: str):
         eval_krw = eval_list[i]
         weight_frac = round(eval_krw / total_eval, 4) if total_eval > 0 else 0.0
 
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             price, tname, display_market, display_lev = 1.0, "원화 현금", "-", "-"
             pnl, pnl_frac = None, None
-        elif ticker == "USD":
+        elif ticker == CASH_USD:
             price, tname, display_market, display_lev = usd_krw, "달러 현금", "-", "-"
             pnl, pnl_frac = None, None
         else:

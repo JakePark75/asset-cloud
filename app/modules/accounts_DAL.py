@@ -1,4 +1,7 @@
-from app.db import get_db, get_usd_krw, get_market_map, get_market_currency
+from app.db import (
+    CASH_KRW, CASH_USD, cash_key, get_cash_currencies, get_db,
+    get_usd_krw, get_market_map, get_market_currency,
+)
 
 
 # ── DAL ───────────────────────────────────────────────────────────────────────
@@ -54,10 +57,10 @@ def calc_accounts_summary(db_accounts, prices, usd_rate):
             p_data = prices.get(ticker)
             price  = float(p_data["price"]) if p_data else 0.0
 
-            if ticker == "KRW":
+            if ticker == CASH_KRW:
                 amount = qty_f
                 cash  += amount
-            elif ticker == "USD":
+            elif ticker == CASH_USD:
                 amount = qty_f * usd_rate_f
                 cash  += amount
             elif market in usd_markets:
@@ -124,9 +127,9 @@ def calc_account_details(acc, db_rows, prices, usd_rate):
         pos_id, ticker, qty, name, price, change_pct, market, leverage, avg_price = row
         qty_f = float(qty or 0)
 
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             amount = qty_f
-        elif ticker == "USD":
+        elif ticker == CASH_USD:
             amount = qty_f * usd_rate_f
         elif market in usd_markets:
             amount = qty_f * price * usd_rate_f
@@ -139,7 +142,7 @@ def calc_account_details(acc, db_rows, prices, usd_rate):
             market_order = _MARKET_ORDER.get(market, 3)
 
         return (
-            1 if ticker in ("KRW", "USD") else 0,
+            1 if ticker in (CASH_KRW, CASH_USD) else 0,
             market_order,
             -(leverage or 1),
             -amount,
@@ -188,7 +191,7 @@ def execute_buy(pos_id: int, qty_delta: float, trade_price: float, usd_markets: 
             (new_qty, new_avg, pos_id)
         )
 
-        cash_ticker  = "USD" if market in usd_markets else "KRW"
+        cash_ticker  = CASH_USD if market in usd_markets else CASH_KRW
         trade_amount = qty_delta * trade_price
 
         cur.execute("""
@@ -236,7 +239,7 @@ def execute_sell(pos_id: int, qty_delta: float, trade_price: float, usd_markets:
             (new_qty, pos_id)
         )
 
-        cash_ticker  = "USD" if market in usd_markets else "KRW"
+        cash_ticker  = CASH_USD if market in usd_markets else CASH_KRW
         trade_amount = qty_delta * trade_price
 
         cur.execute("""
@@ -303,6 +306,7 @@ def search_tickers_by_name(name_query: str, exclude_account_id: int, limit: int 
         .replace("_", "\\_")
     )
     pattern = f"%{escaped}%"
+    cash_tickers = [cash_key(currency) for currency in get_cash_currencies()]
 
     with get_db() as conn:
         cur = conn.cursor()
@@ -310,12 +314,13 @@ def search_tickers_by_name(name_query: str, exclude_account_id: int, limit: int 
             SELECT ticker, name, market, leverage
             FROM tickers
             WHERE name ILIKE %s ESCAPE '\\'
+                            AND ticker <> ALL(%s)
               AND ticker NOT IN (
                   SELECT ticker FROM positions WHERE account_id = %s
               )
             ORDER BY name
             LIMIT %s
-        """, (pattern, exclude_account_id, limit))
+                """, (pattern, cash_tickers, exclude_account_id, limit))
         rows = cur.fetchall()
         cur.close()
 
@@ -348,7 +353,7 @@ def add_position(account_id: int, ticker: str, name: str, market: str,
 
         # 매수금액만큼 현금 차감 (avg_price가 주어진 경우 = 매수로 취급, execute_buy와 동일 패턴)
         if avg_price is not None:
-            cash_ticker  = "USD" if get_market_currency(market) == "USD" else "KRW"
+            cash_ticker  = cash_key(get_market_currency(market))
             trade_amount = qty * avg_price
             cur.execute("""
                 UPDATE positions SET quantity = quantity - %s
@@ -411,22 +416,24 @@ def delete_position(pos_id: int) -> bool:
 # ── 현금 CRUD ─────────────────────────────────────────────────────────────────
 
 def add_cash(account_id: int, cash_type: str, amount: float):
+    cash_ticker = cash_key(cash_type)
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO positions (account_id, ticker, quantity) VALUES (%s, %s, %s)",
-            (account_id, cash_type, amount)
+            (account_id, cash_ticker, amount)
         )
         conn.commit()
         cur.close()
 
 
 def edit_cash(pos_id: int, cash_type: str, amount: float):
+    cash_ticker = cash_key(cash_type)
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
             "UPDATE positions SET ticker = %s, quantity = %s WHERE id = %s",
-            (cash_type, amount, pos_id)
+            (cash_ticker, amount, pos_id)
         )
         conn.commit()
         cur.close()

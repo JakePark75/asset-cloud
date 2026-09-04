@@ -1,4 +1,4 @@
-from app.db import get_market_currency
+from app.db import CASH_KRW, CASH_USD, cash_currency, get_market_currency
 from app.modules.components import (
     fmt_krw, fmt_usd, fmt_pct, fmt_pnl, fmt_change,
     build_ticker_row_skeleton, build_ticker_row_values,
@@ -70,18 +70,18 @@ def _build_position_row_skeleton(pos, ns_str):
     pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price = pos
     qty_f    = float(qty or 0)
     leverage = int(leverage) if leverage else 1
-    is_cash  = ticker in ('KRW', 'USD')
+    is_cash  = ticker in (CASH_KRW, CASH_USD)
 
-    if ticker == 'KRW':
+    if ticker == CASH_KRW:
         display_name = "현금(KRW)"
         qty_fixed    = ""          # 수량 영역 없음
         onclick_attr = "event.stopPropagation(); acOpenEditCashModal(this);"
-        data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
-    elif ticker == 'USD':
+        data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{cash_currency(ticker)}" data-amount="{qty_f}"'
+    elif ticker == CASH_USD:
         display_name = "현금(USD)"
         qty_fixed    = fmt_usd(qty_f)
         onclick_attr = "event.stopPropagation(); acOpenEditCashModal(this);"
-        data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{ticker}" data-amount="{qty_f}"'
+        data_attrs   = f'data-pos-id="{pos_id}" data-ticker="{cash_currency(ticker)}" data-amount="{qty_f}"'
     else:
         display_name  = tname or ticker
         qty_fixed     = None  # span으로 비워둠 — tick에서 채움(매수/매도 직후 즉시 반영)
@@ -114,13 +114,13 @@ def _build_position_row_values(pos, usd_rate):
     pos_id, ticker, qty, tname, price, chg_pct, t_market, leverage, avg_price = pos
     qty_f   = float(qty   or 0)
     price_f = float(price or 0)
-    is_cash = ticker in ('KRW', 'USD')
+    is_cash = ticker in (CASH_KRW, CASH_USD)
 
     # 평가액 계산 + 표시명 (호출자 책임 분기 — skeleton과 동일 기준)
-    if ticker == 'KRW':
+    if ticker == CASH_KRW:
         amount       = qty_f
         display_name = "현금(KRW)"
-    elif ticker == 'USD':
+    elif ticker == CASH_USD:
         amount       = qty_f * usd_rate
         display_name = "현금(USD)"
     else:

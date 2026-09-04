@@ -1,6 +1,6 @@
 from shiny import module, ui, reactive
 
-from app.db import get_db
+from app.db import CASH_KRW, CASH_USD, get_db
 from app.price_signal import (
     price_signal as _price_signal,
     daily_insert_signal as _daily_insert_signal,
@@ -356,9 +356,9 @@ def asset_server(input, output, session, active_tab: reactive.value = None):
         raw_rows = _db_position_rows()
         pos_rows = []
         for ticker, qty, leverage, market in raw_rows:
-            if ticker == "KRW":
+            if ticker == CASH_KRW:
                 pos_rows.append((ticker, qty, 1.0, 1, market))
-            elif ticker == "USD":
+            elif ticker == CASH_USD:
                 pos_rows.append((ticker, qty, usd_krw, 1, market))
             else:
                 p_data = prices.get(ticker)

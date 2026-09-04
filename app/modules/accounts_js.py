@@ -684,6 +684,7 @@ def accounts_js(market_currency_map_js: str) -> str:
 
     var market  = marketEl  ? marketEl.value  : '';
     var cur     = _marketCurrencyMap[market] || 'KRW';
+    var ticker  = tickerEl ? tickerEl.value.trim().toUpperCase() : '';
     var qty     = parseFloat(qtyEl  ? qtyEl.value  : 0) || 0;
     var avg     = parseFloat(avgEl  ? avgEl.value  : 0) || 0;
     var cost    = qty * avg;
@@ -699,7 +700,7 @@ def accounts_js(market_currency_map_js: str) -> str:
 
     Shiny.setInputValue(window._acNs + '-btn_confirm_add_position', {
       name:     nameEl     ? nameEl.value     : '',
-      ticker:   tickerEl   ? tickerEl.value   : '',
+      ticker:   ticker,
       market:   market,
       leverage: leverageEl ? leverageEl.value : '1',
       qty:      qty,

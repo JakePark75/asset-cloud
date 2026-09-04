@@ -4,7 +4,16 @@ accounts_modals.py
 모달은 accounts.py UI 내에 정적 DOM으로 상주하며 JS로만 show/hide.
 """
 from shiny import ui
-from app.db import get_market_label, get_market_map
+from app.db import get_cash_currencies, get_market_label, get_market_map
+
+
+def _cash_options() -> ui.Tag:
+    labels = {"KRW": "KRW (원화)", "USD": "USD (달러)"}
+    html = "".join(
+        f'<option value="{currency}">{labels.get(currency, currency)}</option>'
+        for currency in get_cash_currencies()
+    )
+    return ui.HTML(html)
 
 
 def modal_edit_position_html(market_options: str) -> ui.Tag:
@@ -538,8 +547,7 @@ def modal_add_cash_html() -> ui.Tag:
             ),
             ui.div(ui.tags.label("통화"),
                    ui.tags.select(
-                       ui.tags.option("KRW (원화)", value="KRW"),
-                       ui.tags.option("USD (달러)", value="USD"),
+                       _cash_options(),
                        id="ac-new-cash-type", class_="form-control",
                    )),
             ui.div(ui.tags.label("금액"),
@@ -579,8 +587,7 @@ def modal_edit_cash_html() -> ui.Tag:
             ),
             ui.div(ui.tags.label("통화"),
                    ui.tags.select(
-                       ui.tags.option("KRW (원화)", value="KRW"),
-                       ui.tags.option("USD (달러)", value="USD"),
+                       _cash_options(),
                        id="ac-edit-cash-type", class_="form-control",
                    )),
             ui.div(ui.tags.label("금액"),

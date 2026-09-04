@@ -22,7 +22,7 @@ from common.kis_auth import get_kis_access_token
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from app.db import get_db, get_config, get_market_currency
+from app.db import CASH_KRW, CASH_USD, get_db, get_config, get_market_currency
 from app.utils.metrics import calc_twr
 from app.utils.metrics import calculate_exposure_and_ratios, to_f
 
@@ -354,9 +354,9 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
     for ticker, qty, leverage, market, account_id, is_watch in position_rows:
         market_str = (market or "KR").upper()
 
-        if ticker == "KRW":
+        if ticker == CASH_KRW:
             price = 1.0
-        elif ticker == "USD":
+        elif ticker == CASH_USD:
             price = usd_krw
         elif market_str == "KR":
             price = _get_kr_price(ticker, date_str, token)
@@ -381,15 +381,15 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
     print(f"💱 환율 (USD/KRW): {usd_krw:,.2f}")
     print(f"{'─'*55}")
 
-    cash_krw = sum(to_f(qty) for ticker, qty, price, lev, mkt in db_rows if ticker == "KRW")
-    cash_usd = sum(to_f(qty) for ticker, qty, price, lev, mkt in db_rows if ticker == "USD")
+    cash_krw = sum(to_f(qty) for ticker, qty, price, lev, mkt in db_rows if ticker == CASH_KRW)
+    cash_usd = sum(to_f(qty) for ticker, qty, price, lev, mkt in db_rows if ticker == CASH_USD)
     print(f"💵 현금 KRW      : {cash_krw:>20,.0f} 원")
     print(f"💵 현금 USD      : {cash_usd:>20,.2f} USD  ({cash_usd * usd_krw:>15,.0f} 원)")
     print(f"{'─'*55}")
     print(f"{'종목':<10} {'수량':>12} {'종가':>14} {'평가액(원)':>18}")
     print(f"{'─'*55}")
     for ticker, qty, price, lev, mkt in db_rows:
-        if ticker in ("KRW", "USD"):
+        if ticker in (CASH_KRW, CASH_USD):
             continue
         qty_f = to_f(qty)
         price_f = to_f(price)
@@ -422,7 +422,7 @@ def get_daily_snapshot(target_date: datetime.date, calc_account_totals: bool = F
                 mkt_str = (mkt or "").upper()
                 if t == "KRW":
                     acc_total += qty_f
-                elif t == "USD":
+                elif t == CASH_USD:
                     acc_total += qty_f * usd_krw
                 elif get_market_currency(mkt_str) == "USD":
                     acc_total += qty_f * price_f * usd_krw
