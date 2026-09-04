@@ -398,13 +398,8 @@ def recalc_today_row() -> None:
         # 6. 시세 매핑 (Redis prices 우선, 없으면 0)
         db_rows = []
         for ticker, qty, leverage, market in position_rows:
-            if ticker == "KRW":
-                price = 1.0
-            elif ticker == "USD":
-                price = usd_krw
-            else:
-                p_data = prices.get(ticker)
-                price = float(p_data["price"]) if p_data else 0.0
+            p_data = prices.get(ticker)
+            price = float(p_data["price"]) if p_data else 0.0
             db_rows.append((ticker, qty, price, leverage, market))
 
         # 7. 비중 계산

@@ -47,6 +47,8 @@ def calculate_exposure_and_ratios(db_rows: list[tuple], usd_krw: float) -> dict:
 
         if ticker == CASH_KRW:
             eval_krw = qty
+        elif ticker == CASH_USD:
+            eval_krw = qty * usd_krw
         elif get_market_currency(market) == "USD":
             eval_krw = qty * price * usd_krw
         else:

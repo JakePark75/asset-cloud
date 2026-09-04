@@ -85,7 +85,7 @@ def _fmt_amount_short(amount: float) -> str:
 # portfolio, accounts 상세, 포트폴리오 드릴다운(계좌 행) 모두 동일한 HTML 구조를 사용.
 #
 # 파라미터:
-#   is_cash     : ticker in ('KRW', CASH_USD) 로 내부 판단
+#   is_cash     : ticker in (CASH_KRW, CASH_USD) 로 내부 판단
 #   display_name: 행에 표시할 이름 (종목명 또는 계좌명)
 #   id_prefix   : DOM id 접두사. 예) "pf", "ac", "pfd"
 #   row_id      : DOM id 식별자. portfolio/드릴다운은 ticker_safe, accounts는 pos_id
