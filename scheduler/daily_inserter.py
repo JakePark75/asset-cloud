@@ -5,8 +5,9 @@ daily_summary 테이블에 UPSERT한다.
 
 동작 방식 (체크포인트 기반 재설계):
     1. 서비스 시작 시 backfill_checkpoint.last_success_date 조회
-       - checkpoint+1 ~ 어제 범위에서 diff로 구멍을 찾아 즉시 보정
-    2. 보정 완료 후 다음 daily_insert_time 까지 타이머 등록
+       - 오늘 daily_insert_time 전이면 보정하지 않고 정규 시각까지 대기
+       - 정규 시각 이후 시작한 경우에만 checkpoint+1 ~ 어제 범위를 보정
+    2. 보정 완료(또는 대기) 후 다음 daily_insert_time 까지 타이머 등록
     3. 타이머 도달 시 (매일 1회) 시장 상태 확인
        - closed/after: checkpoint+1 ~ 어제 범위 diff 스캔 + 필요시 보정
          (이 스캔이 서비스 재시작 없이도 과거 구멍을 계속 재확인하는 유일한 경로)
@@ -409,6 +410,16 @@ def _schedule_next() -> None:
 
     threading.Timer(delay, _on_trigger).start()
 
+
+def _daily_trigger_due(now_kst: datetime.datetime | None = None) -> bool:
+    """오늘 정규 실행 시각이 지났는지 반환한다."""
+    config = get_config()
+    raw = config.get("daily_insert_time", "07:30")
+    hour, minute = map(int, raw.split(":"))
+    now = now_kst or datetime.datetime.now(KST)
+    trigger = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return now >= trigger
+
 # ---------------------------------------------------------------------------
 # 갱신 신호 발행 (Redis pub/sub)
 # ---------------------------------------------------------------------------
@@ -518,10 +529,14 @@ def main():
         last_date = None
 
     if last_date is not None:
-        if last_date < yesterday:
+        if last_date < yesterday and _daily_trigger_due(now_kst):
             # _run_daily_cycle()은 실패해도 예외를 삼키고 자체적으로 재시도를 걸기 때문에
             # 아래 _schedule_next()는 성패와 무관하게 항상 도달한다.
             _run_daily_cycle(last_date + datetime.timedelta(days=1), yesterday)
+        elif last_date < yesterday:
+            print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
+                  f"⏳ 정규 실행 시각 전 → 누락 보정을 {get_config().get('daily_insert_time', '07:30')}에 실행합니다",
+                  flush=True)
         else:
             print(f"[{now_kst.strftime('%Y-%m-%d %H:%M:%S')} KST] "
                   f"✅ 누락 없음 (체크포인트: {last_date})", flush=True)
