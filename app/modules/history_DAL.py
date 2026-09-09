@@ -207,6 +207,42 @@ def calc_ndx_pct(rows):
     return [(float(r[3] or 0) / base - 1) * 100 for r in rows]
 
 
+def get_history_cache_meta() -> dict:
+    """
+    history_cache_meta(id=1) 단일 행 조회.
+    행이 없으면 (한 번도 과거 cash_flow 수정이 없었던 상태) version=0으로 취급한다.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT version FROM history_cache_meta WHERE id = 1")
+        row = cur.fetchone()
+        cur.close()
+    return {"version": row[0] if row else 0}
+
+
+def get_patch_start_date(client_version: int, server_version: int):
+    """
+    client_version 이후 ~ server_version까지 발생한 수정 이벤트 중
+    가장 이른 edit_date를 반환한다. 해당 구간에 수정 이벤트가 없으면 None.
+
+    client_version >= server_version인 경우 조회할 필요가 없으므로 즉시 None.
+    client_version > server_version(비정상/롤백 상태)에 대한 mode=full 강제 판단은
+    이 함수의 책임이 아니라 호출부(history.py의 mode 판단 로직)의 책임이다.
+    """
+    if client_version >= server_version:
+        return None
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT MIN(edit_date)
+            FROM history_cache_edits
+            WHERE version > %s AND version <= %s
+        """, (client_version, server_version))
+        row = cur.fetchone()
+        cur.close()
+    return row[0] if row else None
+
+
 def save_cash_flow(date_str: str, cash_flow: int, note: str):
     with get_db() as conn:
         cur = conn.cursor()
@@ -249,6 +285,26 @@ def save_cash_flow(date_str: str, cash_flow: int, note: str):
             cur.execute("""
                 UPDATE daily_summary SET twr_asset = %s WHERE date = %s
             """, (twr, d))
+
+        # ── 히스토리 캐시 버전 갱신 (브라우저 IndexedDB 캐시 무효화 신호) ──
+        # 위 twr_asset UPDATE들과 같은 트랜잭션 안에서 커밋되므로,
+        # "데이터는 바뀌었는데 버전은 안 올라갔다"는 불일치가 구조적으로 불가능하다.
+        # RETURNING으로 받은 새 version을 그대로 history_cache_edits에 넣어
+        # "version 증가와 edit 기록은 항상 1:1로 같이 커밋된다"는 불변식을 보장한다.
+        cur.execute("""
+            INSERT INTO history_cache_meta (id, version, updated_at)
+            VALUES (1, 1, now())
+            ON CONFLICT (id) DO UPDATE SET
+                version = history_cache_meta.version + 1,
+                updated_at = now()
+            RETURNING version
+        """)
+        new_version = cur.fetchone()[0]
+
+        cur.execute("""
+            INSERT INTO history_cache_edits (version, edit_date, created_at)
+            VALUES (%s, %s, now())
+        """, (new_version, date_str))
 
         conn.commit()
         cur.close()

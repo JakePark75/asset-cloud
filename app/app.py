@@ -29,6 +29,29 @@ app_ui = ui.page_fluid(
         window.registerStateRestore = function(name, saveFn, restoreFn) {
             window._restoreRegistry.push({ name: name, save: saveFn, restore: restoreFn });
         };
+
+        // ── 서버 세션 준비 여부 전역 플래그 ──────────────────────────────
+        // 서버(py-shiny)는 클라이언트의 update 메시지(Shiny.setInputValue)에
+        // verify_state(ConnectionState.Running)을 요구한다. 서버가 Running으로
+        // 전환되는 시점은 init 메시지 처리 중 app.server(...) 실행이 끝난
+        // 직후이며, 그 결과로 서버가 보내는 config 메시지를 클라이언트가
+        // 수신해야 shiny:sessioninitialized가 발생한다 (shiny.js 6948~6956행,
+        // py-shiny 1.6.2 기준 확인).
+        //
+        // 반면 shiny:connected는 WebSocket이 open되는 즉시(서버가 아직
+        // ConnectionState.Start일 때) 발생하는 이벤트이며, 이 시점에
+        // setInputValue를 보내면 서버가 아직 init을 처리 중이라
+        // ProtocolError(verify_state 실패)를 유발할 수 있다
+        // (_session.py 820~874행 기준 확인, 2026-09-09).
+        //
+        // 따라서 "서버가 update 메시지를 받을 준비가 됐는가"의 신뢰 가능한
+        // 신호는 shiny:sessioninitialized이며, 이 플래그를 각 모듈이
+        // 공유하는 유일한 판단 기준으로 삼는다. 모듈 스크립트보다 먼저
+        // 등록되어야 하므로 이 자리에 둔다.
+        window.__shinyConnected = false;
+        $(document).on('shiny:sessioninitialized', function() {
+            window.__shinyConnected = true;
+        });
     """),
 
     # 로그인 화면

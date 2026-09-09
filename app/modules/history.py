@@ -10,8 +10,54 @@ def _today_kst() -> datetime.date:
 
 from app.price_signal import price_signal, daily_insert_signal, position_signal
 from app.db import get_db
-from .history_DAL import load_history, load_today_row, save_cash_flow, build_today_row, build_history_rows
+from .history_DAL import (
+    load_history, load_today_row, save_cash_flow, build_today_row, build_history_rows,
+    get_history_cache_meta, get_patch_start_date,
+)
 from app.utils.display_diff import diff_display
+
+
+# ── History Cache 순수 함수 (2/3단계) ───────────────────────────────────────
+# DB/Redis 접근 없음. 유닛 테스트 가능한 순수 함수로만 구성.
+# 아직 어떤 input/effect에도 연결하지 않음 (계획서 4단계 이후에 배관 연결).
+
+def decide_sync_mode(client_version: int, client_last_date, server_version: int, patch_start) -> dict:
+    """
+    브라우저가 보낸 캐시 상태(client_version, client_last_date)와
+    서버 상태(server_version, patch_start)를 비교해 동기화 모드를 결정한다.
+
+    반환: {"mode": "full"|"append"|"patch"|"none", "since": date|None}
+
+    - client_version == 0             -> full (캐시 없음, 최초 방문)
+    - client_version > server_version -> full (비정상/롤백 상태 방어)
+    - patch_start is not None         -> patch, since=patch_start
+    - 그 외                           -> append, since=client_last_date
+      (실제로 신규 확정일이 있는지는 이 함수가 판단하지 않는다.
+       호출부가 서버의 최신 확정일과 client_last_date를 비교해
+       append를 그대로 쓸지 none으로 낮출지 결정한다.)
+    """
+    if client_version == 0:
+        return {"mode": "full", "since": None}
+    if client_version > server_version:
+        return {"mode": "full", "since": None}
+    if patch_start is not None:
+        return {"mode": "patch", "since": patch_start}
+    return {"mode": "append", "since": client_last_date}
+
+
+def find_predecessor(all_rows: list, since_date):
+    """
+    all_rows(날짜 오름차순 ASC)에서 date < since_date인 마지막 row를 반환.
+    없으면 None. _db_rows()가 반환하는 것과 같은 형태(튜플 리스트)를 그대로 받는다.
+    DB 재조회 없이 in-memory 슬라이싱만 수행.
+    """
+    predecessor = None
+    for row in all_rows:
+        if row[0] < since_date:
+            predecessor = row
+        else:
+            break
+    return predecessor
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -128,9 +174,162 @@ def history_ui():
         (function() {
 
           // ── 상태 ─────────────────────────────────────────────────────────
-          var _allRows   = [];
-          var _chartData = null;   // history_data 수신 시 저장
           var _pendingDraw = false; // 숨겨진 상태에서 데이터 수신 시 true
+
+          // _todayRow: 확정 rows(_cachedConfirmedRows)와 분리된 "오늘 row" 상태(A1 설계).
+          // 세션 연결 시 서버가 보내는 첫 today_row_update로 채워지고, 이후
+          // 계속 갱신됨. IndexedDB(daily_rows)에는 넣지 않음(today는 확정 row가 아님).
+          var _todayRow = null;
+
+          // _cachedConfirmedRows: IndexedDB의 daily_rows를 메모리에 올린 배열(오름차순, dt ASC).
+          // null = 아직 IndexedDB에서 초기 로드가 끝나지 않음(구분 필요, []는 "로드했는데 비어있음").
+          var _cachedConfirmedRows = null;
+
+          // history_cache_response가 초기 로드 완료 전에 먼저 도착하는 레이스 대비.
+          var _pendingCacheResponse = null;
+
+          // 서버 history_cache_meta.version과 동일한 값(디버그 노출용으로만 사용).
+          var _cacheVersion = undefined;
+
+          // ── History Cache: 디버그용 상태 노출 ───────────────────────────────
+          window.__histCacheDebug = function() {
+            return {
+              todayRow:        _todayRow,
+              confirmedLoaded: _cachedConfirmedRows !== null,
+              confirmedCount:  (_cachedConfirmedRows || []).length,
+              confirmedFirst:  (_cachedConfirmedRows && _cachedConfirmedRows[0]) || null,
+              confirmedLast:   (_cachedConfirmedRows && _cachedConfirmedRows[_cachedConfirmedRows.length - 1]) || null,
+              cacheVersion:    _cacheVersion,
+            };
+          };
+
+          // ── History Cache: IndexedDB 골격 (4단계) ─────────────────────────
+          // 아직 서버와 통신하지 않음. DB만 열어두고, 콘솔 디버깅용으로
+          // window.__histDB에 노출한다 (최종 단계에서 제거 여부 재검토).
+          // 오브젝트 스토어:
+          //   daily_rows (keyPath: dt)  - 확정된 날짜별 row
+          //   meta       (keyPath: k)   - 캐시 메타 정보 (예: {k:'version', v:14})
+          (function initHistDB() {
+            if (!window.indexedDB) {
+              console.warn('[HIST-CACHE] no_indexeddb_support');
+              return;
+            }
+            var req = window.indexedDB.open('asset_history', 1);
+
+            req.onupgradeneeded = function(event) {
+              var db = event.target.result;
+              if (!db.objectStoreNames.contains('daily_rows')) {
+                db.createObjectStore('daily_rows', {keyPath: 'dt'});
+              }
+              if (!db.objectStoreNames.contains('meta')) {
+                db.createObjectStore('meta', {keyPath: 'k'});
+              }
+            };
+
+            // ── History Cache: IndexedDB 상태 읽기 (5단계) ──────────────────
+            // meta 스토어의 {k:'version', v:N} 레코드와 daily_rows의 마지막
+            // (prev 방향 커서) 날짜를 함께 읽어 콜백으로 전달. 하나의 readonly
+            // 트랜잭션 안에서 두 스토어를 같이 읽고 tx.oncomplete에서 취합한다.
+            function readHistCacheState(db, callback) {
+              var tx = db.transaction(['meta', 'daily_rows'], 'readonly');
+              var metaStore = tx.objectStore('meta');
+              var rowsStore = tx.objectStore('daily_rows');
+
+              var version  = 0;
+              var lastDate = null;
+
+              var metaReq = metaStore.get('version');
+              metaReq.onsuccess = function() {
+                if (metaReq.result) version = metaReq.result.v;
+              };
+
+              var cursorReq = rowsStore.openCursor(null, 'prev');
+              cursorReq.onsuccess = function(event) {
+                var cursor = event.target.result;
+                if (cursor) lastDate = cursor.value.dt;
+              };
+
+              tx.oncomplete = function() {
+                callback({version: version, lastDate: lastDate});
+              };
+              tx.onerror = function(event) {
+                console.error('[HIST-CACHE] read_state_error', event.target.error);
+                callback({version: 0, lastDate: null});
+              };
+            }
+
+            function sendCacheSyncWhenReady(state) {
+              // window.__shinyConnected(app.py에서 설정)를 유일한 판단 기준으로
+              // 사용한다. 2026-09-09 세션에서 py-shiny 1.6.2 소스코드로 직접
+              // 확인한 사실:
+              //   - shiny:connected는 WebSocket이 open되는 즉시 발생하며,
+              //     이 시점의 서버는 아직 ConnectionState.Start 상태다
+              //     (shiny.js 6512~6524행).
+              //   - update 메시지(Shiny.setInputValue)는 서버 쪽에서
+              //     verify_state(ConnectionState.Running)을 요구하고,
+              //     서버가 Running으로 전환되는 건 init 처리 중 app.server(...)
+              //     실행이 끝난 뒤다 (_session.py 820~874행).
+              //   - shiny:sessioninitialized는 서버의 config 메시지(Running
+              //     전환 이후 전송)를 클라이언트가 수신해야 발생한다
+              //     (shiny.js 6948~6956행).
+              // 즉 shiny:connected 기준으로는 서버가 아직 Start 상태일 때
+              // update 메시지가 나갈 수 있어 ProtocolError를 유발할 수
+              // 있으므로, app.py는 window.__shinyConnected를
+              // shiny:sessioninitialized에서 설정하도록 되어 있다
+              // (이 파일에서는 그 플래그를 읽기만 하면 됨 - 로직 변경 없음).
+              if (window.__shinyConnected) {
+                Shiny.setInputValue('history-client_cache_sync', state, {priority: 'event'});
+              } else {
+                $(document).one('shiny:sessioninitialized', function() {
+                  Shiny.setInputValue('history-client_cache_sync', state, {priority: 'event'});
+                });
+              }
+            }
+
+            // getAll()은 keyPath(dt, ISO 날짜 문자열) 기준 오름차순으로 반환됨
+            // (IndexedDB 표준 동작 - 별도 정렬 불필요).
+            function loadCachedRowsIntoMemory(db, callback) {
+              var tx  = db.transaction('daily_rows', 'readonly');
+              var req = tx.objectStore('daily_rows').getAll();
+              req.onsuccess = function() {
+                callback(req.result || []);
+              };
+              req.onerror = function(event) {
+                console.error('[HIST-CACHE] load_rows_error', event.target.error);
+                callback([]);
+              };
+            }
+
+              req.onsuccess = function(event) {
+              window.__histDB = event.target.result;
+
+              // 버전 읽기(readHistCacheState) 완료를 먼저 기다린 뒤 rows를 읽는다.
+              readHistCacheState(window.__histDB, function(state) {
+                // _cacheVersion을 IndexedDB meta.version 원본값으로 초기화.
+                // 이후 history_cache_response가 오면 서버 버전으로 갱신됨.
+                _cacheVersion = state.version;
+
+                // 세션 연결 후 1회만 전송 (재전송 방지 플래그)
+                if (!window.__histCacheSyncSent) {
+                  window.__histCacheSyncSent = true;
+                  sendCacheSyncWhenReady(state);
+                }
+
+                loadCachedRowsIntoMemory(window.__histDB, function(rows) {
+                  _cachedConfirmedRows = rows;
+                  if (_pendingCacheResponse) {
+                    applyCacheResponseToMemory(_pendingCacheResponse);
+                    _pendingCacheResponse = null;
+                  }
+                  renderFromCache();
+                });
+              });
+            };
+
+            req.onerror = function(event) {
+              console.error('[HIST-CACHE] db_open_error', event.target.error);
+            };
+          })();
 
           // 기간 슬라이더 상태 (drawCharts 시 데이터 범위로 갱신)
           var SLIDER_STEPS      = 1000;  // 슬라이더 해상도 (드래그 부드러움)
@@ -520,33 +719,78 @@ def history_ui():
             rows.forEach(function(r, i) { tbody.appendChild(buildTr(r, rows[i + 1] || null)); });
           }
 
-          // ── history_data: 데이터 수신 ────────────────────────────────────
-          // 탭이 visible이면 즉시 렌더링, hidden이면 데이터만 저장 후 _pendingDraw 표시
-          // drawCharts()는 requestAnimationFrame으로 한 프레임 미룬다:
-          // display:none → block 전환 직후엔 브라우저가 아직 reflow를
-          // 수행하지 않아 clientWidth가 0으로 읽히고, Plotly가 기본값(700)으로
-          // 그려지는 현상이 실측으로 확인됨 (react 호출 직전 clientWidth=0,
-          // _fullLayout.width=700; relayout 시점엔 정상폭).
-          Shiny.addCustomMessageHandler('history_data', function(data) {
-            _allRows   = data;
-            _chartData = data;
+          // ── History Cache: mergedRows 계산 / 렌더 트리거 / 비교 (9단계) ────
 
+          // 서버 _today_kst()와 동일한 기준(KST)으로 오늘 날짜 문자열 계산.
+          // _todayRow 분리 판단에만 쓰이며, 실제 값 자체는 항상 서버가 보낸 그대로.
+          function todayKstStr() {
+            var now = new Date();
+            var kstMs = now.getTime() + (9 * 60 - now.getTimezoneOffset()) * 60000;
+            return new Date(kstMs).toISOString().slice(0, 10);
+          }
+
+          // history_cache_response의 payload.rows(내림차순)를 _cachedConfirmedRows(오름차순)에 반영.
+          // mode=full: 치환. mode=append/patch: dt 기준 upsert 병합.
+          function applyCacheResponseToMemory(payload) {
+            var mode      = payload.mode;
+            var rowsAsc   = (payload.rows || []).slice().reverse();
+
+            if (mode === 'full') {
+              _cachedConfirmedRows = rowsAsc;
+              return;
+            }
+            var byDate = {};
+            (_cachedConfirmedRows || []).forEach(function(r) { byDate[r.dt] = r; });
+            rowsAsc.forEach(function(r) { byDate[r.dt] = r; });
+            _cachedConfirmedRows = Object.keys(byDate).sort().map(function(dt) { return byDate[dt]; });
+          }
+
+          // confirmed rows(오름차순) + _todayRow를 합쳐 화면 렌더링용 포맷
+          // (내림차순, 최신이 [0])으로 반환. DB 재조회 없이 메모리에서만 계산.
+          function computeMergedRows() {
+            var confirmed = _cachedConfirmedRows || [];
+            var merged = confirmed.slice();
+            if (_todayRow && _todayRow.dt) {
+              var lastDt = merged.length > 0 ? merged[merged.length - 1].dt : null;
+              if (lastDt === _todayRow.dt) {
+                merged[merged.length - 1] = Object.assign({}, merged[merged.length - 1], _todayRow);
+              } else {
+                merged.push(_todayRow);
+              }
+            }
+            merged.reverse();
+            return merged;
+          }
+
+          function renderRows(rows) {
+            if (!rows || rows.length === 0) return;
             if (isHistoryVisible()) {
-              drawTable(_allRows);
-              requestAnimationFrame(function() { drawCharts(_chartData); });
+              drawTable(rows);
+              requestAnimationFrame(function() { drawCharts(rows); });
               _pendingDraw = false;
             } else {
               _pendingDraw = true;
             }
-          });
+          }
+
+          // cache(_cachedConfirmedRows + _todayRow 병합) 데이터가 준비된 경우 렌더.
+          // (구 legacy 비교 로직은 12단계에서 제거됨 - 11단계까지 실사용 검증 중
+          // MISMATCH 0건으로 cache 경로 정확성 확인 완료, git 이력 참조.)
+          function renderFromCache() {
+            if (_cachedConfirmedRows === null) return;
+            renderRows(computeMergedRows());
+          }
 
           // ── active_tab 변경 감지: history 탭 진입 시 pending draw 처리 ──
           $(document).on('shiny:inputchanged', function(e) {
             if (e.name === 'active_tab' && e.value === 'history') {
-              if (_pendingDraw && _chartData) {
-                drawTable(_allRows);
-                requestAnimationFrame(function() { drawCharts(_chartData); });
-                _pendingDraw = false;
+              if (_pendingDraw && _cachedConfirmedRows !== null) {
+                var rows = computeMergedRows();
+                if (rows && rows.length > 0) {
+                  drawTable(rows);
+                  requestAnimationFrame(function() { drawCharts(rows); });
+                  _pendingDraw = false;
+                }
               }
             }
           });
@@ -556,24 +800,22 @@ def history_ui():
           // 먼저 확인하고, 없으면 해당 블록 스킵 (값 미변화 = 갱신 불필요).
           Shiny.addCustomMessageHandler('today_row_update', function(r) {
 
-            // 1. _allRows 갱신 — diff를 기존 캐시에 머지해서 항상 완전한 row 유지.
-            //    history_data가 이미 today row를 포함해서 보낸 경우와
-            //    이후 today_row_update가 추가로 들어오는 경우가 겹칠 수 있으므로,
-            //    배열의 첫 row가 같은 날짜면 머지, 아니면 unshift.
-            var today = r.dt || (_allRows.length > 0 ? _allRows[0].dt : null);
-            if (_allRows.length > 0 && _allRows[0].dt === today) {
-              Object.assign(_allRows[0], r);
-            } else if (r.dt) {
-              _allRows.unshift(r);
-            }
+            // 1. _todayRow 갱신 — diff를 기존 오늘 row에 머지해서 항상 완전한 row 유지.
+            //    이후 블록들이 참조할 today(날짜 문자열)도 여기서 함께 확정한다.
+            if (!_todayRow) _todayRow = {};
+            Object.assign(_todayRow, r);
+            var today = r.dt || _todayRow.dt || null;
+            if (!_todayRow.dt) _todayRow.dt = today;
 
             // 2. DOM 최상단 행 교체 — total_asset 포함된 경우에만 (행 전체 재생성 필요).
-            //    _pendingDraw 상태면 스킵 (탭 진입 시 drawTable이 _allRows로 다시 그림).
-            if (!_pendingDraw && r.ta !== undefined) {
-              var rowData = _allRows[0];
+            //    _pendingDraw 상태면 스킵 (탭 진입 시 drawTable이 computeMergedRows()로 다시 그림).
+            //    merged[0]=오늘(방금 갱신된 _todayRow), merged[1]=직전 확정일.
+            if (!_pendingDraw && r.ta !== undefined && _cachedConfirmedRows !== null) {
+              var merged  = computeMergedRows();
+              var rowData = merged[0];
               var tbody   = document.getElementById('history-tbody');
               if (tbody && rowData) {
-                var newTr    = buildTr(rowData, _allRows[1] || null);
+                var newTr    = buildTr(rowData, merged[1] || null);
                 var existing = tbody.querySelector('tr[data-date="' + today + '"]');
                 if (existing) {
                   tbody.replaceChild(newTr, existing);
@@ -655,8 +897,62 @@ def history_ui():
                 Plotly.restyle(gdTwr, {x: [xs2], y: [ys2]}, [1]);
               }
             }
+
+            // 화면 갱신은 위의 incremental DOM/Plotly patch(2~4)가 담당한다.
+            // 이 핸들러는 시세 신호 등 고빈도 이벤트에 묶여 있으므로(단,
+            // diff_display가 걸러서 실제 변경 있을 때만 도착) 풀 리드로우를
+            // 걸지 않는다 - _todayRow는 이미 1번에서 갱신 완료된 상태.
           });
 
+          // ── History Cache: 서버 payload를 IndexedDB에 저장 ──────────────────
+          // - mode=full   : daily_rows를 clear() 후 전체 rows를 put() (덮어쓰기)
+          // - mode=append/patch : clear 없이 rows만 put() (dt가 keyPath라 upsert)
+          // - meta.version을 매번 server_version으로 갱신
+          // - rows 저장과 version 갱신을 하나의 트랜잭션으로 묶어, 중간 실패 시
+          //   "rows는 갱신됐는데 version은 예전 값"인 불일치가 생기지 않게 함.
+          // - today_row는 이 스토어에 넣지 않음 (확정 rows만 캐시 대상, 오늘 데이터는
+          //   today_row_update 메시지로 계속 별도 갱신됨).
+          Shiny.addCustomMessageHandler('history_cache_response', function(payload) {
+            if (!window.__histDB) {
+              console.error('[HIST-CACHE] no_db');
+              return;
+            }
+
+            var mode  = payload.mode;
+            var rows  = payload.rows || [];
+            var serverVersion = payload.server_version;
+
+            var db = window.__histDB;
+            var tx = db.transaction(['daily_rows', 'meta'], 'readwrite');
+            var rowsStore = tx.objectStore('daily_rows');
+            var metaStore = tx.objectStore('meta');
+
+            if (mode === 'full') {
+              rowsStore.clear();
+            }
+            rows.forEach(function(r) {
+              rowsStore.put(r);
+            });
+            metaStore.put({k: 'version', v: serverVersion});
+
+            tx.onerror = function(event) {
+              console.error('[HIST-CACHE] save_error', event.target.error);
+            };
+
+            // ── History Cache: 메모리 캐시(_cachedConfirmedRows) 갱신 + 렌더 ──────
+            // IndexedDB 트랜잭션 완료를 기다리지 않고 메모리 반영(같은 payload를 그대로
+            // 씀 - IndexedDB 저장 실패와 무관하게 이번 세션 내 표시는 정확해야 하므로).
+            // 초기 로드(loadCachedRowsIntoMemory)가 아직 안 끝났으면 큐잉만 하고,
+            // 로드 완료 콜백에서 순서대로 적용한다(레이스 방지).
+            _cacheVersion = serverVersion;
+            if (_cachedConfirmedRows === null) {
+              _pendingCacheResponse = payload;
+            } else {
+              applyCacheResponseToMemory(payload);
+              renderFromCache();
+            }
+          });
+                    
           // ── 터치 이벤트 (pan + long-press hover) ─────────────────────────
           function attachTouch(gd) {
             if (gd._touchAttached) return;
@@ -876,53 +1172,126 @@ def history_ui():
 def history_server(input, output, session, active_tab: reactive.value = None):
 
     _initialized_today_row    = False  # 일반 변수: effect 자기-재트리거 방지
-    _initialized_historytable = False  # 일반 변수: effect 자기-재트리거 방지
     today_cf_trigger = reactive.value(0)  # 오늘 입출금 저장 시 강제 갱신용
     _reload_trigger  = reactive.value(0)  # 입출금 수정(과거) 시 DB rows 재로드용
     _last_today_row: dict = {}  # diff_display 비교 기준
 
+    # 10단계: 5단계에서 받은 (client_version, client_last_date)를 세션에 저장.
+    # daily_insert_signal이 다시 발동했을 때 "이 세션이 어디까지 알고 있었는지"의
+    # 기준점으로 쓰인다. 아직 client_cache_sync가 안 온 상태(None)에서는
+    # daily_insert_signal이 와도 아무것도 하지 않는다 (가드).
+    _client_cache_state = reactive.value(None)
+
     # ── 과거 DB rows 캐시 ────────────────────────────────────────────────────
     # _reload_trigger / daily_insert_signal 시에만 DB 재조회.
-    # 탭 조건 없이 항상 로드 (미리 패치 의도 유지, history_data 전송 조건에서 제어).
+    # _compute_and_send_cache_payload가 재사용(추가 DB 조회 없음).
     @reactive.calc
     def _db_rows():
         _reload_trigger.get()
         daily_insert_signal.get()
         return load_history()
 
-    # ── 초기 테이블 + 차트 데이터 전송 ──────────────────────────────────────
-    # JS가 수신 시점에 탭 가시성을 체크해 렌더링 여부를 결정함.
-    # 서버는 데이터 준비만 담당.
-    @reactive.effect
-    async def _send_history_table():
-        nonlocal _initialized_historytable
-        _reload_trigger.get()
-        daily_insert_signal.get()
+    # ── History Cache: mode 판단 + payload 계산/전송 (7단계, 10단계 공용 헬퍼) ──
+    # _sync_history_cache(최초 1회, client_cache_sync 트리거)와
+    # _sync_history_cache_on_daily_insert(반복, daily_insert_signal 트리거)가
+    # 공유하는 전송 로직. 일반 코루틴이라 여기서 읽는 reactive 값(_db_rows 등)에
+    # 대한 의존성은 "호출한 effect" 기준으로 잡힌다.
+    async def _compute_and_send_cache_payload(client_version, client_last_date):
+        meta           = get_history_cache_meta()
+        server_version = meta["version"]
+        patch_start    = get_patch_start_date(client_version, server_version)
 
-        if _initialized_historytable and active_tab and active_tab.get() != "history":
+        decision = decide_sync_mode(client_version, client_last_date, server_version, patch_start)
+        mode  = decision["mode"]
+        since = decision["since"]
+
+        rows = _db_rows()  # 확정 rows, ASC (기존 캐시 재사용, 추가 DB 조회 없음)
+
+        new_rows    = []
+        predecessor = None
+
+        if mode == "patch":
+            new_rows    = [r for r in rows if r[0] >= since]
+            predecessor = find_predecessor(rows, since)
+        elif mode == "append":
+            new_rows = [r for r in rows if since is not None and r[0] > since]
+            if not new_rows:
+                mode = "none"
+            else:
+                predecessor = find_predecessor(rows, new_rows[0][0])
+
+        print(
+            f"[HIST-CACHE] step=6 event=mode_decided "
+            f"client_version={client_version} server_version={server_version} "
+            f"mode={mode} since={since}",
+            flush=True,
+        )
+
+        if mode == "none":
+            # 신규 확정일도 과거 수정도 없음. 세션 저장값은 이미 최신 상태이므로 그대로 둔다.
             return
 
-        db_rows = _db_rows()
-        rows    = list(db_rows) if db_rows is not None else []
-        t       = load_today_row()
-        today   = _today_kst()
+        if mode == "full":
+            data = build_history_rows(rows)
+        else:
+            rows_for_build = ([predecessor] if predecessor else []) + new_rows
+            data = build_history_rows(rows_for_build)
+            if predecessor:
+                data = data[:-1]  # build_history_rows는 내림차순 반환 → predecessor는 마지막 원소
 
-        # today_row를 tuple로 변환해서 build_history_rows에 전달
-        today_tuple = None
-        if t and (not rows or rows[-1][0] < today):
-            today_tuple = (
-                today,
-                t.get("total_asset"), t.get("twr_asset"), t.get("ndx100"),
-                t.get("cash_flow", 0), t.get("cash_flow_note"),
-                t.get("exposure"), t.get("cash_ratio"),
-                t.get("x1_ratio"), t.get("x2_ratio"), t.get("x3_ratio"),
-                t.get("usd_krw"),
-            )
+        payload = {"mode": mode, "server_version": server_version, "rows": data}
+        await session.send_custom_message("history_cache_response", payload)
 
-        data = build_history_rows(rows, today_tuple)
+        print(
+            f"[HIST-CACHE] step=7 event=payload_sent mode={mode} row_count={len(data)} "
+            f"first_dt={data[-1]['dt'] if data else None} last_dt={data[0]['dt'] if data else None} "
+            f"server_version={server_version}",
+            flush=True,
+        )
 
-        await session.send_custom_message("history_data", data)
-        _initialized_historytable = True
+        # 10단계: 전송 후 세션 저장값을 이번에 보낸 데이터의 최신 확정일 기준으로 갱신.
+        # data는 내림차순(build_history_rows 반환 규약)이므로 data[0]이 가장 최근 날짜.
+        if data:
+            new_last_date = datetime.date.fromisoformat(data[0]["dt"])
+            _client_cache_state.set((server_version, new_last_date))
+
+    # ── History Cache: mode 판단 + payload 계산/전송 (7단계, 5단계 input 트리거) ──
+    @reactive.effect
+    @reactive.event(input.client_cache_sync)
+    async def _sync_history_cache():
+        client_state          = input.client_cache_sync()
+        client_version        = client_state.get("version", 0)
+        client_last_date_str  = client_state.get("lastDate")
+        client_last_date = (
+            datetime.date.fromisoformat(client_last_date_str) if client_last_date_str else None
+        )
+        _client_cache_state.set((client_version, client_last_date))
+        await _compute_and_send_cache_payload(client_version, client_last_date)
+
+    # ── History Cache: daily_insert_signal 재계산 (10단계, 열린 세션 실시간 반영) ──
+    # _sync_history_cache와는 별개의 effect (기존 _db_rows의 daily_insert_signal
+    # 의존과도 별개). 세션이 아직 최초 client_cache_sync를 보내기 전
+    # (_client_cache_state가 None)에는 아무것도 하지 않는다 (가드).
+    #
+    # _client_cache_state.get()을 reactive.isolate() 안에서 읽는 이유:
+    # 이 effect는 _compute_and_send_cache_payload 안에서 _client_cache_state를
+    # 갱신한다. isolate 없이 그냥 읽으면 그 읽기 자체가 의존성으로 잡혀서,
+    # 이 effect가 만든 변경에 의해 자기 자신이 다시 트리거되는 무한루프가 생긴다.
+    # daily_insert_signal만을 유일한 트리거로 남기기 위해 isolate로 끊는다.
+    @reactive.effect
+    async def _sync_history_cache_on_daily_insert():
+        daily_insert_signal.get()
+        with reactive.isolate():
+            state = _client_cache_state.get()
+        if state is None:
+            return
+        client_version, client_last_date = state
+        print(
+            f"[HIST-CACHE] step=10 event=daily_insert_recalc "
+            f"client_version={client_version} client_last_date={client_last_date}",
+            flush=True,
+        )
+        await _compute_and_send_cache_payload(client_version, client_last_date)
 
     # ── 시세/daily insert/입출금 수정 시 today_row 갱신 ─────────────────────
     @reactive.effect
@@ -946,10 +1315,6 @@ def history_server(input, output, session, active_tab: reactive.value = None):
         diff = diff_display(row, _last_today_row)
         if not diff:
             return
-
-        # [DEBUG-HISTORY] 화면 갱신 시점 total_asset 로그
-        print(f"[DEBUG-HISTORY] {datetime.datetime.now(KST)} "
-              f"total_asset={row['ta']} date={row['dt']}", flush=True)
 
         await session.send_custom_message("today_row_update", diff)
         _initialized_today_row = True
