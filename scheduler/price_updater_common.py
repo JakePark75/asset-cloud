@@ -357,6 +357,9 @@ def get_market_status(market: str) -> str:
     if market_time == "24h":
         return "open"
 
+    if market_time in ("KR", "US"):
+        holiday_cache.refresh_if_needed()
+
     if market_time == "KR":
         tz = pytz.timezone("Asia/Seoul")
         now_local   = datetime.now(tz)
