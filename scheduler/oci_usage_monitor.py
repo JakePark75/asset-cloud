@@ -12,20 +12,26 @@ DB 저장 없음 (휘발성, 조회 -> 알림 -> 종료).
 
 1. Storage (Block/Boot Volume 200GB): oci limits resource-availability API가
    free-tier 한도 자체를 알고 있는 전용 리소스(total-free-storage-gb-regional).
-   used+available = 200 정확히 일치 검증됨 (2026-07-15, used=47/available=153).
+   한도(200)는 list_limit_values에서 직접 읽는다. 예전처럼 used+available로 역산하면
+   한도를 초과한 순간 available=0이 되어 분모가 used로 줄어들고, 리포트에는 항상
+   100%로 찍혀 초과 사실이 숨는다 (2026-11-18 수정).
    -> 신뢰 가능, 그대로 사용.
 
-2. Compute (A1 Flex OCPU/메모리): 같은 API의 available 값은 free-tier 한도가 아니라
+2. 무료 백업 개수 (free-backup-count = 5): 200GB 용량 한도만 보면 놓치는 과금 사유.
+   OCI 프리티어는 볼륨 백업 5개까지 무료이므로 개수도 함께 본다 (2026-11-18 추가).
+   -> 한도 초과 시 즉시 알림 대상 (available이 0이 되는 것과 무관하게 used로 판정).
+
+3. Compute (A1 Flex OCPU/메모리): 같은 API의 available 값은 free-tier 한도가 아니라
    테넌시 원시 서비스 한도(약 1억)를 반환함이 확인됨 -> 무료 여부 판단에 쓸 수 없음.
    게다가 "PAYG 계정이 4 OCPU/24GB를 계속 무료로 쓸 수 있는지"는 Oracle 공식 문서와
    서포트 답변이 서로 모순되어 확인 불가 상태 (2026-07-15 기준).
    -> used 값만 정보성으로 표시하고, 무료/과금 여부 판단에는 쓰지 않는다.
 
-3. 실제 청구 비용 (Usage API, COST): 정책 해석과 무관하게 사실 그대로인 유일한 지표.
+4. 실제 청구 비용 (Usage API, COST): 정책 해석과 무관하게 사실 그대로인 유일한 지표.
    $0을 초과하는 서비스가 있으면 그 자체가 알림 대상.
    -> 과금 여부의 최종 판단 기준.
 
-4. 아웃바운드 트래픽 (oci_vcn/VnicToNetworkBytes): 10TB 무료 한도의 정확한 리셋 기준
+5. 아웃바운드 트래픽 (oci_vcn/VnicToNetworkBytes): 10TB 무료 한도의 정확한 리셋 기준
    (달력월 vs 청구주기)을 문서에서 확인하지 못함 (2026-07-15).
    -> 참고용 근사치로만 표시 ("이번 달 1일~현재" 구간 합계, 자체 정의한 구간).
 """
@@ -51,6 +57,12 @@ TENANCY_ID = "ocid1.tenancy.oc1..aaaaaaaanxdsvvocuxfx7bxvllj2qjsdumxenfjntvafyt2
 REGION = "ap-tokyo-1"
 KST = ZoneInfo("Asia/Seoul")
 
+# list_limit_values(limit 정의) 조회가 실패했을 때만 쓰는 폴백 (Oracle Always Free 공시값)
+FALLBACK_FREE_TIER = {
+    "total-free-storage-gb-regional": 200,
+    "free-backup-count": 5,
+}
+
 
 def _get_signer_and_config():
     signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
@@ -58,15 +70,50 @@ def _get_signer_and_config():
     return signer, config
 
 
+def _get_free_tier_limit(client, limit_name):
+    """무료 한도값을 list_limit_values(limit 정의)에서 직접 읽는다.
+
+    get_resource_availability의 available은 '남은 양'이라 한도를 넘으면 0이 된다.
+    그래서 used+available로 분모를 역산하면 초과분이 분모에서도 사라져 항상 100%로
+    보인다. 분모는 이 함수가 읽은 한도값으로 고정한다.
+    """
+    try:
+        values = client.list_limit_values(
+            compartment_id=TENANCY_ID,
+            service_name="block-storage",
+            scope_type="REGION",
+        ).data
+        for value in values:
+            if value.name == limit_name:
+                return value.value
+        log.warning(f"{limit_name}: limit 정의를 찾지 못해 폴백값 사용")
+    except Exception as e:
+        log.warning(f"{limit_name}: limit 정의 조회 실패, 폴백값 사용 ({e})")
+    return FALLBACK_FREE_TIER[limit_name]
+
+
 def get_storage_status(signer, config):
-    """Block/Boot Volume 프리티어 200GB 한도 대비 사용량 (used, available) in GB."""
+    """Block/Boot Volume 프리티어 사용량/한도 (used_gb, limit_gb)."""
     client = oci.limits.LimitsClient(config=config, signer=signer)
-    resp = client.get_resource_availability(
+    used = client.get_resource_availability(
         compartment_id=TENANCY_ID,
         service_name="block-storage",
         limit_name="total-free-storage-gb-regional",
-    )
-    return resp.data.used, resp.data.available
+    ).data.used
+    limit = _get_free_tier_limit(client, "total-free-storage-gb-regional")
+    return used, limit
+
+
+def get_backup_status(signer, config):
+    """무료 볼륨 백업 개수 한도 대비 사용량 (used_count, limit_count)."""
+    client = oci.limits.LimitsClient(config=config, signer=signer)
+    used = client.get_resource_availability(
+        compartment_id=TENANCY_ID,
+        service_name="block-storage",
+        limit_name="free-backup-count",
+    ).data.used
+    limit = _get_free_tier_limit(client, "free-backup-count")
+    return used, limit
 
 
 def get_compute_usage(signer, config):
@@ -126,23 +173,34 @@ def get_monthly_egress_gb(signer, config, month_start_utc, now_utc):
     return total_bytes / (1024 ** 3)
 
 
-def build_message(storage, compute, billed, egress_gb, errors):
-    used_gb, available_gb = storage
+def build_message(storage, backup, compute, billed, egress_gb, errors):
+    used_gb, limit_gb = storage
+    used_backups, limit_backups = backup
     core, memory = compute
 
     lines = ["📊 OCI 프리티어 주간 점검"]
 
-    if used_gb is not None:
-        total_gb = used_gb + available_gb
-        pct = round(used_gb / total_gb * 100) if total_gb else 0
-        lines.append(f"* Storage : {pct}% ( {used_gb}GB/{total_gb}GB )")
+    if used_gb is not None and limit_gb:
+        pct = round(used_gb / limit_gb * 100)
+        over = " ⚠️ 초과" if used_gb > limit_gb else ""
+        lines.append(f"* Storage : {pct}% ( {used_gb}GB/{limit_gb}GB ){over}")
+    elif used_gb is not None:
+        lines.append(f"* Storage : {used_gb}GB (한도 조회 실패)")
     else:
         lines.append("* Storage : 조회 실패")
 
+    if used_backups is not None and limit_backups:
+        over = " ⚠️ 초과" if used_backups > limit_backups else ""
+        lines.append(f"* Backup  : {used_backups}/{limit_backups}개{over}")
+    elif used_backups is not None:
+        lines.append(f"* Backup  : {used_backups}개 (한도 조회 실패)")
+    else:
+        lines.append("* Backup  : 조회 실패")
+
     if egress_gb is not None:
-        limit_gb = 10 * 1024  # 10TB, 참고용 상수 (정확한 리셋 시점 미확인)
-        pct = round(egress_gb / limit_gb * 100, 1)
-        lines.append(f"* Traffic : {pct}% ( {egress_gb:.1f}GB/{limit_gb}GB )")
+        egress_limit_gb = 10 * 1024  # 10TB, 참고용 상수 (정확한 리셋 시점 미확인)
+        pct = round(egress_gb / egress_limit_gb * 100, 1)
+        lines.append(f"* Traffic : {pct}% ( {egress_gb:.1f}GB/{egress_limit_gb}GB )")
     else:
         lines.append("* Traffic : 조회 실패")
 
@@ -182,6 +240,7 @@ def main():
     signer, config = _get_signer_and_config()
 
     storage = (None, None)
+    backup = (None, None)
     compute = (None, None)
     billed = []
     egress_gb = None
@@ -192,6 +251,12 @@ def main():
     except Exception as e:
         log.error(f"Storage 조회 실패: {e}")
         errors.append(f"Storage 조회 실패: {e}")
+
+    try:
+        backup = get_backup_status(signer, config)
+    except Exception as e:
+        log.error(f"Backup 조회 실패: {e}")
+        errors.append(f"Backup 조회 실패: {e}")
 
     try:
         compute = get_compute_usage(signer, config)
@@ -211,7 +276,7 @@ def main():
         log.error(f"트래픽 조회 실패: {e}")
         errors.append(f"트래픽 조회 실패: {e}")
 
-    message = build_message(storage, compute, billed, egress_gb, errors)
+    message = build_message(storage, backup, compute, billed, egress_gb, errors)
     log.info(message)
     notify_telegram_alert(message)
 
